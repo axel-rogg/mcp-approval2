@@ -42,7 +42,10 @@ import {
   parseIncoming,
   success as rpcSuccess,
 } from './messages.js';
-import type { AuditService, ToolContext } from './tool.js';
+import { ApprovalRequiredError, type AuditService, type ToolContext } from './tool.js';
+import { enqueueApproval } from './approval-resume.js';
+import type { ApprovalService } from '../../services/approvals.js';
+import { PrfRequiredError } from '../../services/credentials.js';
 import {
   JsonRpcErrorCode,
   MCP_PROTOCOL_VERSION,
@@ -69,6 +72,13 @@ export interface McpTransportOptions {
   readonly serverName?: string;
   /** Override fuer `serverInfo.version`. Default: `0.0.1`. */
   readonly serverVersion?: string;
+  /**
+   * Optional: ApprovalService. Wenn gesetzt, fangen wir `ApprovalRequiredError`
+   * aus dem Dispatcher ab → enqueueApproval → JSON-RPC success-Response mit
+   * `approval_required: true`. Sonst (Tests ohne ApprovalService) wird der
+   * Error wie bisher in einen JSON-RPC-Error gemapped.
+   */
+  readonly approvals?: ApprovalService;
 }
 
 // ============================================================================
@@ -89,6 +99,12 @@ const InitializeParamsSchema = z.object({
 const ToolsCallParamsSchema = z.object({
   name: z.string().min(1),
   arguments: z.record(z.string(), z.unknown()).optional(),
+  /**
+   * Resume-Pfad: wenn die PWA approved hat, schickt der Client die
+   * `approval_id` mit. Wir laden die Approval, pruefen ownership + status, und
+   * dispatchen mit `bypassApproval: true`.
+   */
+  approval_id: z.string().min(1).optional(),
 });
 
 const ResourcesReadParamsSchema = z.object({
@@ -136,7 +152,7 @@ class CancelRegistry {
 
 export function mcpTransport(opts: McpTransportOptions): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
-  const { server, registry } = opts;
+  const { server, registry, approvals } = opts;
   const serverName = opts.serverName ?? 'mcp-approval2';
   const serverVersion = opts.serverVersion ?? '0.0.1';
   const cancels = new CancelRegistry();
@@ -175,6 +191,10 @@ export function mcpTransport(opts: McpTransportOptions): Hono<AppBindings> {
       server,
       serverName,
       serverVersion,
+      ...(approvals ? { approvals } : {}),
+      ...(c.req.header('x-forwarded-for')
+        ? { ip: (c.req.header('x-forwarded-for') ?? '').split(',')[0]?.trim() }
+        : {}),
     });
     return c.json(response, 200);
   });
@@ -212,6 +232,8 @@ interface DispatchEnv {
   readonly server: ServerContext;
   readonly serverName: string;
   readonly serverVersion: string;
+  readonly approvals?: ApprovalService;
+  readonly ip?: string | undefined;
 }
 
 async function dispatchRequest(
@@ -303,6 +325,7 @@ async function handleToolsCall(
     name: parsed.data.name,
     ...(parsed.data.arguments ? { arguments: parsed.data.arguments } : {}),
   };
+  const approvalId = parsed.data.approval_id;
 
   // Cancel-Registry: id muss vorhanden sein (Notifications haben keine id —
   // tools/call ist Request → id Pflicht).
@@ -319,15 +342,83 @@ async function handleToolsCall(
     signal: ctrl.signal,
   };
 
+  // Approval-Resume-Pfad: wenn Client `approval_id` mitschickt + valid + own +
+  // approved, dispatchen wir mit bypassApproval=true. Wenn anything off → 403.
+  let bypassApproval = false;
+  if (approvalId) {
+    if (!env.approvals) {
+      env.cancels.finish(cancelKey);
+      return rpcError(
+        req.id,
+        JsonRpcErrorCode.Forbidden,
+        'approval resume requested but ApprovalService not configured',
+      );
+    }
+    const row = await env.approvals.get({ id: approvalId, userId: env.principal.userId });
+    if (!row) {
+      env.cancels.finish(cancelKey);
+      return rpcError(req.id, JsonRpcErrorCode.Forbidden, 'approval not found or not owned');
+    }
+    if (row.status !== 'approved') {
+      env.cancels.finish(cancelKey);
+      return rpcError(
+        req.id,
+        JsonRpcErrorCode.ApprovalDenied,
+        `approval ${approvalId} is ${row.status}, not approved`,
+      );
+    }
+    if (row.toolName !== params.name) {
+      env.cancels.finish(cancelKey);
+      return rpcError(
+        req.id,
+        JsonRpcErrorCode.Forbidden,
+        'approval tool_name mismatch',
+      );
+    }
+    bypassApproval = true;
+  }
+
   let dispatchResult: DispatchResult;
   try {
     dispatchResult = await env.registry.dispatch({
       name: params.name,
       input: params.arguments ?? {},
       ctx: toolCtx,
+      bypassApproval,
     });
   } catch (err) {
     env.cancels.finish(cancelKey);
+
+    // Approval-Hook: persistiere pending_approval-Row, antworte mit Success-
+    // Body der `approval_required: true` traegt. PWA pollt + approve.
+    if (err instanceof ApprovalRequiredError && env.approvals) {
+      try {
+        const { payload } = await enqueueApproval({
+          approvals: env.approvals,
+          userId: env.principal.userId,
+          error: err,
+          requestId: env.requestId,
+          ...(env.ip ? { ip: env.ip } : {}),
+        });
+        return rpcSuccess(req.id, payload);
+      } catch (enqueueErr) {
+        return mapErrorToJsonRpc(req.id, enqueueErr);
+      }
+    }
+
+    // PRF-Hook: Credential verlangt PRF-Output, kein Approval-Path → wir liefern
+    // dem Client ein structured payload `{ prf_required: true }` damit die PWA
+    // die WebAuthn-PRF-Eval triggern kann.
+    if (err instanceof PrfRequiredError) {
+      return rpcSuccess(req.id, {
+        prf_required: true,
+        tool_name: params.name,
+        prf_credential_id: err.prfCredentialId
+          ? bytesToB64Url(err.prfCredentialId)
+          : null,
+      });
+    }
+
     return mapErrorToJsonRpc(req.id, err);
   } finally {
     env.cancels.finish(cancelKey);
@@ -335,6 +426,12 @@ async function handleToolsCall(
 
   const ok: JsonRpcSuccess = rpcSuccess(req.id, dispatchResult.result);
   return ok;
+}
+
+function bytesToB64Url(b: Uint8Array): string {
+  let s = '';
+  for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i] ?? 0);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 function handleNotification(

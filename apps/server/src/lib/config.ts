@@ -25,6 +25,20 @@ const ConfigSchema = z.object({
   SESSION_TTL_SEC: z.coerce.number().int().positive().default(30 * 60),
   REFRESH_TTL_SEC: z.coerce.number().int().positive().default(30 * 24 * 60 * 60),
 
+  // RS256 service-boundary keys (mcp-approval2 → mcp-knowledge2 JWTs).
+  // PEM-encoded. PKCS#8 for the private half, SPKI for the public half.
+  // Optional at the schema level — in dev/test we fall back to HS256 with a
+  // warning; production deploys are expected to pre-flight that both are set.
+  JWT_RS256_PRIVATE_KEY_PEM: z.string().optional(),
+  JWT_RS256_PUBLIC_KEY_PEM: z.string().optional(),
+  JWT_KID: z.string().optional(),
+
+  // Pre-shared internal service-token used by mcp-knowledge2 (and other
+  // first-party services) when calling /internal/v1/* on mcp-approval2.
+  // Required when /internal/v1 routes are mounted; the bootstrap layer
+  // refuses to mount them without it.
+  MCP_APPROVAL_INTERNAL_TOKEN: z.string().min(32).optional(),
+
   // Google OAuth
   GOOGLE_CLIENT_ID: z.string().min(1),
   GOOGLE_CLIENT_SECRET: z.string().min(1),

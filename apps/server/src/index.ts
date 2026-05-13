@@ -47,7 +47,10 @@ interface BootEnv {
   readonly VAULT_TRANSIT_PATH?: string;
   readonly KNOWLEDGE_URL?: string;
   readonly JWT_PRIVATE_KEY?: string;
+  readonly JWT_RS256_PRIVATE_KEY_PEM?: string;
+  readonly JWT_RS256_PUBLIC_KEY_PEM?: string;
   readonly JWT_KID?: string;
+  readonly MCP_APPROVAL_INTERNAL_TOKEN?: string;
 }
 
 async function buildOptionalDeps(
@@ -83,7 +86,9 @@ async function buildOptionalDeps(
   // ─── KnowledgeService ────────────────────────────────────────────────
   // Nur wenn URL + Private-Key gesetzt. Audit-Sink ist der gemeinsame
   // Postgres-`audit_log`-Sink (siehe services/audit.ts).
-  if (bootEnv.KNOWLEDGE_URL && bootEnv.JWT_PRIVATE_KEY) {
+  const knowledgePem =
+    bootEnv.JWT_RS256_PRIVATE_KEY_PEM ?? bootEnv.JWT_PRIVATE_KEY;
+  if (bootEnv.KNOWLEDGE_URL && knowledgePem) {
     const audit = {
       async emit(event: AuditEvent): Promise<void> {
         await emitAudit(server.db, event);
@@ -91,18 +96,26 @@ async function buildOptionalDeps(
     };
     const knowledgeEnv: {
       KNOWLEDGE_URL: string;
-      JWT_PRIVATE_KEY: string;
+      JWT_RS256_PRIVATE_KEY_PEM: string;
       JWT_ISSUER: string;
       JWT_AUDIENCE: string;
       JWT_KID?: string;
     } = {
       KNOWLEDGE_URL: bootEnv.KNOWLEDGE_URL,
-      JWT_PRIVATE_KEY: bootEnv.JWT_PRIVATE_KEY,
+      JWT_RS256_PRIVATE_KEY_PEM: knowledgePem,
       JWT_ISSUER: server.config.JWT_ISSUER,
       JWT_AUDIENCE: 'mcp-knowledge2',
     };
     if (bootEnv.JWT_KID !== undefined) knowledgeEnv.JWT_KID = bootEnv.JWT_KID;
     deps.knowledge = await createKnowledgeService({ env: knowledgeEnv, audit });
+  }
+
+  // ─── Internal Service-Token ─────────────────────────────────────────
+  // Pre-shared token fuer first-party services (mcp-knowledge2 etc.) die
+  // /internal/v1/* aufrufen. Ohne den werden die internal-routes nicht
+  // gemounted (app-factory loggt eine Warnung).
+  if (bootEnv.MCP_APPROVAL_INTERNAL_TOKEN) {
+    deps.internalServiceToken = bootEnv.MCP_APPROVAL_INTERNAL_TOKEN;
   }
 
   return deps;
@@ -129,7 +142,16 @@ function pickBootEnv(env: NodeJS.ProcessEnv): BootEnv {
   if (env['VAULT_TRANSIT_PATH']) out.VAULT_TRANSIT_PATH = env['VAULT_TRANSIT_PATH'];
   if (env['KNOWLEDGE_URL']) out.KNOWLEDGE_URL = env['KNOWLEDGE_URL'];
   if (env['JWT_PRIVATE_KEY']) out.JWT_PRIVATE_KEY = env['JWT_PRIVATE_KEY'];
+  if (env['JWT_RS256_PRIVATE_KEY_PEM']) {
+    out.JWT_RS256_PRIVATE_KEY_PEM = env['JWT_RS256_PRIVATE_KEY_PEM'];
+  }
+  if (env['JWT_RS256_PUBLIC_KEY_PEM']) {
+    out.JWT_RS256_PUBLIC_KEY_PEM = env['JWT_RS256_PUBLIC_KEY_PEM'];
+  }
   if (env['JWT_KID']) out.JWT_KID = env['JWT_KID'];
+  if (env['MCP_APPROVAL_INTERNAL_TOKEN']) {
+    out.MCP_APPROVAL_INTERNAL_TOKEN = env['MCP_APPROVAL_INTERNAL_TOKEN'];
+  }
   return out;
 }
 

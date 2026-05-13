@@ -5,11 +5,15 @@
  *
  * Verantwortung:
  *   - Middleware-Order verbindlich festziehen (request-id → error-handler →
- *     auth-on-protected-Routes).
- *   - Alle Route-Trees mounten (public, auth-protected, MCP-Protocol, OAuth).
+ *     rate-limit → auth-on-protected-Routes).
+ *   - Alle Route-Trees mounten (public, auth-protected, MCP-Protocol, OAuth,
+ *     Approvals, Sub-MCP-Gateway-internal).
  *   - Tools registrieren via `registerCoreTools` (tools/index.ts) wenn alle
  *     noetigen Services (knowledge + credentials + prfSessions) verfuegbar
  *     sind; sonst nur die `system.*` Smoke-Tools.
+ *   - Cost-Gate auf MCP-Routes, Rate-Limit auf /v1/* + /mcp/*.
+ *   - Approval-Hook im MCP-Transport: ApprovalRequiredError → enqueueApproval
+ *     + Resume nach Approve.
  *
  * Diese Factory ist injection-friendly: alle Services / Adapter koennen ueber
  * `CreateAppDeps` ueberschrieben werden — Test-Suites bauen Stubs, Production
@@ -21,11 +25,23 @@
  *   - Keine DB-Connection-Lifecycle (Caller besitzt + close-d das).
  *   - Keine Migration-Runs.
  */
+import { createHash } from 'node:crypto';
 import { Hono } from 'hono';
+import type { MiddlewareHandler } from 'hono';
 import type { KekProvider } from '@mcp-approval2/adapters';
 import type { AppBindings, ServerContext } from './lib/context.js';
+import { HttpError } from './lib/errors.js';
 import { requestId } from './middleware/request-id.js';
 import { errorHandler } from './middleware/error-handler.js';
+import {
+  createRateLimitMiddleware,
+  InMemoryBucketStore,
+  DEFAULT_RATE_LIMIT_CONFIG,
+  type BucketStore,
+  type RateLimitConfig,
+} from './middleware/rate-limit.js';
+import { createCostGate } from './middleware/cost-gate.js';
+import { auth as authMiddleware } from './middleware/auth.js';
 
 // Public + auth-protected routes
 import { healthRoutes } from './routes/health.js';
@@ -38,6 +54,10 @@ import { credentialsRoutes } from './routes/credentials.js';
 import { knowledgeProxyRoutes } from './routes/knowledge-proxy.js';
 import { adminRoutes } from './routes/admin.js';
 import { gdprRoutes } from './routes/gdpr.js';
+import { approvalsRoutes } from './routes/approvals.js';
+import { internalCredentialsRoutes } from './routes/internal/credentials.js';
+import { internalDekRoutes } from './routes/internal/dek.js';
+import { createDekService } from './services/dek.js';
 import { createAdminService } from './services/admin.js';
 import { createGdprService } from './services/gdpr.js';
 
@@ -48,6 +68,13 @@ import type { AuditService } from './mcp/protocol/tool.js';
 // OAuth 2.1 Authorization-Server
 import { oauthRoutes } from './mcp/oauth/index.js';
 
+// Sub-MCP-Gateway
+import {
+  createSubMcpRegistry,
+  subMcpDiscoverRoutes,
+  type SubMcpRegistry,
+} from './mcp/gateway/index.js';
+
 // Services
 import {
   createCredentialsService,
@@ -57,6 +84,14 @@ import {
   createPrfSessionService,
   type PrfSessionService,
 } from './services/prf-session.js';
+import {
+  createApprovalService,
+  type ApprovalService,
+} from './services/approvals.js';
+import {
+  createCostTracker,
+  type CostTracker,
+} from './services/cost-tracker.js';
 import type { KnowledgeService } from './services/knowledge.js';
 import { emitAudit } from './services/audit.js';
 
@@ -102,6 +137,28 @@ export interface CreateAppDeps {
    * wollen). Default `false`.
    */
   readonly skipToolRegistration?: boolean;
+  /** Override fuer ApprovalService (Tests). Default: aus services/approvals.ts gebaut. */
+  readonly approvals?: ApprovalService;
+  /** Override fuer CostTracker (Tests). Default: aus services/cost-tracker.ts gebaut. */
+  readonly costTracker?: CostTracker;
+  /** Override fuer SubMcpRegistry (Tests). */
+  readonly subMcpRegistry?: SubMcpRegistry;
+  /**
+   * Tageslimit USD fuer das Cost-Gate. Default: aus deps.costTracker uebernommen
+   * (5.00 USD/Tag). 0 → Cost-Gate disabled.
+   */
+  readonly dailyLimitUsd?: number;
+  /**
+   * Internal Service-Token fuer /internal/v1/* Routes. Wenn nicht gesetzt:
+   * internal-Routes werden NICHT gemounted + Warning gelogged.
+   */
+  readonly internalServiceToken?: string;
+  /** Rate-Limit-Config-Override (Tests). Default: DEFAULT_RATE_LIMIT_CONFIG. */
+  readonly rateLimitConfig?: RateLimitConfig;
+  /** Rate-Limit-Store-Override (Tests). Default: InMemoryBucketStore. */
+  readonly rateLimitStore?: BucketStore;
+  /** Wenn `true`, ueberspringt das Rate-Limit-Mount komplett (Tests). */
+  readonly disableRateLimit?: boolean;
 }
 
 /**
@@ -120,6 +177,17 @@ export async function createApp(
   // ─────────────────────────────────────────────────────────────────────
   app.use('*', requestId());
   app.onError(errorHandler());
+
+  // Rate-Limit fuer User-facing v1 + MCP. Auth-Routen + /health bleiben aussen vor.
+  // Middleware skipt automatisch wenn `c.get('user')` undefined ist (anonymous).
+  if (!deps.disableRateLimit) {
+    const rlConfig = deps.rateLimitConfig ?? DEFAULT_RATE_LIMIT_CONFIG;
+    const rlStore = deps.rateLimitStore ?? new InMemoryBucketStore();
+    const rl = createRateLimitMiddleware(rlConfig, { buckets: rlStore });
+    app.use('/v1/*', rl);
+    app.use('/mcp', rl);
+    app.use('/mcp/*', rl);
+  }
 
   // ─────────────────────────────────────────────────────────────────────
   // Public routes (kein Bearer-Token noetig)
@@ -146,6 +214,14 @@ export async function createApp(
   // ─────────────────────────────────────────────────────────────────────
   const credentialsService = resolveCredentialsService(server, deps);
   const prfSessions = deps.prfSessions ?? createPrfSessionService();
+  const approvalService =
+    deps.approvals ?? createApprovalService({ db: server.db });
+  const costTracker =
+    deps.costTracker ??
+    createCostTracker({
+      db: server.db,
+      ...(deps.dailyLimitUsd !== undefined ? { dailyLimitUsd: deps.dailyLimitUsd } : {}),
+    });
 
   if (credentialsService) {
     app.route(
@@ -175,7 +251,7 @@ export async function createApp(
   }
 
   // ─────────────────────────────────────────────────────────────────────
-  // MCP-Protocol (POST /mcp, GET /mcp/sse) — Auth pro-Route via mcpTransport
+  // MCP-Protocol + Tool-Registry
   // ─────────────────────────────────────────────────────────────────────
   const registry = deps.toolRegistry ?? new ToolRegistry();
   if (!deps.skipToolRegistration) {
@@ -186,7 +262,98 @@ export async function createApp(
       audit: deps.audit ?? makeDefaultAudit(server),
     });
   }
-  app.route('/', mcpProtocolRoutes({ server, registry }));
+
+  // Approvals-Routes (Bearer-gated; pro-Route via auth-Middleware).
+  app.route(
+    '/',
+    approvalsRoutes({
+      server,
+      approvals: approvalService,
+      registry,
+      audit: deps.audit ?? makeDefaultAudit(server),
+    }),
+  );
+
+  // Cost-Gate NUR auf MCP-Tool-Dispatch (POST /mcp + GET /mcp/sse). Daily-Limit
+  // 0 → Cost-Gate disabled. Wir mounten auth + cost-Gate VOR dem mcpTransport,
+  // damit der Cost-Gate-Check `c.get('user')` sehen kann.
+  //
+  // ⚠ mcpTransport hat seinen eigenen auth(server, {required:true}) — die
+  // zweite Auth-Pass ist idempotent (selbe Token-Verify), aber sie validiert
+  // den principal nochmal. Performance-Kosten: 1× JWT-Verify zusaetzlich.
+  const dailyLimit = deps.dailyLimitUsd;
+  if (dailyLimit === undefined || dailyLimit > 0) {
+    const costGate = createCostGate({
+      tracker: costTracker,
+      ...(dailyLimit !== undefined ? { displayLimitUsd: dailyLimit } : {}),
+    });
+    app.use('/mcp', authMiddleware(server, { required: true }), costGate);
+    app.use('/mcp/*', authMiddleware(server, { required: true }), costGate);
+  }
+
+  // MCP-Protocol-Routes — Auth pro-Route via mcpTransport.
+  app.route(
+    '/',
+    mcpProtocolRoutes({ server, registry, approvals: approvalService }),
+  );
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Sub-MCP-Gateway Internal-Routen
+  // ─────────────────────────────────────────────────────────────────────
+  const internalToken = deps.internalServiceToken;
+  if (internalToken) {
+    const subMcpReg =
+      deps.subMcpRegistry ?? createSubMcpRegistry({ db: server.db });
+    const internalTokenHash = hashInternalToken(internalToken);
+    const serviceTokenGuard = makeServiceTokenGuard(internalTokenHash);
+
+    // POST /internal/v1/credentials/resolve
+    if (credentialsService) {
+      app.use('/internal/v1/credentials/*', serviceTokenGuard);
+      app.route(
+        '/',
+        internalCredentialsRoutes({
+          server,
+          credentials: credentialsService,
+          registry: subMcpReg,
+          prfSessions,
+        }),
+      );
+    }
+
+    // POST /internal/v1/sub-mcp/discover
+    // discover-routes verifizieren intern via internalTokenHash; wir geben den
+    // Hash mit, damit der Body nicht doppelt validiert wird.
+    app.route(
+      '/',
+      subMcpDiscoverRoutes({
+        server,
+        registry: subMcpReg,
+        internalTokenHash,
+      }),
+    );
+
+    // POST /internal/v1/dek/resolve (Cross-Service-Bridge fuer mcp-knowledge2)
+    if (deps.kekProvider) {
+      app.use('/internal/v1/dek/*', serviceTokenGuard);
+      const dekService = createDekService({
+        db: server.db,
+        kekProvider: deps.kekProvider,
+      });
+      app.route(
+        '/',
+        internalDekRoutes({
+          server,
+          dek: dekService,
+        }),
+      );
+    }
+  } else {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[mcp-approval2] INTERNAL_SERVICE_TOKEN not set — /internal/v1/* routes not mounted',
+    );
+  }
 
   return app;
 }
@@ -256,6 +423,49 @@ function makeDefaultAudit(server: ServerContext): AuditService {
       });
     },
   };
+}
+
+function hashInternalToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+/**
+ * Inline-Service-Token-Middleware. Wenn der parallele Subagent eine eigene
+ * Middleware in `middleware/service-token.ts` liefert, kann dieser Helper
+ * dann ersetzt werden (gleiche Signatur — `MiddlewareHandler`).
+ *
+ * Validiert `Authorization: Bearer <token>` ODER `X-Service-Token: <token>`
+ * via konstant-Zeit-Hash-Vergleich. Der Hash ist beim App-Boot einmal
+ * berechnet, daher kein per-Request-Cost.
+ */
+function makeServiceTokenGuard(expectedHash: string): MiddlewareHandler<AppBindings> {
+  return async (c, next) => {
+    const auth = c.req.header('authorization') ?? '';
+    const xServiceToken = c.req.header('x-service-token') ?? '';
+    let presented: string | null = null;
+    if (auth.toLowerCase().startsWith('bearer ')) {
+      presented = auth.slice(7).trim();
+    } else if (xServiceToken) {
+      presented = xServiceToken.trim();
+    }
+    if (!presented) {
+      throw HttpError.unauthorized('service token required');
+    }
+    const presentedHash = createHash('sha256').update(presented).digest('hex');
+    if (!constantTimeEqualHex(presentedHash, expectedHash)) {
+      throw HttpError.unauthorized('invalid service token');
+    }
+    await next();
+  };
+}
+
+function constantTimeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
 }
 
 // ---------------------------------------------------------------------------

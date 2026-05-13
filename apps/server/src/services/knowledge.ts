@@ -18,6 +18,7 @@
  *     vom `targetUserId`.
  */
 import { signJwt } from '@mcp-approval2/core/crypto';
+import { getSigningKey } from '../auth/jwt-signing.js';
 import {
   HttpKnowledgeAdapter,
   type CreateObjectArgs,
@@ -291,8 +292,15 @@ export interface KnowledgeServiceEnv {
   /**
    * RSA-Private-Key (PEM, PKCS8) zum Signieren der Service-Boundary-JWTs.
    * Aequivalente Public-Half liegt im JWKS-Endpoint von mcp-approval2.
+   *
+   * Backwards-Compat-Alias: vor dem JWKS-Live-Cutover hiess das Env-Var
+   * `JWT_PRIVATE_KEY`. Neue Deploys sollten `JWT_RS256_PRIVATE_KEY_PEM`
+   * setzen — der ServerContext liest beide, der Wert hier ist optional
+   * solange einer von beiden zur Boot-Zeit verfuegbar ist.
    */
-  readonly JWT_PRIVATE_KEY: string;
+  readonly JWT_PRIVATE_KEY?: string;
+  /** Identisch zu `JWT_PRIVATE_KEY` (kanonischer Name nach dem Cutover). */
+  readonly JWT_RS256_PRIVATE_KEY_PEM?: string;
   /** Optional: Custom Issuer (default 'mcp-approval2'). */
   readonly JWT_ISSUER?: string;
   /** Optional: Custom Audience (default 'mcp-knowledge2'). */
@@ -306,8 +314,9 @@ export interface KnowledgeServiceEnv {
  * gegen mcp-knowledge2 inklusive JWT-Signer.
  *
  * Die Konkrete `JWT_PRIVATE_KEY`-Pflege uebernimmt der ServerContext (KEK-
- * entschluesselt). `signJwt` aus core/crypto verlangt einen CryptoKey — wir
- * importieren den PEM einmal pro Factory-Call (NICHT pro Request).
+ * entschluesselt). Der Loader (`getSigningKey()`) cached die importierten
+ * CryptoKey-Handles auf module-level — gleicher PEM-string wird nur einmal
+ * importiert, egal wie oft die Factory laeuft.
  */
 export async function createKnowledgeService(args: {
   env: KnowledgeServiceEnv;
@@ -318,7 +327,22 @@ export async function createKnowledgeService(args: {
   const issuer = args.env.JWT_ISSUER ?? 'mcp-approval2';
   const audience = args.env.JWT_AUDIENCE ?? 'mcp-knowledge2';
 
-  const privateKey = await importPrivateKey(args.env.JWT_PRIVATE_KEY);
+  const pem = args.env.JWT_RS256_PRIVATE_KEY_PEM ?? args.env.JWT_PRIVATE_KEY;
+  if (!pem || pem.trim().length === 0) {
+    throw new Error(
+      'createKnowledgeService: JWT_RS256_PRIVATE_KEY_PEM (or legacy JWT_PRIVATE_KEY) required',
+    );
+  }
+  const signingEnv: { JWT_RS256_PRIVATE_KEY_PEM: string; JWT_KID?: string } = {
+    JWT_RS256_PRIVATE_KEY_PEM: pem,
+  };
+  if (args.env.JWT_KID !== undefined) signingEnv.JWT_KID = args.env.JWT_KID;
+  const privateKey = await getSigningKey(signingEnv);
+  if (!privateKey) {
+    // getSigningKey only returns null when PEM is empty/blank — we already
+    // guarded above, so this branch is defense-in-depth.
+    throw new Error('createKnowledgeService: failed to load private key');
+  }
 
   const signer: JwtSigner = {
     async sign({ sub, scope, ttlSec = 60 }) {
@@ -358,37 +382,3 @@ export async function createKnowledgeService(args: {
   return new KnowledgeService(svcOpts);
 }
 
-/**
- * Importiert einen PEM-encoded PKCS8-RSA-Private-Key zu einem CryptoKey
- * (Web-Crypto-API). Verlangt RS256.
- */
-async function importPrivateKey(pem: string): Promise<CryptoKey> {
-  const cleaned = pem
-    .replace(/-----BEGIN [^-]+-----/g, '')
-    .replace(/-----END [^-]+-----/g, '')
-    .replace(/\s+/g, '');
-  if (!cleaned) throw new Error('createKnowledgeService: JWT_PRIVATE_KEY is empty');
-  const der = base64ToArrayBuffer(cleaned);
-  return crypto.subtle.importKey(
-    'pkcs8',
-    der,
-    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
-}
-
-function base64ToArrayBuffer(b64: string): ArrayBuffer {
-  let bin: string;
-  if (typeof Buffer !== 'undefined') {
-    const buf = Buffer.from(b64, 'base64');
-    const out = new ArrayBuffer(buf.length);
-    new Uint8Array(out).set(buf);
-    return out;
-  }
-  bin = atob(b64);
-  const out = new ArrayBuffer(bin.length);
-  const view = new Uint8Array(out);
-  for (let i = 0; i < bin.length; i++) view[i] = bin.charCodeAt(i);
-  return out;
-}
