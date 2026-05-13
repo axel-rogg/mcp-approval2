@@ -1,0 +1,24 @@
+# =============================================================================
+# migrations.toml — D1 migrations config.
+# =============================================================================
+# Cloudflare's `wrangler d1 migrations apply` reads this file to decide where
+# the SQL lives. We KEEP the Postgres migrations canonical (in
+# `apps/server/migrations/`) and maintain a parallel D1-flavoured copy under
+# `apps/server/migrations-d1/`. The Postgres copy is the source of truth — the
+# D1 copy strips RLS, swaps types (UUID→TEXT, JSONB→TEXT, BYTEA→BLOB), and
+# adjusts default expressions.
+#
+# Why two folders, not one shared dialect file?
+#   - RLS is irrelevant on SQLite (no row-level security)
+#   - BYTEA vs BLOB / JSONB vs TEXT / gen_random_uuid() vs hex-rand differ
+#   - DO $$ … END$$ blocks are PG-only
+# We considered Drizzle-Kit dialect generators; they don't fully cover RLS /
+# CHECK constraint syntax across both targets, so we ship explicit files
+# per-dialect. Drift detection: a small lint job in `scripts/d1-sync.ts`
+# (TODO) cross-checks table + column names. Until that lands, treat the
+# Postgres folder as canonical and re-run `scripts/d1-migrations-sync.sh`
+# manually after each new migration.
+# =============================================================================
+
+# wrangler-side config (consumed by `wrangler d1 migrations`)
+migrations_dir = "../../apps/server/migrations-d1"

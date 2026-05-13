@@ -4,16 +4,18 @@
  * Plan-Reference: docs/plans/active/PLAN-architecture-v1.md §2.1 + §7.
  *
  * Diese Types definieren die Wire-Shape zwischen mcp-approval2 (Caller) und
- * mcp-knowledge2 (Storage-Service). Sie sind explizit Caller-seitig
- * dokumentiert — autoritativ wird das Schema erst, wenn der paralleler
- * mcp-knowledge2-Plan finalisiert ist und das Wire-Format gegengezeichnet
- * wurde (siehe §2.1 Konsolidierungs-Hinweis).
+ * mcp-knowledge2 (Storage-Service). Stand 2026-05-13 sind sie aligned mit
+ * `/workspaces/mcp-knowledge2/docs/openapi.yaml` + dem CROSS-SERVICE-CONTRACT.md
+ * (Drifts D-1..D-12 resolved; siehe `docs/CROSS-SERVICE-CONTRACT-RESOLUTION.md`).
  *
- * Body-Encoding-Konvention (aus dem v1-Hub uebernommen):
- *   - `body_inline` <= 16 KB encrypted ciphertext (BLOB)
- *   - sonst `r2_key = 'objects/<id>'` im Blob-Store
- * Der Adapter selbst sieht die Bodies nicht entschluesselt — Crypto liegt
- * in mcp-knowledge2.
+ * Body-Encoding-Konvention (Server-Seite, fuer Kontext):
+ *   - Inline-Body wird base64-encoded als `body_b64` ueber die HTTP-Wire
+ *     gereicht (Create: required min 1, Update: optional). Server speichert
+ *     intern in `blob_key` (DB-Spalte, NICHT wire-sichtbar) — entweder
+ *     inline-BLOB oder S3-Objekt. D-12: das alte `r2_key` ist Legacy aus
+ *     dem v1-Hub und kommt im Wire-Protokoll nicht vor.
+ *   - Read: Body kommt NUR mit `?expand=body` als `body_b64` (base64-encoded).
+ *     Standard-Reads liefern nur Metadata (bodySize/bodyHash).
  */
 
 export type ObjectKind = 'doc' | 'skill' | 'app' | 'memo';
@@ -23,8 +25,11 @@ export type ShareScope = 'read' | 'write';
 /**
  * KnowledgeObject — die kanonische Read-Form, wie mcp-knowledge2 sie zurueckgibt.
  *
- * Felder folgen dem Plan §7.2-Schema. `body` ist optional und nur in
- * Read-Responses populated (Plain-Text nach Storage-side Decryption).
+ * Felder spiegeln das Server-Schema (`/v1/objects` ObjectView) wider. Body ist
+ * nur populated wenn `?expand=body` requested wurde — dann als base64-string.
+ *
+ * Naming-Hinweis: Server emittiert die Felder camelCase (ownerId, bodySize,
+ * mimeType, ...) im JSON-Envelope.
  */
 export interface KnowledgeObject {
   readonly id: string;
@@ -33,13 +38,26 @@ export interface KnowledgeObject {
   readonly subtype: string | null;
   readonly title: string | null;
   readonly description: string | null;
-  readonly keywords: ReadonlyArray<string>;
-  readonly body: string | null;
+  readonly keywords: ReadonlyArray<string> | null;
+  readonly triggerHints: string | null;
+  readonly meta: Record<string, unknown> | null;
+  readonly bodySize: number;
   readonly bodyHash: string | null;
+  readonly mimeType: string | null;
+  readonly filename: string | null;
   readonly visibility: 'private' | 'shared';
+  readonly pinned: boolean;
+  readonly archived: boolean;
+  readonly refcount: number;
+  readonly currentVersion: number;
   readonly createdAt: number;
   readonly updatedAt: number;
-  readonly deletedAt: number | null;
+  readonly lastUsedAt: number | null;
+  /**
+   * Base64-encoded body. Nur populated wenn `?expand=body` requested wurde.
+   * Caller-Side decode: `Buffer.from(body, 'base64')` → Uint8Array.
+   */
+  readonly body?: string | null;
 }
 
 export interface CreateObjectArgs {
@@ -49,16 +67,37 @@ export interface CreateObjectArgs {
   readonly title?: string;
   readonly description?: string;
   readonly keywords?: ReadonlyArray<string>;
-  readonly body?: string;
+  readonly triggerHints?: string;
+  readonly meta?: Record<string, unknown>;
+  /**
+   * Body als rohe Bytes ODER UTF-8-String. Der Adapter base64-encodet und
+   * schickt das als `body_b64` ans Server-DTO (D-2). Server erfordert
+   * mindestens 1 Byte — `undefined` → request schlaegt fehl. Wenn kein Body
+   * gewuenscht: `body: ''` oder `new Uint8Array([0])` setzen (Server-side
+   * Min-Length-Schutz).
+   */
+  readonly body?: Uint8Array | string;
+  readonly mimeType?: string;
+  readonly filename?: string;
+  /** Server-side Embedding via Vertex/bge-m3 antriggern (D-3). */
+  readonly embed?: boolean;
   readonly visibility?: 'private' | 'shared';
 }
 
+/**
+ * Server liefert `{items, next_cursor}` — `next_cursor` ist ein Integer
+ * (Unix-ms vom letzten `updatedAt`). `null` heisst "Ende erreicht".
+ */
 export interface ObjectsList {
   readonly items: ReadonlyArray<KnowledgeObject>;
-  readonly cursor: string | null;
-  readonly hasMore: boolean;
+  readonly nextCursor: number | null;
 }
 
+/**
+ * ShareView vom Server. Resource-kind wird server-seitig aus der DB-Row
+ * abgeleitet (D-6 dropped es aus dem Create-Body, aber Read-Response enthaelt
+ * es). `grantedAt` (NICHT `createdAt`) — D-7.
+ */
 export interface Share {
   readonly id: string;
   readonly resourceId: string;
@@ -66,17 +105,21 @@ export interface Share {
   readonly grantedBy: string;
   readonly grantedTo: string;
   readonly scope: ShareScope;
-  readonly createdAt: number;
+  readonly grantedAt: number;
+  readonly expiresAt: number | null;
   readonly revokedAt: number | null;
 }
 
+/**
+ * SearchHit — D-9 documented: server akzeptiert single `kind`. Score-Felder
+ * `ftsRank` + `vectorScore` (camelCase) sind im Hit enthalten.
+ */
 export interface SearchHit {
   readonly id: string;
   readonly kind: ObjectKind;
   readonly subtype: string | null;
   readonly title: string | null;
-  readonly snippet: string | null;
   readonly score: number;
-  readonly ownerId: string;
-  readonly sharedToMe: boolean;
+  readonly ftsRank: number | null;
+  readonly vectorScore: number | null;
 }

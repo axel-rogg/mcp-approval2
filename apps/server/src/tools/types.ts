@@ -61,7 +61,8 @@ export type KnowledgeDocsReadInput = z.infer<typeof KnowledgeDocsReadInput>;
 export const KnowledgeDocsListInput = z
   .object({
     limit: z.number().int().min(1).max(200).optional(),
-    cursor: z.string().min(1).max(512).optional(),
+    // D-4: cursor ist Integer (Unix-ms vom letzten updatedAt), nicht opaque string.
+    cursor: z.number().int().nonnegative().optional(),
   })
   .strict();
 export type KnowledgeDocsListInput = z.infer<typeof KnowledgeDocsListInput>;
@@ -69,7 +70,7 @@ export type KnowledgeDocsListInput = z.infer<typeof KnowledgeDocsListInput>;
 export const KnowledgeSkillsListInput = z
   .object({
     limit: z.number().int().min(1).max(200).optional(),
-    cursor: z.string().min(1).max(512).optional(),
+    cursor: z.number().int().nonnegative().optional(),
   })
   .strict();
 export type KnowledgeSkillsListInput = z.infer<typeof KnowledgeSkillsListInput>;

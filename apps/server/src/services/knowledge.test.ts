@@ -29,14 +29,22 @@ function makeAdapterStub(): { adapter: KnowledgeAdapter; calls: Record<string, u
     title: 't',
     description: 'd',
     keywords: [],
-    body: 'body',
+    triggerHints: null,
+    meta: null,
+    bodySize: 4,
     bodyHash: null,
+    mimeType: null,
+    filename: null,
     visibility: 'private',
+    pinned: false,
+    archived: false,
+    refcount: 0,
+    currentVersion: 1,
     createdAt: 1,
     updatedAt: 1,
-    deletedAt: null,
+    lastUsedAt: null,
   };
-  const list: ObjectsList = { items: [obj], cursor: null, hasMore: false };
+  const list: ObjectsList = { items: [obj], nextCursor: null };
   const share: Share = {
     id: 'share-1',
     resourceId: 'obj-1',
@@ -44,11 +52,12 @@ function makeAdapterStub(): { adapter: KnowledgeAdapter; calls: Record<string, u
     grantedBy: USER_ID,
     grantedTo: 'user-2',
     scope: 'read',
-    createdAt: 1,
+    grantedAt: 1,
+    expiresAt: null,
     revokedAt: null,
   };
   const hits: ReadonlyArray<SearchHit> = [
-    { id: 'obj-1', kind: 'doc', subtype: null, title: 't', snippet: 's', score: 0.9, ownerId: USER_ID, sharedToMe: false },
+    { id: 'obj-1', kind: 'doc', subtype: null, title: 't', score: 0.9, ftsRank: 0.5, vectorScore: 0.4 },
   ];
 
   const adapter: KnowledgeAdapter = {
@@ -88,7 +97,19 @@ function makeAdapterStub(): { adapter: KnowledgeAdapter; calls: Record<string, u
     },
     async eraseUser(args) {
       record('eraseUser', [args]);
-      return { deletedRows: 42 };
+      return {
+        status: 'ok',
+        deleted: {
+          objects: 42,
+          shares: 0,
+          idempotency: 0,
+          uploads: 0,
+          auditPseudonymised: 0,
+          blobsDeleted: 42,
+          blobsPending: 0,
+        },
+        deletedRows: 42,
+      };
     },
   };
   return { adapter, calls };
@@ -235,7 +256,9 @@ describe('KnowledgeService — eraseUser (admin)', () => {
       confirmationToken: 'tok-xyz',
       actorUserId: 'admin-user',
     });
-    expect(result).toEqual({ deletedRows: 42 });
+    expect(result.deletedRows).toBe(42);
+    expect(result.status).toBe('ok');
+    expect(result.deleted.objects).toBe(42);
     expect(audit.emitted[0]).toMatchObject({
       action: 'knowledge.user.erased',
       actorUserId: 'admin-user',

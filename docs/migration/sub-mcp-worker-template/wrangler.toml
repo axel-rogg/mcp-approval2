@@ -1,0 +1,60 @@
+# wrangler.toml — Sub-MCP-Worker-Template
+#
+# Adoption-Hinweise:
+#  - `name`     : eindeutig pro Sub-MCP (passt zum DB-`sub_mcp_servers.name`).
+#  - `routes`   : Custom-Domain pro Pilot-Tenant. Workers-dev-Subdomain reicht
+#                 fuer Dev, in Prod auf eigene Sub-Domain mappen.
+#  - Secrets    : NIEMALS in dieser Datei eintragen. Stattdessen:
+#                   wrangler secret put SERVICE_TOKEN
+#                   wrangler secret put MCP_APPROVAL_JWT_SECRET
+#
+# Erforderliche Plain-Vars (siehe [vars] weiter unten).
+
+name = "mcp-sub-template"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Optional: Worker direkt unter custom domain mappen.
+# routes = [
+#   { pattern = "my-sub-mcp.example.com", custom_domain = true }
+# ]
+
+# Stateless worker — keine D1, kein R2. Falls du fuer ein konkretes Tool doch
+# State brauchst (z.B. Idempotency-Key-Cache), nimm KV mit kurzem TTL (≤ 5 min):
+#
+# [[kv_namespaces]]
+# binding = "IDEMPOTENCY_KV"
+# id      = "<production-kv-id>"
+# preview_id = "<preview-kv-id>"
+
+[vars]
+# Plain-Vars (nicht-sensibel). Sensible Secrets siehe `wrangler secret put`.
+SUB_MCP_NAME              = "my-sub-mcp"
+MCP_APPROVAL_BASE_URL     = "https://mcp.example.com"
+MCP_APPROVAL_JWT_ISSUER   = "mcp-approval2"
+# Optional in Phase 8 (RS256 + JWKS):
+# MCP_APPROVAL_JWKS_URL   = "https://mcp.example.com/.well-known/jwks.json"
+
+# Deployments pro Env. Plain-Vars hier ueberschreiben das Top-Level.
+[env.staging]
+name = "mcp-sub-template-staging"
+# routes = [{ pattern = "staging-my-sub-mcp.example.com", custom_domain = true }]
+
+[env.staging.vars]
+SUB_MCP_NAME              = "my-sub-mcp"
+MCP_APPROVAL_BASE_URL     = "https://staging.mcp.example.com"
+MCP_APPROVAL_JWT_ISSUER   = "mcp-approval2"
+
+[env.production]
+name = "mcp-sub-template-prod"
+# routes = [{ pattern = "my-sub-mcp.example.com", custom_domain = true }]
+
+[env.production.vars]
+SUB_MCP_NAME              = "my-sub-mcp"
+MCP_APPROVAL_BASE_URL     = "https://mcp.example.com"
+MCP_APPROVAL_JWT_ISSUER   = "mcp-approval2"
+
+# Pflicht-Secrets (per env via `wrangler secret put` setzen):
+#  - SERVICE_TOKEN              ← pre-shared mit mcp-approval2
+#  - MCP_APPROVAL_JWT_SECRET    ← shared HS256-Secret (Phase 8: entfaellt bei RS256)

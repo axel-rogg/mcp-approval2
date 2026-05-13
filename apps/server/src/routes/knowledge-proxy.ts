@@ -50,38 +50,38 @@ const createObjectSchema = z.object({
 });
 
 const updateObjectSchema = z.object({
-  subtype: z.string().nullable().optional(),
   title: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
   keywords: z.array(z.string()).optional(),
-  body: z.string().nullable().optional(),
-  visibility: z.enum(['private', 'shared']).optional(),
+  body: z.string().optional(),
+  pinned: z.boolean().optional(),
+  archived: z.boolean().optional(),
 });
 
 type UpdatePatch = Partial<{
-  subtype: string | null;
   title: string | null;
   description: string | null;
   keywords: ReadonlyArray<string>;
-  body: string | null;
-  visibility: 'private' | 'shared';
+  body: string;
+  pinned: boolean;
+  archived: boolean;
 }>;
 
 function buildUpdatePatch(input: z.infer<typeof updateObjectSchema>): UpdatePatch {
   const out: UpdatePatch = {};
-  if (input.subtype !== undefined) out.subtype = input.subtype;
   if (input.title !== undefined) out.title = input.title;
   if (input.description !== undefined) out.description = input.description;
   if (input.keywords !== undefined) out.keywords = input.keywords;
   if (input.body !== undefined) out.body = input.body;
-  if (input.visibility !== undefined) out.visibility = input.visibility;
+  if (input.pinned !== undefined) out.pinned = input.pinned;
+  if (input.archived !== undefined) out.archived = input.archived;
   return out;
 }
 
 const listObjectsQuerySchema = z.object({
   kind: objectKindSchema.optional(),
   limit: z.coerce.number().int().positive().max(500).optional(),
-  cursor: z.string().optional(),
+  cursor: z.coerce.number().int().nonnegative().optional(),
 });
 
 const createShareSchema = z.object({

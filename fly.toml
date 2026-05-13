@@ -1,0 +1,71 @@
+# =============================================================================
+# fly.toml — Fly.io deployment config for mcp-approval2 (Hono.js + Drizzle)
+# =============================================================================
+# Plan-Ref: deploy/fly/README.md, docs/runbooks/runbook-fly-deploy.md.
+#
+# Hobby-Setup: single shared-cpu-1x machine in Frankfurt (fra).
+# Companion-Apps:
+#   - mcp-approval2-pg        (Fly Postgres-Cluster, attached via DATABASE_URL)
+#   - mcp-approval2-openbao   (separate Fly-App, internal-DNS for VAULT_ADDR)
+#
+# Secrets are NEVER inlined here — `[env]` only carries non-sensitive defaults.
+# Use `fly secrets set` for credentials (see deploy/fly/deploy.sh).
+# =============================================================================
+
+app            = "mcp-approval2"
+primary_region = "fra"
+kill_signal    = "SIGINT"
+kill_timeout   = 30
+
+[build]
+  dockerfile = "deploy/fly/Dockerfile.server"
+
+# ──────────────────────────────────────────────────────────────────────────
+# Env — non-sensitive defaults only.
+# DATABASE_URL is injected by `fly postgres attach`.
+# Secrets (MCP_BEARER_TOKEN, JWT_*, OAuth, MASTER_KEY_BASE64) come from
+# `fly secrets set`. Print current with `fly secrets list -a mcp-approval2`.
+# ──────────────────────────────────────────────────────────────────────────
+[env]
+  PORT                  = "8787"
+  NODE_ENV              = "production"
+  LOG_LEVEL             = "info"
+  # OpenBao via fly-internal DNS (.internal resolves intra-VPC, no public route).
+  VAULT_ADDR            = "http://mcp-approval2-openbao.internal:8200"
+  VAULT_TRANSIT_PATH    = "transit"
+  # Public surface — Fly assigns mcp-approval2.fly.dev by default; swap to a
+  # custom domain by editing here + `fly certs add <domain>` (then redeploy).
+  BASE_URL              = "https://mcp-approval2.fly.dev"
+  WEBAUTHN_RP_ID        = "mcp-approval2.fly.dev"
+  WEBAUTHN_RP_NAME      = "mcp-approval2"
+  WEBAUTHN_ORIGINS      = "https://mcp-approval2.fly.dev"
+  JWT_ISSUER            = "mcp-approval2"
+  JWKS_PATH             = "/.well-known/jwks.json"
+
+[http_service]
+  internal_port         = 8787
+  force_https           = true
+  auto_stop_machines    = "stop"
+  auto_start_machines   = true
+  # Hobby: 0 means "scale to zero when idle" — Fly cold-starts on first req.
+  # Bump to 1 if WebAuthn cold-start latency is a problem.
+  min_machines_running  = 0
+  processes             = ["app"]
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval     = "30s"
+    method       = "GET"
+    timeout      = "5s"
+    path         = "/health"
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "512mb"
+  cpus   = 1
+
+# ──────────────────────────────────────────────────────────────────────────
+# Deploy strategy — rolling so health-check gates new release.
+# ──────────────────────────────────────────────────────────────────────────
+[deploy]
+  strategy = "rolling"

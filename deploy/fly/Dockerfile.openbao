@@ -1,0 +1,25 @@
+# syntax=docker/dockerfile:1.7
+# =============================================================================
+# Dockerfile.openbao — OpenBao image baked with our production config.
+# =============================================================================
+# Plan-Ref: deploy/fly/openbao-config.hcl, fly.openbao.toml.
+#
+# Pin a concrete tag in production. `latest` is acceptable while we're still
+# in greenfield/hobby — bump to `:2.x` once we have a known-good release.
+# =============================================================================
+
+FROM quay.io/openbao/openbao:latest
+
+# Production config (file-backend at /vault/data, internal-only listener).
+COPY deploy/fly/openbao-config.hcl /etc/openbao/openbao.hcl
+
+# The file-backend writes here; matches the [mounts] destination in
+# fly.openbao.toml so the Fly-volume persists state across machine restarts.
+VOLUME ["/vault/data"]
+
+EXPOSE 8200
+
+# `disable_mlock` is set in the HCL (Fly containers lack CAP_IPC_LOCK by
+# default). If you upgrade to a dedicated VM and grant the cap, flip
+# `disable_mlock` to false.
+CMD ["server", "-config=/etc/openbao/openbao.hcl"]

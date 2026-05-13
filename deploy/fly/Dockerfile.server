@@ -1,0 +1,94 @@
+# syntax=docker/dockerfile:1.7
+# =============================================================================
+# Dockerfile.server — multi-stage build for apps/server (Fly.io target)
+# =============================================================================
+# Plan-Ref: deploy/fly/README.md, deploy/fly/deploy.sh.
+#
+# Build context = repo root. Compose the npm-workspace install in `deps`,
+# `tsc`-build in `build`, runtime in `runtime`. Final image ships only the
+# server's `dist/`, migrations, scripts, and node_modules (no source).
+#
+# Image size target: ~150 MB. Alpine + tsc-output + no devDeps.
+# =============================================================================
+
+# ─── deps ────────────────────────────────────────────────────────────────
+# Cache npm install against package.json + lockfile only — change to source
+# does not invalidate this layer.
+FROM node:22-alpine AS deps
+WORKDIR /app
+
+# Workspace root manifests
+COPY package.json package-lock.json* ./
+
+# Per-workspace manifests so `npm ci` resolves the right deps graph.
+COPY packages/core/package.json    packages/core/
+COPY packages/adapters/package.json packages/adapters/
+COPY apps/server/package.json      apps/server/
+COPY apps/web/package.json         apps/web/
+
+# Full install incl. devDeps — we need tsc to build. Pruned in `runtime`.
+RUN npm ci --no-audit --no-fund
+
+# ─── build ───────────────────────────────────────────────────────────────
+FROM node:22-alpine AS build
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/package.json /app/package-lock.json* ./
+COPY tsconfig.base.json ./
+COPY packages/core    packages/core
+COPY packages/adapters packages/adapters
+COPY apps/server      apps/server
+
+# Build core+adapters first (server depends on them), then the server itself.
+RUN npm run build -w @mcp-approval2/core \
+  && npm run build -w @mcp-approval2/adapters \
+  && npm run build -w @mcp-approval2/server
+
+# ─── prod-deps ───────────────────────────────────────────────────────────
+# Re-install with --omit=dev so the runtime layer has no tsc/vitest/tsx.
+FROM node:22-alpine AS prod-deps
+WORKDIR /app
+COPY package.json package-lock.json* ./
+COPY packages/core/package.json    packages/core/
+COPY packages/adapters/package.json packages/adapters/
+COPY apps/server/package.json      apps/server/
+COPY apps/web/package.json         apps/web/
+RUN npm ci --omit=dev --no-audit --no-fund
+
+# ─── runtime ─────────────────────────────────────────────────────────────
+FROM node:22-alpine AS runtime
+WORKDIR /app
+ENV NODE_ENV=production \
+    PORT=8787
+
+# Non-root user — Fly machines run as root by default but principle of
+# least privilege still applies for any exec/shell sessions.
+RUN addgroup -S app && adduser -S app -G app
+
+# Production deps (no tsc/vitest).
+COPY --from=prod-deps --chown=app:app /app/node_modules ./node_modules
+
+# Built workspaces.
+COPY --from=build --chown=app:app /app/packages/core/dist     packages/core/dist
+COPY --from=build --chown=app:app /app/packages/core/package.json packages/core/
+COPY --from=build --chown=app:app /app/packages/adapters/dist packages/adapters/dist
+COPY --from=build --chown=app:app /app/packages/adapters/package.json packages/adapters/
+COPY --from=build --chown=app:app /app/apps/server/dist       apps/server/dist
+COPY --from=build --chown=app:app /app/apps/server/package.json apps/server/
+
+# Migration SQL + bootstrap scripts — needed for `db:migrate` step.
+COPY --from=build --chown=app:app /app/apps/server/migrations apps/server/migrations
+COPY --from=build --chown=app:app /app/apps/server/scripts    apps/server/scripts
+
+# Root manifests so npm-workspace symlinks resolve at runtime.
+COPY --chown=app:app package.json ./
+
+USER app
+WORKDIR /app/apps/server
+EXPOSE 8787
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget -q --spider http://localhost:8787/health || exit 1
+
+# `dist/index.js` is the entry produced by tsc (rootDir=src, outDir=dist).
+CMD ["node", "--enable-source-maps", "dist/index.js"]

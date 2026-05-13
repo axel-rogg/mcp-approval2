@@ -1,0 +1,78 @@
+# =============================================================================
+# .dockerignore — keep the build context small + secret-free.
+# =============================================================================
+# Mirrors `.gitignore` + adds anything the build doesn't need (docs, tests,
+# editor metadata). This is critical: Fly uploads the entire build context
+# to its remote builder, and node_modules at the repo root can be hundreds
+# of MB → minutes added to every deploy.
+# =============================================================================
+
+# ─── Dependencies ────────────────────────────────────────────────────────
+node_modules
+**/node_modules
+
+# ─── Build output ────────────────────────────────────────────────────────
+dist
+build
+**/dist
+**/build
+coverage
+**/coverage
+*.tsbuildinfo
+
+# ─── VCS / CI ────────────────────────────────────────────────────────────
+.git
+.gitignore
+.github
+.gitattributes
+
+# ─── Editor / OS ─────────────────────────────────────────────────────────
+.vscode
+.idea
+*.swp
+.DS_Store
+Thumbs.db
+
+# ─── Env / Secrets ───────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets
+
+# ─── Tests + docs ────────────────────────────────────────────────────────
+# Build doesn't need them; runtime gets exactly what's in apps/server/dist.
+**/*.test.ts
+**/*.spec.ts
+**/__tests__
+**/tests
+**/test
+**/__mocks__
+docs
+*.md
+!apps/server/migrations/README.md
+
+# ─── Logs / tmp ──────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+.npm
+.cache
+tmp
+.tmp
+
+# ─── Local dev infrastructure ────────────────────────────────────────────
+docker-compose.yml
+docker-compose.*.yml
+scripts/postgres-init
+scripts/dev.sh
+scripts/db-reset.sh
+
+# ─── Misc ────────────────────────────────────────────────────────────────
+.husky
+.editorconfig
+biome.json
+vitest.workspace.ts
+**/vitest.config.ts
+**/vitest.config.mjs
+**/vitest.config.js

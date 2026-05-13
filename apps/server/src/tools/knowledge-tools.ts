@@ -118,7 +118,7 @@ export function makeKnowledgeDocsListTool(
         (args as { limit?: number }).limit = input.limit;
       }
       if (input.cursor !== undefined) {
-        (args as { cursor?: string }).cursor = input.cursor;
+        (args as { cursor?: number }).cursor = input.cursor;
       }
       return deps.knowledge.listObjects(args);
     },
@@ -146,7 +146,7 @@ export function makeKnowledgeSkillsListTool(
         (args as { limit?: number }).limit = input.limit;
       }
       if (input.cursor !== undefined) {
-        (args as { cursor?: string }).cursor = input.cursor;
+        (args as { cursor?: number }).cursor = input.cursor;
       }
       return deps.knowledge.listObjects(args);
     },

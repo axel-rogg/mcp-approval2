@@ -1,0 +1,107 @@
+/**
+ * Cloudflare Workers deployment config for mcp-approval2 (alt. deploy target).
+ *
+ * This is the SECONDARY deployment path — the primary is Fly.io + Postgres +
+ * OpenBao + MinIO (see deploy/fly/ + docker-compose.yml). The CF variant is a
+ * private-only, free-tier deploy for a single operator who accepts the trust
+ * shift described in apps/server/src/cf/README.md.
+ *
+ * Bindings:
+ *   - DB    : D1 (SQLite-on-the-edge). NO RLS — app-layer repository pattern
+ *             must enforce every owner_id WHERE filter. See cf/d1-adapter.ts.
+ *   - BLOB  : R2 bucket in EU jurisdiction.
+ *   - VEC   : Vectorize index (768-dim cosine — matches @cf/baai/bge-base-en-v1.5
+ *             AND vertex text-embedding-005 for parity with the Node path).
+ *   - AI    : Workers AI binding (embeddings + chat fallback). Optional: route
+ *             upstream via AI Gateway by setting `AI_GATEWAY_ID` (var) — that
+ *             toggles cost/observability without code changes.
+ *
+ * Secrets (set via `wrangler secret put <name>`, NOT in this file):
+ *   - GOOGLE_OAUTH_CLIENT_ID         (Google OAuth 2.0 client id)
+ *   - GOOGLE_OAUTH_CLIENT_SECRET     (Google OAuth 2.0 client secret)
+ *   - MASTER_KEY                     (base64, 32 raw bytes — for LocalKekProvider)
+ *   - JWT_SECRET                     (>=32 chars, session HS256 fallback)
+ *   - JWT_RS256_PRIVATE_KEY_PEM      (PKCS#8 PEM, for service-boundary JWTs)
+ *   - JWT_RS256_PUBLIC_KEY_PEM       (SPKI PEM, for JWKS export)
+ *   - JWT_KID                        (kid claim used in JWS headers)
+ *   - MCP_APPROVAL_INTERNAL_TOKEN    (>=32 chars, for /internal/v1/* routes)
+ *
+ * Deploy: bash deploy/cloudflare/deploy.sh
+ */
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mcp-approval2",
+  "main": "apps/server/src/cf/worker.ts",
+  "compatibility_date": "2026-05-13",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "minify": true,
+
+  // ── D1 (SQLite at the edge) ───────────────────────────────────────────
+  // database_id is filled in by `deploy/cloudflare/deploy.sh` after the
+  // one-shot `wrangler d1 create`. Leave the placeholder so an accidental
+  // `wrangler deploy` without the bootstrap script fails fast.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "mcp-approval2",
+      "database_id": "REPLACE_ME_AFTER_wrangler_d1_create",
+      "migrations_dir": "apps/server/migrations-d1"
+    }
+  ],
+
+  // ── R2 (S3-compatible object storage, EU jurisdiction) ────────────────
+  "r2_buckets": [
+    {
+      "binding": "BLOB",
+      "bucket_name": "mcp-approval2-eu",
+      "jurisdiction": "eu"
+    }
+  ],
+
+  // ── Vectorize (pgvector replacement) ─────────────────────────────────
+  // 768 dimensions = bge-base-en-v1.5 OR vertex text-embedding-005.
+  // Cosine matches both. If you re-pick an embedding model, recreate the
+  // index — Vectorize indexes are immutable in dimension/metric.
+  "vectorize": [
+    {
+      "binding": "VEC",
+      "index_name": "mcp-approval2-objects"
+    }
+  ],
+
+  // ── Workers AI binding ────────────────────────────────────────────────
+  "ai": {
+    "binding": "AI"
+  },
+
+  // ── Non-secret vars ───────────────────────────────────────────────────
+  // RP_ID / BASE_URL get bumped to your real custom domain post-bootstrap
+  // (the workers.dev origin is fine for a solo install).
+  "vars": {
+    "NODE_ENV": "production",
+    "LOG_LEVEL": "info",
+    "DATABASE_DIALECT": "sqlite",
+    "DATABASE_URL": "d1:DB",
+    "ORIGIN": "https://mcp-approval2.your-account.workers.dev",
+    "RP_ID": "mcp-approval2.your-account.workers.dev",
+    "RP_NAME": "mcp-approval2",
+    "RP_ORIGIN": "https://mcp-approval2.your-account.workers.dev",
+    "BASE_URL": "https://mcp-approval2.your-account.workers.dev",
+    "WEBAUTHN_RP_ID": "mcp-approval2.your-account.workers.dev",
+    "GOOGLE_REDIRECT_URI": "https://mcp-approval2.your-account.workers.dev/auth/google/callback",
+    "JWT_ISSUER": "mcp-approval2",
+    "JWT_AUDIENCE": "mcp-approval2-api"
+  },
+
+  // ── Observability ─────────────────────────────────────────────────────
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+
+  // Optional: enable a custom domain after DNS + cert provisioning.
+  // "routes": [
+  //   { "pattern": "mcp-approval2.example.org", "custom_domain": true }
+  // ]
+}

@@ -2,6 +2,8 @@
  * Knowledge-Adapter — re-exports.
  *
  * Plan-Reference: docs/plans/active/PLAN-architecture-v1.md §2.1 + §7.
+ * Wire-Reference: /workspaces/mcp-knowledge2/docs/CROSS-SERVICE-CONTRACT.md
+ *                 + /workspaces/mcp-approval2/docs/CROSS-SERVICE-CONTRACT-RESOLUTION.md
  */
 
 export type {
@@ -18,6 +20,7 @@ export type {
   CreateShareArgs,
   EraseUserArgs,
   EraseUserResult,
+  GetObjectArgs,
   KnowledgeAdapter,
   ListObjectsArgs,
   ListSharesArgs,

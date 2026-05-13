@@ -72,6 +72,7 @@ export type {
   EraseUserArgs,
   EraseUserResult,
   FetchLike,
+  GetObjectArgs,
   HttpKnowledgeAdapterOptions,
   JwtSigner,
   KnowledgeAdapter,

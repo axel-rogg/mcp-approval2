@@ -108,7 +108,13 @@ export class KnowledgeService {
       args.kind,
       undefined,
       () => this.adapter.listObjects(args),
-      (result) => ({ details: { kind: args.kind, count: result.items.length, hasMore: result.hasMore } }),
+      (result) => ({
+        details: {
+          kind: args.kind,
+          count: result.items.length,
+          hasMore: result.nextCursor !== null,
+        },
+      }),
     );
   }
 

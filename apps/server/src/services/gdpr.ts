@@ -421,7 +421,7 @@ async function* exportUserDataImpl(args: {
   //    Iteriere durch alle vier kinds, paginiert.
   if (knowledge) {
     for (const kind of ['doc', 'skill', 'app', 'memo'] as const) {
-      let cursor: string | null = null;
+      let cursor: number | null = null;
       do {
         const page: import('@mcp-approval2/adapters').ObjectsList = await (
           knowledge as KnowledgeService
@@ -436,8 +436,8 @@ async function* exportUserDataImpl(args: {
             row: obj as unknown as Record<string, unknown>,
           };
         }
-        cursor = page.cursor;
-      } while (cursor);
+        cursor = page.nextCursor;
+      } while (cursor !== null);
     }
   }
 }
