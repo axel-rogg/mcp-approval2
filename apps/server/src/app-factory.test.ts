@@ -290,3 +290,138 @@ describe('createApp — cost gate disabled when dailyLimitUsd=0', () => {
     expect(res.status).toBe(401);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Burst-7 route-mount tests
+// ---------------------------------------------------------------------------
+
+describe('createApp — Burst-7 route mounts', () => {
+  it('GET /v1/apps without Bearer → 401 (apps route mounted when knowledge present)', async () => {
+    // Stub a minimal KnowledgeService so AppsService is built.
+    const knowledge = {
+      listObjects: vi.fn(async () => ({ items: [], cursor: null })),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any;
+    const app = await createApp(makeServer(), {
+      approvals: makeStubApprovals(),
+      costTracker: makeStubCostTracker(),
+      disableRateLimit: true,
+      knowledge,
+    });
+    const res = await app.request('/v1/apps');
+    expect(res.status).toBe(401);
+  });
+
+  it('GET /v1/apps WITHOUT knowledge service → 404 (apps route not mounted)', async () => {
+    const app = await createApp(makeServer(), {
+      approvals: makeStubApprovals(),
+      costTracker: makeStubCostTracker(),
+      disableRateLimit: true,
+    });
+    const res = await app.request('/v1/apps');
+    expect(res.status).toBe(404);
+  });
+
+  it('POST /v1/push/subscribe without Bearer → 401 (push mounted when pushEnv set)', async () => {
+    const app = await createApp(makeServer(), {
+      approvals: makeStubApprovals(),
+      costTracker: makeStubCostTracker(),
+      disableRateLimit: true,
+      pushEnv: {
+        VAPID_PUBLIC_KEY: 'AAA',
+        VAPID_PRIVATE_KEY: 'BBB',
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      push: { subscribe: vi.fn(), unsubscribe: vi.fn(), listSubscriptions: vi.fn(), send: vi.fn() } as any,
+    });
+    const res = await app.request('/v1/push/subscribe', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        endpoint: 'https://push.example/x',
+        keys: { p256dh: 'x', auth: 'y' },
+      }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('GET /v1/push/vapid is public (200 when key set)', async () => {
+    const app = await createApp(makeServer(), {
+      approvals: makeStubApprovals(),
+      costTracker: makeStubCostTracker(),
+      disableRateLimit: true,
+      pushEnv: {
+        VAPID_PUBLIC_KEY: 'PUB',
+        VAPID_PRIVATE_KEY: 'PRIV',
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      push: { subscribe: vi.fn(), unsubscribe: vi.fn(), listSubscriptions: vi.fn(), send: vi.fn() } as any,
+    });
+    const res = await app.request('/v1/push/vapid');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { publicKey: string };
+    expect(body.publicKey).toBe('PUB');
+  });
+
+  it('POST /writemode/start WITHOUT SMOKE_TEST_KEY → 404 (not mounted, leak-safe)', async () => {
+    const app = await createApp(makeServer(), {
+      approvals: makeStubApprovals(),
+      costTracker: makeStubCostTracker(),
+      disableRateLimit: true,
+    });
+    const res = await app.request('/writemode/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ expires_at: Date.now() + 60_000, hmac_sig: 'aa' }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('POST /writemode/start WITH SMOKE_TEST_KEY but invalid sig → 401', async () => {
+    const app = await createApp(makeServer(), {
+      approvals: makeStubApprovals(),
+      costTracker: makeStubCostTracker(),
+      disableRateLimit: true,
+      smokeTestKey: 'pre-shared-secret-32-chars-or-more-12345',
+    });
+    const res = await app.request('/writemode/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        expires_at: Date.now() + 60_000,
+        hmac_sig: 'deadbeef',
+      }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('POST /internal/v1/cron/:task WITHOUT internal token → 404 (routes not mounted)', async () => {
+    const app = await createApp(makeServer(), {
+      approvals: makeStubApprovals(),
+      costTracker: makeStubCostTracker(),
+      disableRateLimit: true,
+    });
+    const res = await app.request('/internal/v1/cron/sweep-output-refs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('POST /internal/v1/cron/:task WITH internal token but no Bearer → 401', async () => {
+    const token = 'service-secret-32-bytes-or-longer-token';
+    const app = await createApp(makeServer(), {
+      approvals: makeStubApprovals(),
+      costTracker: makeStubCostTracker(),
+      disableRateLimit: true,
+      internalServiceToken: token,
+    });
+    const res = await app.request('/internal/v1/cron/sweep-output-refs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(res.status).toBe(401);
+  });
+});

@@ -268,18 +268,53 @@ describe('registerCoreTools', () => {
     const names = registry.list().map((t) => t.name);
     expect(names).toEqual(
       [
-        'credentials.add',
-        'credentials.delete',
-        'credentials.list',
+        // System
+        'system.echo',
+        'system.health',
+        // User (canonical + extended DTO)
+        'user.profile.read',
+        'user.profile.update',
+        'user.get',
+        'user.set',
+        // Knowledge (canonical helpers)
         'knowledge.docs.create',
         'knowledge.docs.list',
         'knowledge.docs.read',
         'knowledge.search',
         'knowledge.skills.list',
-        'system.echo',
-        'system.health',
-        'user.profile.read',
-        'user.profile.update',
+        // KC-Wrappers — docs.*
+        'docs.put',
+        'docs.get',
+        'docs.list',
+        'docs.delete',
+        'docs.usages',
+        'docs.attach_to',
+        'docs.update_summary',
+        // KC-Wrappers — skills.*
+        'skills.put',
+        'skills.get',
+        'skills.list',
+        'skills.delete',
+        'skills.search',
+        'skills.read_resource',
+        'skills.attach_resource',
+        // KC-Wrappers — memorize.*
+        'memorize.add',
+        'memorize.search',
+        'memorize.list_recent',
+        'memorize.delete',
+        // KC-Wrappers — objects.*
+        'objects.list',
+        'objects.read',
+        // Credentials
+        'credentials.add',
+        'credentials.delete',
+        'credentials.list',
+        // Util
+        'util.now',
+        'util.uuid',
+        // Display
+        'display',
       ].sort(),
     );
   });

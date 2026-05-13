@@ -147,6 +147,234 @@ export class KnowledgeService {
   }
 
   // ---------------------------------------------------------------------------
+  // Knowledge-Graph: skill ↔ doc resource-refs.
+  //
+  // KC2 hat heute keine dedizierten /v1/refs-Routes (vgl. KC1.skill_resource +
+  // object_refs); wir modellieren die Beziehung im `meta`-Feld des Skill-
+  // Objekts unter `meta.resource_ids: string[]`. Das ist forward-compatible —
+  // sobald KC2 native refs hat, wird hier umgestellt ohne dass Tool-Caller
+  // angefasst werden muessen.
+  //
+  // Achtung: refcount + Vectorize-Cleanup laufen heute NICHT (Folge-Plan).
+  // Diese Wrapper sind die Approval-Surface; KC2 owns die Persistenz.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Haengt `doc` als Resource an `skill` an (Idempotent).
+   * Returns: updated skill object.
+   */
+  async attachDocToSkill(args: {
+    userId: string;
+    skillId: string;
+    docId: string;
+  }): Promise<KnowledgeObject> {
+    const skill = await this.adapter.getObject({ id: args.skillId, userId: args.userId });
+    const current = readResourceIds(skill.meta);
+    if (current.includes(args.docId)) {
+      return skill; // idempotent
+    }
+    const next = [...current, args.docId];
+    return this.audited(
+      'knowledge.skill.attach_resource',
+      args.userId,
+      'skill',
+      args.skillId,
+      () =>
+        this.adapter.updateObject({
+          id: args.skillId,
+          userId: args.userId,
+          patch: { meta: mergeMeta(skill.meta, { resource_ids: next }) },
+        }),
+      () => ({ details: { docId: args.docId, count: next.length } }),
+    );
+  }
+
+  /**
+   * Batch-attach: ein doc an N skills haengen (ein Audit-Event pro skill —
+   * Approval-Tooling buendelt das in einen einzigen Approval-Click).
+   */
+  async attachDocToSkills(args: {
+    userId: string;
+    docId: string;
+    skillIds: ReadonlyArray<string>;
+  }): Promise<{ attached: ReadonlyArray<string>; alreadyPresent: ReadonlyArray<string> }> {
+    const attached: string[] = [];
+    const alreadyPresent: string[] = [];
+    for (const skillId of args.skillIds) {
+      const skill = await this.adapter.getObject({ id: skillId, userId: args.userId });
+      const current = readResourceIds(skill.meta);
+      if (current.includes(args.docId)) {
+        alreadyPresent.push(skillId);
+        continue;
+      }
+      const next = [...current, args.docId];
+      await this.adapter.updateObject({
+        id: skillId,
+        userId: args.userId,
+        patch: { meta: mergeMeta(skill.meta, { resource_ids: next }) },
+      });
+      attached.push(skillId);
+    }
+    await this.audit.emit({
+      action: 'knowledge.doc.attach_to',
+      actorUserId: args.userId,
+      result: 'success',
+      resourceKind: 'doc',
+      resourceId: args.docId,
+      details: {
+        attached: attached.length,
+        alreadyPresent: alreadyPresent.length,
+        targets: args.skillIds.length,
+      },
+    });
+    return { attached, alreadyPresent };
+  }
+
+  /**
+   * Berechnet incoming/outgoing refs fuer ein doc:
+   *   - incoming: alle skills mit `meta.resource_ids` containing docId
+   *   - outgoing: leer (docs verweisen heute nicht out)
+   *
+   * Implementation: list skills (paginiert), client-side filter. Bei
+   * grossen Skill-Inventaren ist das suboptimal; KC2 muss eine refs-Route
+   * bekommen (TODO). Fuer < 200 skills akzeptabel.
+   */
+  async docUsages(args: { userId: string; docId: string }): Promise<{
+    incoming: ReadonlyArray<{ kind: 'skill'; id: string; title: string | null }>;
+    outgoing: ReadonlyArray<{ kind: string; id: string }>;
+  }> {
+    return this.audited(
+      'knowledge.doc.usages',
+      args.userId,
+      'doc',
+      args.docId,
+      async () => {
+        const incoming: Array<{ kind: 'skill'; id: string; title: string | null }> = [];
+        let cursor: number | null = null;
+        // Hard limit: max 5 pages * 200 = 1000 skills scanned.
+        for (let page = 0; page < 5; page += 1) {
+          const listArgs: ListObjectsArgs =
+            cursor === null
+              ? { userId: args.userId, kind: 'skill', limit: 200 }
+              : { userId: args.userId, kind: 'skill', limit: 200, cursor };
+          const list = await this.adapter.listObjects(listArgs);
+          for (const skill of list.items) {
+            const ids = readResourceIds(skill.meta);
+            if (ids.includes(args.docId)) {
+              incoming.push({ kind: 'skill', id: skill.id, title: skill.title });
+            }
+          }
+          if (list.nextCursor === null) break;
+          cursor = list.nextCursor;
+        }
+        return { incoming, outgoing: [] };
+      },
+      (r) => ({ details: { incoming: r.incoming.length } }),
+    );
+  }
+
+  /**
+   * Read attached doc — Convenience-Wrapper: verifiziert, dass docId in
+   * skill.meta.resource_ids steht (gegen ID-Probing), dann liest das doc
+   * mit body.
+   */
+  async readSkillResource(args: {
+    userId: string;
+    skillId: string;
+    resourceId: string;
+  }): Promise<KnowledgeObject> {
+    const skill = await this.adapter.getObject({ id: args.skillId, userId: args.userId });
+    const ids = readResourceIds(skill.meta);
+    if (!ids.includes(args.resourceId)) {
+      throw new Error(`resource '${args.resourceId}' not attached to skill '${args.skillId}'`);
+    }
+    return this.audited(
+      'knowledge.skill.read_resource',
+      args.userId,
+      'doc',
+      args.resourceId,
+      () => this.adapter.getObject({ id: args.resourceId, userId: args.userId, expandBody: true }),
+      () => ({ details: { skillId: args.skillId } }),
+    );
+  }
+
+  /**
+   * Update encrypted summary fuer ein doc; triggert Vectorize-Re-Embed.
+   * Mapping: description-Feld haelt den Summary-Text (KC2-side wird das
+   * fuer FTS + ggf. Vector-Embedding benutzt).
+   */
+  async updateDocSummary(args: {
+    userId: string;
+    docId: string;
+    summary: string;
+    reEmbed?: boolean;
+  }): Promise<KnowledgeObject> {
+    const patch: Parameters<KnowledgeAdapter['updateObject']>[0]['patch'] = {
+      description: args.summary,
+      reEmbed: args.reEmbed ?? true,
+    };
+    return this.audited(
+      'knowledge.doc.update_summary',
+      args.userId,
+      'doc',
+      args.docId,
+      () => this.adapter.updateObject({ id: args.docId, userId: args.userId, patch }),
+      () => ({ details: { summaryLength: args.summary.length, reEmbed: args.reEmbed ?? true } }),
+    );
+  }
+
+  /**
+   * Bulk-Delete: sequenziell (KC2 hat kein /v1/objects/bulk_delete).
+   * Mit `dryRun=true` werden nur die IDs verifiziert (getObject), ohne zu
+   * loeschen — fuer Preview-Listing in der PWA.
+   */
+  async bulkDelete(args: {
+    userId: string;
+    ids: ReadonlyArray<string>;
+    dryRun?: boolean;
+  }): Promise<{
+    deleted: ReadonlyArray<string>;
+    notFound: ReadonlyArray<string>;
+    failed: ReadonlyArray<{ id: string; error: string }>;
+    dryRun: boolean;
+  }> {
+    const deleted: string[] = [];
+    const notFound: string[] = [];
+    const failed: Array<{ id: string; error: string }> = [];
+    for (const id of args.ids) {
+      try {
+        if (args.dryRun) {
+          // Verify existence — getObject throws on 404.
+          await this.adapter.getObject({ id, userId: args.userId });
+          deleted.push(id);
+        } else {
+          await this.adapter.deleteObject({ id, userId: args.userId });
+          deleted.push(id);
+        }
+      } catch (err) {
+        const msg = errorMessage(err);
+        if (msg.toLowerCase().includes('not found') || msg.includes('404')) {
+          notFound.push(id);
+        } else {
+          failed.push({ id, error: msg });
+        }
+      }
+    }
+    await this.audit.emit({
+      action: args.dryRun ? 'knowledge.bulk_delete.preview' : 'knowledge.bulk_delete',
+      actorUserId: args.userId,
+      result: failed.length === 0 ? 'success' : 'failure',
+      details: {
+        requested: args.ids.length,
+        deleted: deleted.length,
+        notFound: notFound.length,
+        failed: failed.length,
+      },
+    });
+    return { deleted, notFound, failed, dryRun: args.dryRun ?? false };
+  }
+
+  // ---------------------------------------------------------------------------
   // Sharing
   // ---------------------------------------------------------------------------
 
@@ -286,6 +514,20 @@ export class KnowledgeService {
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+function readResourceIds(meta: Record<string, unknown> | null | undefined): string[] {
+  if (!meta) return [];
+  const v = meta['resource_ids'];
+  if (!Array.isArray(v)) return [];
+  return v.filter((x): x is string => typeof x === 'string');
+}
+
+function mergeMeta(
+  existing: Record<string, unknown> | null | undefined,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  return { ...(existing ?? {}), ...patch };
 }
 
 // =============================================================================

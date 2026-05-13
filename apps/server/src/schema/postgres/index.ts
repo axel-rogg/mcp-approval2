@@ -25,3 +25,5 @@ export type {
 } from './sub-mcp.js';
 export { pendingApprovalsTable } from './approvals.js';
 export { costLedgerTable } from './cost.js';
+export { userPrefsTable } from './prefs.js';
+export { pushSubscriptionsTable, type PushSubscriptionRow } from './push.js';

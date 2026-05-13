@@ -22,6 +22,7 @@ import type {
   refreshTokensTable,
   revokedJtisTable,
   sessionsTable,
+  userPrefsTable,
   usersTable,
   webauthnCredentialsTable,
 } from './postgres/index.js';
@@ -77,6 +78,10 @@ export type NewPendingApproval = typeof pendingApprovalsTable.$inferInsert;
 // cost_ledger
 export type CostLedgerEntry = typeof costLedgerTable.$inferSelect;
 export type NewCostLedgerEntry = typeof costLedgerTable.$inferInsert;
+
+// user_prefs
+export type UserPrefs = typeof userPrefsTable.$inferSelect;
+export type NewUserPrefs = typeof userPrefsTable.$inferInsert;
 
 /**
  * Discriminated-union literals (handgepflegt — Drizzle leitet TEXT-Spalten

@@ -44,6 +44,64 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+// ---------------------------------------------------------------------------
+// Push notifications (Burst 7).
+//
+// Server sends JSON-encoded `{ title, body, tag?, url? }` payloads (RFC 8291
+// encrypted body). If decryption fails (event.data missing), we ignore the
+// event silently. tag-based deduplication is delegated to the browser.
+// ---------------------------------------------------------------------------
+
+self.addEventListener('push', (event) => {
+  if (!event.data) return;
+  let data = {};
+  try {
+    data = event.data.json();
+  } catch {
+    try {
+      data = { title: 'mcp-approval2', body: event.data.text() };
+    } catch {
+      return;
+    }
+  }
+  const title = data.title || 'mcp-approval2';
+  const opts = {
+    body: data.body || '',
+    icon: '/icon-192.svg',
+    badge: '/icon-192.svg',
+  };
+  if (data.tag) opts.tag = data.tag;
+  if (data.url) opts.data = { url: data.url };
+
+  event.waitUntil(self.registration.showNotification(title, opts));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = event.notification.data && event.notification.data.url;
+  const url = target || '/';
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: 'window', includeUncontrolled: true })
+      .then((clientsArr) => {
+        // Re-use an existing window if one matches the target origin.
+        for (const c of clientsArr) {
+          if (c.url.includes(self.location.origin) && 'focus' in c) {
+            c.focus();
+            try {
+              c.navigate(url);
+            } catch {
+              // ignore — some browsers don't allow navigate from SW
+            }
+            return undefined;
+          }
+        }
+        if (self.clients.openWindow) return self.clients.openWindow(url);
+        return undefined;
+      }),
+  );
+});
+
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
