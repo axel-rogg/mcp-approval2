@@ -1,0 +1,30 @@
+{
+  "name": "@mcp-approval2/core",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Core crypto + shared primitives for mcp-approval2 (AES-GCM, HKDF, AAD-Builder, JWT, PRF-XOR). Web-Crypto-API based, runs on Node 20+ and CF Workers.",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./crypto": "./src/crypto/index.ts"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.5.0",
+    "jose": "^5.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.0"
+  }
+}

@@ -1,0 +1,123 @@
+/**
+ * WebAuthn Passkey-Enrollment mit PRF-Extension.
+ *
+ * Plan-Ref: PLAN-architecture-v1.md §3.4 (Passkey-Enrollment).
+ *
+ * PRF: wir fordern bei Enrollment `extensions.prf` an. Der Authenticator
+ * meldet zurueck, ob er PRF supported. Das speichern wir als `prf_supported`
+ * in `webauthn_credentials`. Echte PRF-Eval-Outputs werden NICHT bei der
+ * Enrollment uebertragen — nur bei Login (siehe authentication.ts).
+ */
+import {
+  generateRegistrationOptions,
+  verifyRegistrationResponse,
+  type GenerateRegistrationOptionsOpts,
+  type VerifiedRegistrationResponse,
+} from '@simplewebauthn/server';
+import type { RegistrationResponseJSON } from '@simplewebauthn/types';
+import type { DbAdapter } from '@mcp-approval2/adapters';
+import type { AppConfig } from '../../lib/config.js';
+import { HttpError } from '../../lib/errors.js';
+
+export interface EnrollBeginInput {
+  readonly userId: string;
+  readonly email: string;
+  readonly displayName: string;
+  /** Salt fuer PRF-eval (32 random bytes) — pro Credential einzigartig. */
+  readonly prfSalt: Uint8Array;
+}
+
+export interface EnrollBeginResult {
+  readonly options: Awaited<ReturnType<typeof generateRegistrationOptions>>;
+  /** Challenge muss aus `options.challenge` extrahiert werden — Caller speichert sie pro Session. */
+  readonly challenge: string;
+}
+
+export async function beginRegistration(
+  config: AppConfig,
+  input: EnrollBeginInput,
+): Promise<EnrollBeginResult> {
+  const opts: GenerateRegistrationOptionsOpts = {
+    rpName: config.RP_NAME,
+    rpID: config.RP_ID,
+    userID: new TextEncoder().encode(input.userId),
+    userName: input.email,
+    userDisplayName: input.displayName,
+    attestationType: 'none',
+    authenticatorSelection: {
+      residentKey: 'preferred',
+      userVerification: 'preferred',
+    },
+    extensions: {
+      // PRF-Extension nicht im DOM-Type, aber im Spec.
+      ...({ prf: { eval: { first: input.prfSalt } } } as Record<string, unknown>),
+    },
+    supportedAlgorithmIDs: [-7, -257], // ES256 + RS256
+  };
+  const options = await generateRegistrationOptions(opts);
+  return { options, challenge: options.challenge };
+}
+
+export interface EnrollFinishInput {
+  readonly userId: string;
+  readonly response: RegistrationResponseJSON;
+  readonly expectedChallenge: string;
+}
+
+export interface EnrollFinishResult {
+  readonly credentialId: string;
+  readonly publicKey: Uint8Array;
+  readonly counter: number;
+  readonly prfSupported: boolean;
+  readonly transports: ReadonlyArray<string>;
+}
+
+export async function finishRegistration(
+  config: AppConfig,
+  db: DbAdapter,
+  input: EnrollFinishInput,
+): Promise<EnrollFinishResult> {
+  const verification: VerifiedRegistrationResponse = await verifyRegistrationResponse({
+    response: input.response,
+    expectedChallenge: input.expectedChallenge,
+    expectedOrigin: config.RP_ORIGIN,
+    expectedRPID: config.RP_ID,
+    requireUserVerification: false,
+  });
+  if (!verification.verified || !verification.registrationInfo) {
+    throw HttpError.badRequest('webauthn_verification_failed', 'registration verification failed');
+  }
+  const credential = verification.registrationInfo.credential;
+  const credentialId = credential.id;
+  const publicKey = credential.publicKey;
+  const counter = credential.counter;
+
+  // PRF-Support-Detection: wenn die Authenticator-Antwort einen `prf`-Extension-Result
+  // mit `enabled: true` hat → supported.
+  const ext = input.response.clientExtensionResults as unknown as { prf?: { enabled?: boolean } } | undefined;
+  const prfSupported = ext?.prf?.enabled === true;
+
+  const scoped = await db.scoped(input.userId);
+  await scoped.query(
+    `INSERT INTO webauthn_credentials
+       (user_id, credential_id, public_key, counter, prf_supported, transports, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+    [
+      input.userId,
+      credentialId,
+      Buffer.from(publicKey),
+      counter,
+      prfSupported,
+      JSON.stringify(input.response.response.transports ?? []),
+      Date.now(),
+    ],
+  );
+
+  return {
+    credentialId,
+    publicKey,
+    counter,
+    prfSupported,
+    transports: input.response.response.transports ?? [],
+  };
+}

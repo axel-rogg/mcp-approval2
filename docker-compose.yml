@@ -1,0 +1,114 @@
+name: mcp-approval2-dev
+
+services:
+  postgres:
+    # pgvector/pgvector ships Postgres 16 with the pgvector extension pre-installed.
+    # We need pgvector for objects_vec (vector(768) embeddings from Vertex AI
+    # text-embedding-005 — see PLAN-architecture-v1.md §7.3).
+    image: pgvector/pgvector:pg16
+    container_name: mcp-approval2-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DATABASE_USER:-postgres}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-postgres}
+      POSTGRES_DB: ${DATABASE_NAME:-mcp_approval2}
+      # Enable trust-auth only inside the container network. We expose
+      # 5432 to localhost only, never to 0.0.0.0.
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256"
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/postgres-init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - mcp-approval2-dev
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-postgres} -d ${DATABASE_NAME:-mcp_approval2}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  openbao:
+    # OpenBao = HashiCorp Vault fork (MPL-2.0). Transit-Engine is API-compatible
+    # with Vault's, so the VaultTransitKekProvider (§5.2) works against either.
+    # Dev-mode is unsealed, in-memory, and accepts the VAULT_TOKEN as root token.
+    # NEVER use -dev in production.
+    image: quay.io/openbao/openbao:latest
+    container_name: mcp-approval2-openbao
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    environment:
+      BAO_DEV_ROOT_TOKEN_ID: ${VAULT_TOKEN:-root-dev-token-CHANGE-IN-PROD}
+      BAO_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+      BAO_ADDR: "http://127.0.0.1:8200"
+    command: ["server", "-dev"]
+    ports:
+      - "127.0.0.1:8200:8200"
+    networks:
+      - mcp-approval2-dev
+    healthcheck:
+      # /v1/sys/health returns 200 when initialized+unsealed+active.
+      # In dev-mode this is true after ~2s.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8200/v1/sys/health | grep -q '\"sealed\":false' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  minio:
+    # MinIO speaks S3-API, used as local stand-in for R2 / GCS in dev.
+    # In prod we'd point S3_ENDPOINT at the real object-store.
+    image: minio/minio:latest
+    container_name: mcp-approval2-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-minioadmin}
+      MINIO_DEFAULT_BUCKETS: ${S3_BUCKET:-mcp-approval2}
+    command: ["server", "/data", "--console-address", ":9001"]
+    ports:
+      - "127.0.0.1:9000:9000"   # S3-API
+      - "127.0.0.1:9001:9001"   # Web-Console
+    volumes:
+      - minio-data:/data
+    networks:
+      - mcp-approval2-dev
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+
+  # One-shot init-container: creates the S3-Bucket after MinIO is healthy.
+  # Idempotent (mb --ignore-existing). Exits 0 immediately on subsequent runs.
+  minio-init:
+    image: minio/mc:latest
+    container_name: mcp-approval2-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - mcp-approval2-dev
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${S3_ACCESS_KEY_ID:-minioadmin} ${S3_SECRET_ACCESS_KEY:-minioadmin} &&
+      mc mb --ignore-existing local/${S3_BUCKET:-mcp-approval2} &&
+      mc anonymous set none local/${S3_BUCKET:-mcp-approval2} &&
+      echo 'minio-init: bucket ${S3_BUCKET:-mcp-approval2} ready'
+      "
+    restart: "no"
+
+volumes:
+  postgres-data:
+    name: mcp-approval2-postgres-data
+  minio-data:
+    name: mcp-approval2-minio-data
+
+networks:
+  mcp-approval2-dev:
+    name: mcp-approval2-dev
+    driver: bridge

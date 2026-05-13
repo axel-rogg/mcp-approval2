@@ -1,0 +1,7 @@
+# CODEOWNERS — mcp-approval2
+#
+# Solo-Owner-Setup. Jede Aenderung im Repo erfordert Review von @axel-rogg.
+# Sobald weitere Maintainer dazukommen, hier per Pfad-Pattern eintragen
+# (siehe https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-security/customizing-your-repository/about-code-owners).
+
+* @axel-rogg
