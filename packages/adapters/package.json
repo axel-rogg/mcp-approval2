@@ -18,7 +18,10 @@
     "./kek/local": "./src/kek/local.ts",
     "./kek/openbao": "./src/kek/openbao.ts",
     "./ai": "./src/ai/interface.ts",
-    "./ai/vertex": "./src/ai/vertex.ts"
+    "./ai/vertex": "./src/ai/vertex.ts",
+    "./knowledge": "./src/knowledge/index.ts",
+    "./knowledge/http-client": "./src/knowledge/http-client.ts",
+    "./knowledge/errors": "./src/knowledge/errors.ts"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

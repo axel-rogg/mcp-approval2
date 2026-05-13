@@ -12,3 +12,8 @@ export { sessionsTable, refreshTokensTable, revokedJtisTable } from './sessions.
 export { webauthnCredentialsTable } from './webauthn.js';
 export { credentialsTable } from './credentials.js';
 export { auditLogTable } from './audit.js';
+export {
+  oauthClientsTable,
+  oauthAuthzCodesTable,
+  oauthRefreshTokensTable,
+} from './oauth.js';

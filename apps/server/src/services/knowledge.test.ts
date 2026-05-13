@@ -1,0 +1,277 @@
+/**
+ * KnowledgeService tests — Audit-Log-Emission + Adapter-Pass-Through.
+ *
+ * Wir mocken den KnowledgeAdapter komplett (in-memory Stub) und prueffen:
+ *   1. createObject ruft Adapter + emit Audit (success)
+ *   2. getObject + listObjects + updateObject + deleteObject emitten korrekt
+ *   3. Bei Adapter-Throw: audit failure, exception bubbles
+ *   4. eraseUser nimmt actorUserId separat von targetUserId
+ *   5. RequestId wird durchgereicht wenn requestIdProvider gesetzt
+ */
+import { describe, it, expect, vi } from 'vitest';
+import type { KnowledgeAdapter, KnowledgeObject, ObjectsList, Share, SearchHit } from '@mcp-approval2/adapters';
+import { KnowledgeService, type AuditService } from './knowledge.js';
+import { NotFoundError } from '@mcp-approval2/adapters/knowledge/errors';
+
+const USER_ID = '00000000-0000-0000-0000-000000000001';
+
+function makeAdapterStub(): { adapter: KnowledgeAdapter; calls: Record<string, unknown[][]> } {
+  const calls: Record<string, unknown[][]> = {};
+  function record(name: string, args: unknown[]): void {
+    calls[name] ??= [];
+    calls[name].push(args);
+  }
+  const obj: KnowledgeObject = {
+    id: 'obj-1',
+    ownerId: USER_ID,
+    kind: 'doc',
+    subtype: null,
+    title: 't',
+    description: 'd',
+    keywords: [],
+    body: 'body',
+    bodyHash: null,
+    visibility: 'private',
+    createdAt: 1,
+    updatedAt: 1,
+    deletedAt: null,
+  };
+  const list: ObjectsList = { items: [obj], cursor: null, hasMore: false };
+  const share: Share = {
+    id: 'share-1',
+    resourceId: 'obj-1',
+    resourceKind: 'doc',
+    grantedBy: USER_ID,
+    grantedTo: 'user-2',
+    scope: 'read',
+    createdAt: 1,
+    revokedAt: null,
+  };
+  const hits: ReadonlyArray<SearchHit> = [
+    { id: 'obj-1', kind: 'doc', subtype: null, title: 't', snippet: 's', score: 0.9, ownerId: USER_ID, sharedToMe: false },
+  ];
+
+  const adapter: KnowledgeAdapter = {
+    async createObject(args) {
+      record('createObject', [args]);
+      return obj;
+    },
+    async getObject(args) {
+      record('getObject', [args]);
+      return obj;
+    },
+    async listObjects(args) {
+      record('listObjects', [args]);
+      return list;
+    },
+    async updateObject(args) {
+      record('updateObject', [args]);
+      return obj;
+    },
+    async deleteObject(args) {
+      record('deleteObject', [args]);
+    },
+    async createShare(args) {
+      record('createShare', [args]);
+      return share;
+    },
+    async listShares(args) {
+      record('listShares', [args]);
+      return [share];
+    },
+    async revokeShare(args) {
+      record('revokeShare', [args]);
+    },
+    async search(args) {
+      record('search', [args]);
+      return hits;
+    },
+    async eraseUser(args) {
+      record('eraseUser', [args]);
+      return { deletedRows: 42 };
+    },
+  };
+  return { adapter, calls };
+}
+
+function makeAudit(): AuditService & { emitted: Array<Parameters<AuditService['emit']>[0]> } {
+  const emitted: Array<Parameters<AuditService['emit']>[0]> = [];
+  return {
+    emitted,
+    async emit(ev) {
+      emitted.push(ev);
+    },
+  };
+}
+
+describe('KnowledgeService — success path', () => {
+  it('createObject calls adapter + emits success audit', async () => {
+    const { adapter, calls } = makeAdapterStub();
+    const audit = makeAudit();
+    const svc = new KnowledgeService({ adapter, audit });
+    const out = await svc.createObject({ userId: USER_ID, kind: 'doc', title: 't' });
+    expect(out.id).toBe('obj-1');
+    expect(calls['createObject']).toHaveLength(1);
+    expect(audit.emitted).toHaveLength(1);
+    expect(audit.emitted[0]).toMatchObject({
+      action: 'knowledge.doc.created',
+      actorUserId: USER_ID,
+      result: 'success',
+      resourceId: 'obj-1',
+    });
+  });
+
+  it('getObject emits read audit', async () => {
+    const { adapter } = makeAdapterStub();
+    const audit = makeAudit();
+    const svc = new KnowledgeService({ adapter, audit });
+    await svc.getObject({ id: 'obj-1', userId: USER_ID });
+    expect(audit.emitted[0]).toMatchObject({
+      action: 'knowledge.object.read',
+      actorUserId: USER_ID,
+      result: 'success',
+      resourceId: 'obj-1',
+    });
+  });
+
+  it('listObjects records count + hasMore', async () => {
+    const { adapter } = makeAdapterStub();
+    const audit = makeAudit();
+    const svc = new KnowledgeService({ adapter, audit });
+    await svc.listObjects({ userId: USER_ID, kind: 'skill', limit: 10 });
+    expect(audit.emitted[0]).toMatchObject({
+      action: 'knowledge.object.list',
+      resourceKind: 'skill',
+      result: 'success',
+    });
+    expect(audit.emitted[0]?.details).toMatchObject({ count: 1, hasMore: false });
+  });
+
+  it('updateObject records patched fields', async () => {
+    const { adapter } = makeAdapterStub();
+    const audit = makeAudit();
+    const svc = new KnowledgeService({ adapter, audit });
+    await svc.updateObject({ id: 'obj-1', userId: USER_ID, patch: { title: 'new', description: 'd2' } });
+    expect(audit.emitted[0]?.details).toMatchObject({ patchedFields: ['title', 'description'] });
+  });
+
+  it('deleteObject emits success audit (no return value)', async () => {
+    const { adapter, calls } = makeAdapterStub();
+    const audit = makeAudit();
+    const svc = new KnowledgeService({ adapter, audit });
+    await svc.deleteObject({ id: 'obj-1', userId: USER_ID });
+    expect(calls['deleteObject']).toHaveLength(1);
+    expect(audit.emitted[0]).toMatchObject({
+      action: 'knowledge.object.deleted',
+      result: 'success',
+      resourceId: 'obj-1',
+    });
+  });
+
+  it('createShare records grantedTo+scope', async () => {
+    const { adapter } = makeAdapterStub();
+    const audit = makeAudit();
+    const svc = new KnowledgeService({ adapter, audit });
+    await svc.createShare({
+      resourceId: 'obj-1',
+      resourceKind: 'doc',
+      userId: USER_ID,
+      grantedTo: 'user-2',
+      scope: 'read',
+    });
+    expect(audit.emitted[0]).toMatchObject({
+      action: 'knowledge.share.created',
+      actorUserId: USER_ID,
+      resourceKind: 'doc',
+      resourceId: 'obj-1',
+      result: 'success',
+    });
+    expect(audit.emitted[0]?.details).toMatchObject({ grantedTo: 'user-2', scope: 'read', shareId: 'share-1' });
+  });
+
+  it('search records hit count + kinds', async () => {
+    const { adapter } = makeAdapterStub();
+    const audit = makeAudit();
+    const svc = new KnowledgeService({ adapter, audit });
+    await svc.search({ userId: USER_ID, query: 'foo bar', kinds: ['doc', 'skill'] });
+    expect(audit.emitted[0]).toMatchObject({
+      action: 'knowledge.search',
+      result: 'success',
+    });
+    expect(audit.emitted[0]?.details).toMatchObject({
+      count: 1,
+      kinds: ['doc', 'skill'],
+      queryLength: 7,
+    });
+  });
+});
+
+describe('KnowledgeService — failure path', () => {
+  it('emits failure audit when adapter throws + rethrows', async () => {
+    const { adapter } = makeAdapterStub();
+    const audit = makeAudit();
+    adapter.getObject = vi.fn().mockRejectedValue(new NotFoundError('no such doc'));
+    const svc = new KnowledgeService({ adapter, audit });
+
+    await expect(svc.getObject({ id: 'obj-x', userId: USER_ID })).rejects.toBeInstanceOf(NotFoundError);
+
+    expect(audit.emitted).toHaveLength(1);
+    expect(audit.emitted[0]).toMatchObject({
+      action: 'knowledge.object.read',
+      result: 'failure',
+      resourceId: 'obj-x',
+    });
+    expect(audit.emitted[0]?.details).toMatchObject({ error: 'no such doc' });
+  });
+});
+
+describe('KnowledgeService — eraseUser (admin)', () => {
+  it('separates actor from target user in audit', async () => {
+    const { adapter } = makeAdapterStub();
+    const audit = makeAudit();
+    const svc = new KnowledgeService({ adapter, audit });
+    const result = await svc.eraseUser({
+      userId: 'target-user',
+      confirmationToken: 'tok-xyz',
+      actorUserId: 'admin-user',
+    });
+    expect(result).toEqual({ deletedRows: 42 });
+    expect(audit.emitted[0]).toMatchObject({
+      action: 'knowledge.user.erased',
+      actorUserId: 'admin-user',
+      result: 'success',
+    });
+    expect(audit.emitted[0]?.details).toMatchObject({ targetUserId: 'target-user', deletedRows: 42 });
+  });
+
+  it('emits failure when erase fails', async () => {
+    const { adapter } = makeAdapterStub();
+    const audit = makeAudit();
+    adapter.eraseUser = vi.fn().mockRejectedValue(new Error('confirmation token invalid'));
+    const svc = new KnowledgeService({ adapter, audit });
+
+    await expect(
+      svc.eraseUser({ userId: 'target-user', confirmationToken: 'bad', actorUserId: 'admin' }),
+    ).rejects.toThrow(/confirmation token invalid/);
+
+    expect(audit.emitted[0]).toMatchObject({
+      action: 'knowledge.user.erased',
+      actorUserId: 'admin',
+      result: 'failure',
+    });
+  });
+});
+
+describe('KnowledgeService — requestId propagation', () => {
+  it('forwards requestId from provider into audit events', async () => {
+    const { adapter } = makeAdapterStub();
+    const audit = makeAudit();
+    const svc = new KnowledgeService({
+      adapter,
+      audit,
+      requestIdProvider: () => 'req-from-context-1',
+    });
+    await svc.getObject({ id: 'obj-1', userId: USER_ID });
+    expect(audit.emitted[0]?.requestId).toBe('req-from-context-1');
+  });
+});

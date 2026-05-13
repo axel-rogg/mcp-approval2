@@ -14,6 +14,9 @@ import type {
   auditLogTable,
   credentialsTable,
   invitesTable,
+  oauthAuthzCodesTable,
+  oauthClientsTable,
+  oauthRefreshTokensTable,
   refreshTokensTable,
   revokedJtisTable,
   sessionsTable,
@@ -53,6 +56,18 @@ export type NewCredential = typeof credentialsTable.$inferInsert;
 export type AuditLog = typeof auditLogTable.$inferSelect;
 export type NewAuditLog = typeof auditLogTable.$inferInsert;
 
+// oauth_clients
+export type OauthClient = typeof oauthClientsTable.$inferSelect;
+export type NewOauthClient = typeof oauthClientsTable.$inferInsert;
+
+// oauth_authz_codes
+export type OauthAuthzCode = typeof oauthAuthzCodesTable.$inferSelect;
+export type NewOauthAuthzCode = typeof oauthAuthzCodesTable.$inferInsert;
+
+// oauth_refresh_tokens
+export type OauthRefreshToken = typeof oauthRefreshTokensTable.$inferSelect;
+export type NewOauthRefreshToken = typeof oauthRefreshTokensTable.$inferInsert;
+
 /**
  * Discriminated-union literals (handgepflegt — Drizzle leitet TEXT-Spalten
  * als `string` ab, nicht als Literal-Union). Application-Code sollte diese
@@ -65,3 +80,6 @@ export type CredentialKind = 'oauth_refresh' | 'api_token' | 'password' | 'servi
 export type ActorType = 'user' | 'system' | 'admin';
 export type AuditResult = 'success' | 'denied' | 'error';
 export type RevokeReason = 'logout' | 'admin_revoke' | 'replay_detect' | 'rotate';
+export type OauthRegistrationSource = 'dcr' | 'cimd' | 'pre-registered';
+export type OauthTokenAuthMethod = 'client_secret_post' | 'client_secret_basic' | 'none';
+export type OauthRevokeReason = 'client_revoke' | 'admin_revoke' | 'replay_detect' | 'rotate' | 'expired';

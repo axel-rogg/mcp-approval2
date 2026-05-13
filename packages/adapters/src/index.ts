@@ -60,3 +60,38 @@ export type {
   VertexAiAdapterOptions,
   VertexAiAuth,
 } from './ai/vertex.js';
+
+// Knowledge (Storage-Service-Boundary)
+export type {
+  CreateObjectArgs,
+  CreateShareArgs,
+  EraseUserArgs,
+  EraseUserResult,
+  FetchLike,
+  HttpKnowledgeAdapterOptions,
+  JwtSigner,
+  KnowledgeAdapter,
+  KnowledgeObject,
+  ListObjectsArgs,
+  ListSharesArgs,
+  ObjectKind,
+  ObjectsList,
+  RevokeShareArgs,
+  SearchArgs,
+  SearchHit,
+  Share,
+  ShareScope,
+  UpdateObjectArgs,
+} from './knowledge/index.js';
+export {
+  AuthError as KnowledgeAuthError,
+  ConflictError as KnowledgeConflictError,
+  HttpKnowledgeAdapter,
+  KnowledgeError,
+  NotFoundError as KnowledgeNotFoundError,
+  PermissionError as KnowledgePermissionError,
+  RateLimitError as KnowledgeRateLimitError,
+  ServiceError as KnowledgeServiceError,
+  ValidationError as KnowledgeValidationError,
+  errorFromResponse as knowledgeErrorFromResponse,
+} from './knowledge/index.js';

@@ -23,8 +23,34 @@ import { sessionRoutes } from './routes/auth/session.js';
 import { webauthnRoutes } from './routes/auth/webauthn.js';
 import { inviteRoutes } from './routes/auth/invite.js';
 import { recoveryRoutes } from './routes/auth/recovery.js';
+import { credentialsRoutes } from './routes/credentials.js';
+import { createCredentialsService, type CredentialsService } from './services/credentials.js';
+import { createPrfSessionService, type PrfSessionService } from './services/prf-session.js';
+import { knowledgeProxyRoutes } from './routes/knowledge-proxy.js';
+import type { KnowledgeService } from './services/knowledge.js';
+import type { KekProvider } from '@mcp-approval2/adapters';
 
-export async function createApp(server: ServerContext): Promise<Hono<AppBindings>> {
+export interface CreateAppDeps {
+  /**
+   * KEK-Provider fuer Credential-Encrypt/Decrypt. Optional — wenn nicht
+   * uebergeben, sind die `/v1/credentials/*`-Routes nicht montiert.
+   */
+  readonly kekProvider?: KekProvider;
+  /** Optional: bestehender CredentialsService (Tests). Override gewinnt. */
+  readonly credentials?: CredentialsService;
+  /** Optional: bestehender PrfSessionService (Tests). */
+  readonly prfSessions?: PrfSessionService;
+  /**
+   * Optional: KnowledgeService gegen mcp-knowledge2.
+   * Wenn nicht uebergeben sind die `/v1/knowledge/*`-Routes nicht montiert.
+   */
+  readonly knowledge?: KnowledgeService;
+}
+
+export async function createApp(
+  server: ServerContext,
+  deps: CreateAppDeps = {},
+): Promise<Hono<AppBindings>> {
   const app = new Hono<AppBindings>();
   app.use('*', requestId());
   app.onError(errorHandler());
@@ -35,6 +61,20 @@ export async function createApp(server: ServerContext): Promise<Hono<AppBindings
   app.route('/', webauthnRoutes(server));
   app.route('/', inviteRoutes(server));
   app.route('/', recoveryRoutes(server));
+
+  const credentials =
+    deps.credentials ??
+    (deps.kekProvider
+      ? createCredentialsService({ db: server.db, kekProvider: deps.kekProvider })
+      : null);
+  if (credentials) {
+    const prfSessions = deps.prfSessions ?? createPrfSessionService();
+    app.route('/', credentialsRoutes({ server, credentials, prfSessions }));
+  }
+
+  if (deps.knowledge) {
+    app.route('/', knowledgeProxyRoutes(server, { knowledge: deps.knowledge }));
+  }
 
   return app;
 }
