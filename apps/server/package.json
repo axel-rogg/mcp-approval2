@@ -14,9 +14,14 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "db:migrate:drizzle": "drizzle-kit migrate",
+    "db:status": "tsx scripts/migrate-status.ts",
+    "db:seed": "tsx scripts/seed.ts",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "vault:bootstrap": "tsx scripts/vault-bootstrap.ts",
+    "health-check": "tsx scripts/health-check.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.14",

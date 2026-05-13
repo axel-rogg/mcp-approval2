@@ -12,11 +12,13 @@
  */
 import type {
   auditLogTable,
+  costLedgerTable,
   credentialsTable,
   invitesTable,
   oauthAuthzCodesTable,
   oauthClientsTable,
   oauthRefreshTokensTable,
+  pendingApprovalsTable,
   refreshTokensTable,
   revokedJtisTable,
   sessionsTable,
@@ -68,6 +70,14 @@ export type NewOauthAuthzCode = typeof oauthAuthzCodesTable.$inferInsert;
 export type OauthRefreshToken = typeof oauthRefreshTokensTable.$inferSelect;
 export type NewOauthRefreshToken = typeof oauthRefreshTokensTable.$inferInsert;
 
+// pending_approvals
+export type PendingApproval = typeof pendingApprovalsTable.$inferSelect;
+export type NewPendingApproval = typeof pendingApprovalsTable.$inferInsert;
+
+// cost_ledger
+export type CostLedgerEntry = typeof costLedgerTable.$inferSelect;
+export type NewCostLedgerEntry = typeof costLedgerTable.$inferInsert;
+
 /**
  * Discriminated-union literals (handgepflegt — Drizzle leitet TEXT-Spalten
  * als `string` ab, nicht als Literal-Union). Application-Code sollte diese
@@ -83,3 +93,6 @@ export type RevokeReason = 'logout' | 'admin_revoke' | 'replay_detect' | 'rotate
 export type OauthRegistrationSource = 'dcr' | 'cimd' | 'pre-registered';
 export type OauthTokenAuthMethod = 'client_secret_post' | 'client_secret_basic' | 'none';
 export type OauthRevokeReason = 'client_revoke' | 'admin_revoke' | 'replay_detect' | 'rotate' | 'expired';
+export type ApprovalStatus = 'pending' | 'approved' | 'rejected' | 'expired';
+export type ApprovalSensitivity = 'write' | 'danger';
+export type CostProvider = 'vertex' | 'openai' | 'anthropic';

@@ -1,127 +1,290 @@
 /**
- * Auth-Helper fuer die PWA.
+ * Auth-Helper fuer die mcp-approval2 PWA.
  *
- * Plan-Ref: PLAN-architecture-v1.md §3.5 (Session) + §3.4 (Passkey).
+ * Plan-Ref: PLAN-architecture-v1.md §3 (Identity & Auth), §3.4 (Passkey),
+ * §3.5 (Session-Mgmt).
  *
- * Session-Detection: das Backend setzt einen `mcp_session=<jti>`-Cookie
- * (`HttpOnly` ist OK fuer Server-Auth; fuer Browser-Reads brauchen wir eine
- * non-HttpOnly Schwester-Cookie `mcp_session_marker` — TODO im Backend).
- * Skeleton: wir checken einfach den sichtbaren Marker.
+ * Verantwortlichkeiten:
+ *   - Google-OAuth-Redirect via `/auth/google/start`
+ *   - Session-Check (in-memory cache + `/auth/refresh` probe via api.ts)
+ *   - WebAuthn-Enrollment mit PRF-Extension (Bootstrap nach Google-Login)
+ *   - Logout via `/auth/logout` + Session-Clear
+ *
+ * UI-Konvention: alle Render-Funktionen muten ihr `root` selbst (innerHTML +
+ * Event-Listener), kein Framework. Komposition ueber `components/`.
  */
+import type { ApiClient, Session } from './api.js';
+import { renderHeader } from './components/header.js';
+import { renderEmptyState } from './components/empty-state.js';
+import {
+  enrollPasskeyWithPrf,
+  bytesToB64Url,
+  b64UrlToBytes,
+} from './webauthn-prf.js';
 
-const SESSION_MARKER_COOKIE = 'mcp_session_marker';
+let cachedSession: Session | null = null;
+let sessionFetched = false;
 
-export function isAuthenticated(): boolean {
-  return document.cookie.split(/;\s*/).some((c) => c.startsWith(`${SESSION_MARKER_COOKIE}=`));
+/**
+ * Loads the current session, cached per page-load. `refresh=true` forces a
+ * re-probe (e.g. after login redirect).
+ */
+export async function loadSession(api: ApiClient, refresh = false): Promise<Session | null> {
+  if (!refresh && sessionFetched) return cachedSession;
+  cachedSession = await api.getSession();
+  sessionFetched = true;
+  return cachedSession;
+}
+
+export function clearSessionCache(): void {
+  cachedSession = null;
+  sessionFetched = false;
 }
 
 /**
- * Rendert die Login-Page. Single-Button "Sign in with Google" — redirected
- * direkt auf den Backend-Start-Endpoint. State + PKCE werden Server-seitig
- * gefuehrt.
+ * Login-Page mit Google-Sign-In-Button.
+ *
+ * `redirectTo` wird optional als `?next=` an `/auth/google/start` angehaengt,
+ * damit das Backend nach OAuth-Callback wieder dorthin springt.
  */
-export function renderLogin(root: HTMLElement): void {
-  root.innerHTML = `
-    <main>
-      <h1>mcp-approval2</h1>
-      <p>Sign in to access your approval queue + tool surfaces.</p>
-      <div class="card">
-        <p class="muted">
-          mcp-approval2 is a private MCP gateway. Sign-in is via your
-          organization's Google account; a passkey will be enrolled on first
-          login to authorize sensitive actions.
-        </p>
-        <p>
-          <a class="btn" href="/auth/google/start">Sign in with Google</a>
-        </p>
-      </div>
-      <p class="muted">
-        Issues signing in? Check the
-        <a href="/health">/health</a> endpoint or contact your administrator.
-      </p>
-    </main>
-  `;
-}
+export function renderLogin(root: HTMLElement, opts?: { redirectTo?: string; error?: string }): void {
+  root.innerHTML = '';
+  const main = document.createElement('main');
+  main.className = 'login';
 
-/**
- * Triggert die WebAuthn-Approval-Flow.
- *
- * Skeleton: ruft `navigator.credentials.get({publicKey: ...})` mit PRF-
- * Extension, sendet das `clientDataJSON` + `signature` + `prfOutput` an
- * den Backend-Endpoint, der die Signature validiert + den Approval-State
- * auf `approved` schiebt.
- *
- * TODO Backend: `/v1/approvals/:id/challenge` + `/v1/approvals/:id/sign` —
- * existieren noch nicht (siehe docs/STATUS.md).
- */
-export async function signApproval(approvalId: string): Promise<void> {
-  if (!('credentials' in navigator)) {
-    throw new Error('WebAuthn not available in this browser.');
+  const h1 = document.createElement('h1');
+  h1.textContent = 'mcp-approval2';
+  main.appendChild(h1);
+
+  const lede = document.createElement('p');
+  lede.className = 'muted';
+  lede.textContent = 'Private MCP gateway — sign in to manage approvals and credentials.';
+  main.appendChild(lede);
+
+  if (opts?.error) {
+    const err = document.createElement('div');
+    err.className = 'card err';
+    err.textContent = opts.error;
+    main.appendChild(err);
   }
-  // Phase-4-Stub — wir holen einen Challenge vom Server und feedan ihn in
-  // navigator.credentials.get. Hier nur als Vorlage; Backend-Endpoint fehlt.
-  const challengeRes = await fetch(`/v1/approvals/${encodeURIComponent(approvalId)}/challenge`, {
+
+  const card = document.createElement('div');
+  card.className = 'card';
+
+  const desc = document.createElement('p');
+  desc.className = 'muted';
+  desc.textContent =
+    'Sign in with your Google account. On first login a passkey will be enrolled to authorize sensitive actions.';
+  card.appendChild(desc);
+
+  const btn = document.createElement('a');
+  btn.className = 'btn';
+  const next = opts?.redirectTo ? `?next=${encodeURIComponent(opts.redirectTo)}` : '';
+  btn.href = `/auth/google/start${next}`;
+  btn.textContent = 'Sign in with Google';
+  card.appendChild(btn);
+
+  main.appendChild(card);
+
+  const help = document.createElement('p');
+  help.className = 'muted small';
+  help.innerHTML =
+    'Trouble signing in? Verify the <a href="/health">/health</a> endpoint or contact your administrator.';
+  main.appendChild(help);
+
+  root.appendChild(main);
+}
+
+/**
+ * Logout — server-side session revoke + cookie clear + redirect to login.
+ */
+export async function logout(api: ApiClient): Promise<void> {
+  try {
+    await api.logout();
+  } catch {
+    // best-effort — proceed with client-side clear even if server-call failed
+  }
+  clearSessionCache();
+  window.location.hash = '#/login';
+}
+
+/**
+ * Triggert WebAuthn-Passkey-Enrollment (1 Passkey Pflicht, PRF aktiv).
+ *
+ * Flow:
+ *   1. POST /auth/webauthn/enroll/start → { creationOptionsJSON }
+ *   2. navigator.credentials.create() mit PRF-Extension
+ *   3. POST /auth/webauthn/enroll/finish → bestaetigt Server-side
+ *
+ * Returnt `prfSupported` damit der Caller dem User signalisieren kann ob
+ * Credentials mit PRF-Layer erstellt werden koennen.
+ */
+export async function enrollPasskey(): Promise<{ prfSupported: boolean }> {
+  // 1. Start
+  const startRes = await fetch('/auth/webauthn/enroll/start', {
     method: 'POST',
     credentials: 'include',
+    headers: { accept: 'application/json' },
   });
-  if (!challengeRes.ok) {
-    throw new Error(`approval challenge failed: HTTP ${challengeRes.status}`);
+  if (!startRes.ok) {
+    throw new Error(`Passkey-enrollment start failed: HTTP ${startRes.status}`);
   }
-  const challenge = (await challengeRes.json()) as {
-    challengeB64: string;
-    allowCredentialIds: string[];
+  const startBody = (await startRes.json()) as {
+    creationOptionsJSON: PublicKeyCredentialCreationOptionsJSON;
   };
+  const options = parseCreationOptions(startBody.creationOptionsJSON);
 
-  const publicKey: PublicKeyCredentialRequestOptions = {
-    challenge: toBufferSource(base64UrlDecode(challenge.challengeB64)),
-    timeout: 60_000,
-    allowCredentials: challenge.allowCredentialIds.map((id) => ({
-      type: 'public-key' as const,
-      id: toBufferSource(base64UrlDecode(id)),
-    })),
-    userVerification: 'required',
-    extensions: {
-      // PRF extension is not in the default lib.dom typings yet — cast around it.
-      prf: { eval: { first: toBufferSource(new Uint8Array(32)) } },
-    } as AuthenticationExtensionsClientInputs,
-  };
+  // 2. WebAuthn create + PRF
+  const result = await enrollPasskeyWithPrf({ options });
 
-  const cred = (await navigator.credentials.get({ publicKey })) as PublicKeyCredential | null;
-  if (!cred) throw new Error('WebAuthn assertion cancelled.');
-
-  await fetch(`/v1/approvals/${encodeURIComponent(approvalId)}/sign`, {
+  // 3. Finish
+  const finishRes = await fetch('/auth/webauthn/enroll/finish', {
     method: 'POST',
     credentials: 'include',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
     body: JSON.stringify({
-      credentialIdB64: base64UrlEncode(new Uint8Array(cred.rawId)),
-      // The full WebAuthn fields are TODO — Skeleton just shows the wire shape.
-      assertion: 'TODO-serialize-AuthenticatorAssertionResponse',
+      credentialIdB64: bytesToB64Url(result.credentialId),
+      clientDataJsonB64: bytesToB64Url(new Uint8Array(result.attestation.clientDataJSON)),
+      attestationObjectB64: bytesToB64Url(new Uint8Array(result.attestation.attestationObject)),
+      prfSupported: result.prfSupported,
     }),
   });
+  if (!finishRes.ok) {
+    throw new Error(`Passkey-enrollment finish failed: HTTP ${finishRes.status}`);
+  }
+
+  return { prfSupported: result.prfSupported };
 }
 
 /**
- * TS-5-friendly conversion: `Uint8Array<ArrayBufferLike>` → `BufferSource`.
- * The runtime is identical; we just satisfy the stricter DOM typings.
+ * Onboarding-Screen: zeigt CTA fuer Passkey-Enrollment nach erstem Google-Login.
  */
-function toBufferSource(u: Uint8Array): BufferSource {
-  const copy = new Uint8Array(u.length);
-  copy.set(u);
-  return copy.buffer as ArrayBuffer;
+export function renderEnrollPasskey(
+  root: HTMLElement,
+  api: ApiClient,
+  session: Session,
+  onDone: () => void,
+): void {
+  root.innerHTML = '';
+  renderHeader(root, session, () => void logout(api));
+
+  const main = document.createElement('main');
+  main.className = 'enroll';
+
+  const h1 = document.createElement('h1');
+  h1.textContent = 'Set up your passkey';
+  main.appendChild(h1);
+
+  const card = document.createElement('div');
+  card.className = 'card';
+
+  const desc = document.createElement('p');
+  desc.textContent =
+    'A passkey is required to authorize sensitive actions (approvals, credential access). Use your built-in authenticator (Face ID, Touch ID, Windows Hello) or a hardware key.';
+  card.appendChild(desc);
+
+  const btn = document.createElement('button');
+  btn.className = 'btn';
+  btn.type = 'button';
+  btn.textContent = 'Enroll passkey now';
+  card.appendChild(btn);
+
+  const status = document.createElement('p');
+  status.className = 'muted small';
+  card.appendChild(status);
+
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    status.textContent = 'Waiting for authenticator…';
+    status.className = 'muted small';
+    try {
+      const { prfSupported } = await enrollPasskey();
+      status.textContent = prfSupported
+        ? 'Passkey enrolled. PRF supported — credential encryption available.'
+        : 'Passkey enrolled. PRF not supported — credential encryption falls back to Vault-only.';
+      status.className = 'ok small';
+      setTimeout(onDone, 1500);
+    } catch (err) {
+      status.textContent = `Enrollment failed: ${(err as Error).message}`;
+      status.className = 'err small';
+      btn.disabled = false;
+    }
+  });
+
+  main.appendChild(card);
+  root.appendChild(main);
 }
 
-function base64UrlDecode(s: string): Uint8Array {
-  const pad = s.length % 4 === 0 ? '' : '='.repeat(4 - (s.length % 4));
-  const b64 = (s + pad).replace(/-/g, '+').replace(/_/g, '/');
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+/**
+ * Helper-Render-Stub fuer "session lost / expired" — used by polling fns.
+ */
+export function renderSessionExpired(root: HTMLElement): void {
+  root.innerHTML = '';
+  const main = document.createElement('main');
+  main.appendChild(renderEmptyState({
+    title: 'Session expired',
+    body: 'Please sign in again to continue.',
+    actionLabel: 'Sign in',
+    actionHref: '#/login',
+  }));
+  root.appendChild(main);
+}
+
+// ---- JSON ↔ WebAuthn shape conversion ------------------------------------
+
+interface PublicKeyCredentialDescriptorJSON {
+  readonly id: string;
+  readonly type: 'public-key';
+  readonly transports?: AuthenticatorTransport[];
+}
+
+interface PublicKeyCredentialUserEntityJSON {
+  readonly id: string;
+  readonly name: string;
+  readonly displayName: string;
+}
+
+interface PublicKeyCredentialCreationOptionsJSON {
+  readonly rp: PublicKeyCredentialRpEntity;
+  readonly user: PublicKeyCredentialUserEntityJSON;
+  readonly challenge: string;
+  readonly pubKeyCredParams: PublicKeyCredentialParameters[];
+  readonly timeout?: number;
+  readonly excludeCredentials?: PublicKeyCredentialDescriptorJSON[];
+  readonly authenticatorSelection?: AuthenticatorSelectionCriteria;
+  readonly attestation?: AttestationConveyancePreference;
+}
+
+function parseCreationOptions(
+  json: PublicKeyCredentialCreationOptionsJSON,
+): PublicKeyCredentialCreationOptions {
+  const out: PublicKeyCredentialCreationOptions = {
+    rp: json.rp,
+    user: {
+      id: toArrayBuffer(b64UrlToBytes(json.user.id)),
+      name: json.user.name,
+      displayName: json.user.displayName,
+    },
+    challenge: toArrayBuffer(b64UrlToBytes(json.challenge)),
+    pubKeyCredParams: json.pubKeyCredParams,
+    ...(json.timeout !== undefined ? { timeout: json.timeout } : {}),
+    ...(json.excludeCredentials
+      ? {
+          excludeCredentials: json.excludeCredentials.map((d) => ({
+            id: toArrayBuffer(b64UrlToBytes(d.id)),
+            type: d.type,
+            ...(d.transports ? { transports: d.transports } : {}),
+          })),
+        }
+      : {}),
+    ...(json.authenticatorSelection ? { authenticatorSelection: json.authenticatorSelection } : {}),
+    ...(json.attestation ? { attestation: json.attestation } : {}),
+  };
   return out;
 }
 
-function base64UrlEncode(b: Uint8Array): string {
-  let s = '';
-  for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i] ?? 0);
-  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+function toArrayBuffer(u: Uint8Array): ArrayBuffer {
+  const out = new ArrayBuffer(u.byteLength);
+  new Uint8Array(out).set(u);
+  return out;
 }

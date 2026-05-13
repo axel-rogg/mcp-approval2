@@ -55,10 +55,14 @@ export type {
   ChatUsage,
   EmbedArgs,
 } from './ai/interface.js';
-export { VertexAiAdapter } from './ai/vertex.js';
+export { VertexAiAdapter, VertexAuth, VertexAiError } from './ai/vertex.js';
 export type {
+  ServiceAccountJson,
   VertexAiAdapterOptions,
   VertexAiAuth,
+  VertexFinishReason,
+  VertexGenerateContentResponse,
+  VertexPredictResponse,
 } from './ai/vertex.js';
 
 // Knowledge (Storage-Service-Boundary)

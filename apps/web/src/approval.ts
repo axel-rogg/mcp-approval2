@@ -1,149 +1,327 @@
 /**
- * Approval-View.
+ * Pending-Approval-View mit WebAuthn-Sign-Off (PRF).
  *
- * Plan-Ref: PLAN-architecture-v1.md §11 Phase 4 (Approval-Flow E2E).
+ * Plan-Ref: PLAN-architecture-v1.md §11 Phase 4 (PWA-Approval-Flow) + §5.3
+ * (PRF-Layer im Approval-Flow).
  *
- * Skeleton: pollt alle 5s `/v1/approvals/pending` und rendert die Liste.
- * Bei `Sign`-Click wird `signApproval(id)` aus auth.ts aufgerufen.
+ * Flow pro Approval-Click:
+ *   1. POST /v1/approvals/:id/challenge  → { challengeB64, allowCredentialIdsB64 }
+ *   2. navigator.credentials.get(...) mit PRF-Extension (Salt=`approval:<id>`)
+ *   3. PRF-Output → POST /v1/credentials/prf-session (wenn Tool credentials braucht)
+ *   4. POST /v1/approvals/:id/sign mit signature + prfSessionId
+ *   5. Poll /v1/approvals/:id/result bis status != 'executing'
  *
- * Production-Roadmap (siehe docs/STATUS.md):
- *   - SSE statt Polling (Backend `/mcp/sse` ist die natuerliche Stelle, aber
- *     der Wire-Shape sollte fuer die PWA simplere `text/event-stream` sein).
- *   - WebAuthn-Sign-Off mit echtem `AuthenticatorAssertionResponse` serialisieren.
- *   - Push-Notifications via `navigator.serviceWorker` + Web-Push (Browser-Tab
- *     muss nicht offen sein).
- *   - WYSIWYS-Display-Template fuer jedes Tool (im Tool-Manifest hinterlegt).
+ * Polling: 5s-Refresh wenn der View aktiv ist; cancelled bei Navigation.
  */
-
-import { signApproval } from './auth.js';
-
-interface PendingApproval {
-  readonly id: string;
-  readonly toolName: string;
-  readonly sensitivity: 'write' | 'danger';
-  readonly displayTemplate?: string;
-  readonly input: Record<string, unknown>;
-  readonly requestedAt: number;
-}
-
-interface ApprovalListResponse {
-  readonly items: ReadonlyArray<PendingApproval>;
-}
+import type { ApiClient, PendingApproval, Session } from './api.js';
+import { ApiError } from './api.js';
+import { logout, renderSessionExpired } from './auth.js';
+import { renderHeader } from './components/header.js';
+import { renderEmptyState } from './components/empty-state.js';
+import { evalPrf, bytesToB64, b64UrlToBytes } from './webauthn-prf.js';
 
 const POLL_INTERVAL_MS = 5_000;
 
 let pollTimer: number | undefined;
+let active = false;
 
-export async function renderApproval(root: HTMLElement): Promise<void> {
-  root.innerHTML = `
-    <main>
-      <div class="row" style="justify-content: space-between; align-items: baseline;">
-        <h1>Approval queue</h1>
-        <button class="btn btn-secondary" id="logoutBtn">Sign out</button>
-      </div>
-      <p class="muted" id="connStatus">Loading…</p>
-      <div id="approvalList"></div>
-    </main>
-  `;
-  const logoutBtn = document.getElementById('logoutBtn');
-  if (logoutBtn) {
-    logoutBtn.addEventListener('click', () => {
-      void fetch('/auth/logout', { method: 'POST', credentials: 'include' }).then(() => {
-        window.location.assign('/');
-      });
-    });
-  }
-  await refresh();
-  if (pollTimer === undefined) {
-    pollTimer = window.setInterval(refresh, POLL_INTERVAL_MS);
+export function stopApprovalPolling(): void {
+  active = false;
+  if (pollTimer !== undefined) {
+    window.clearTimeout(pollTimer);
+    pollTimer = undefined;
   }
 }
 
-async function refresh(): Promise<void> {
-  const listEl = document.getElementById('approvalList');
-  const statusEl = document.getElementById('connStatus');
-  if (!listEl || !statusEl) return;
+export async function renderApproval(
+  root: HTMLElement,
+  api: ApiClient,
+  session: Session,
+): Promise<void> {
+  active = true;
+  root.innerHTML = '';
+  renderHeader(root, session, () => void logout(api));
+
+  const main = document.createElement('main');
+  main.className = 'approvals';
+
+  const h1 = document.createElement('h1');
+  h1.id = 'approvals-title';
+  h1.textContent = 'Approval queue';
+  main.appendChild(h1);
+
+  const status = document.createElement('p');
+  status.className = 'muted';
+  status.id = 'approvals-status';
+  status.textContent = 'Loading…';
+  main.appendChild(status);
+
+  const list = document.createElement('div');
+  list.className = 'list';
+  list.id = 'approvals-list';
+  main.appendChild(list);
+
+  root.appendChild(main);
+
+  await refreshAndSchedule(api, session);
+}
+
+async function refreshAndSchedule(api: ApiClient, session: Session): Promise<void> {
+  if (!active) return;
+  await refresh(api, session);
+  if (!active) return;
+  pollTimer = window.setTimeout(() => void refreshAndSchedule(api, session), POLL_INTERVAL_MS);
+}
+
+async function refresh(api: ApiClient, session: Session): Promise<void> {
+  const titleEl = document.getElementById('approvals-title');
+  const statusEl = document.getElementById('approvals-status');
+  const listEl = document.getElementById('approvals-list');
+  if (!titleEl || !statusEl || !listEl) return;
+
   try {
-    const res = await fetch('/v1/approvals/pending', {
-      credentials: 'include',
-      headers: { accept: 'application/json' },
-    });
-    if (res.status === 401) {
-      statusEl.textContent = 'Session expired — please sign in again.';
-      statusEl.classList.add('err');
-      setTimeout(() => window.location.assign('/#login'), 1_500);
-      return;
-    }
-    if (!res.ok) {
-      statusEl.textContent = `Approvals endpoint returned HTTP ${res.status}.`;
-      statusEl.classList.add('err');
-      return;
-    }
+    const items = await api.listApprovals({ status: 'pending' });
     statusEl.classList.remove('err');
-    const body = (await res.json()) as ApprovalListResponse;
-    renderList(listEl, body.items);
-    statusEl.textContent = `${body.items.length} pending`;
+    titleEl.textContent = `Approval queue (${items.length})`;
+    statusEl.textContent = items.length === 0 ? 'No pending approvals.' : `${items.length} pending`;
+    renderList(listEl, items, api, session);
   } catch (err) {
-    statusEl.textContent = `Network error: ${String(err instanceof Error ? err.message : err)}`;
+    if (err instanceof ApiError && err.status === 401) {
+      stopApprovalPolling();
+      renderSessionExpired(document.getElementById('app') ?? document.body);
+      return;
+    }
+    statusEl.textContent = `Error: ${(err as Error).message}`;
     statusEl.classList.add('err');
   }
 }
 
-function renderList(host: HTMLElement, items: ReadonlyArray<PendingApproval>): void {
+function renderList(
+  host: HTMLElement,
+  items: ReadonlyArray<PendingApproval>,
+  api: ApiClient,
+  session: Session,
+): void {
+  host.innerHTML = '';
   if (items.length === 0) {
-    host.innerHTML = `
-      <div class="card">
-        <p class="muted">No pending approvals. Trigger a write-tool from your
-        MCP client and the request will appear here.</p>
-      </div>
-    `;
+    host.appendChild(
+      renderEmptyState({
+        title: 'Nothing to approve',
+        body: 'Trigger a write-tool from your MCP client and the request will appear here.',
+      }),
+    );
     return;
   }
-  host.innerHTML = items
-    .map((it) => {
-      const display = it.displayTemplate
-        ? escapeHtml(applyTemplate(it.displayTemplate, it.input))
-        : `${escapeHtml(it.toolName)} with input <code>${escapeHtml(JSON.stringify(it.input))}</code>`;
-      return `
-      <div class="card" data-id="${escapeHtml(it.id)}">
-        <div class="row" style="justify-content: space-between;">
-          <strong>${escapeHtml(it.toolName)}</strong>
-          <span class="muted">${escapeHtml(it.sensitivity)}</span>
-        </div>
-        <p>${display}</p>
-        <div class="row">
-          <button class="btn" data-action="approve">Approve &amp; sign</button>
-          <button class="btn btn-secondary" data-action="reject">Reject</button>
-        </div>
-      </div>
-    `;
-    })
-    .join('');
 
-  host.querySelectorAll<HTMLButtonElement>('button[data-action]').forEach((btn) => {
-    btn.addEventListener('click', async (ev) => {
-      ev.preventDefault();
-      const card = (btn.closest('.card') as HTMLElement | null);
-      const id = card?.dataset['id'];
-      if (!id) return;
-      btn.disabled = true;
-      try {
-        if (btn.dataset['action'] === 'approve') {
-          await signApproval(id);
-        } else {
-          await fetch(`/v1/approvals/${encodeURIComponent(id)}/reject`, {
-            method: 'POST',
-            credentials: 'include',
-          });
-        }
-        await refresh();
-      } catch (err) {
-        // eslint-disable-next-line no-alert
-        alert(`Failed: ${String(err instanceof Error ? err.message : err)}`);
-        btn.disabled = false;
-      }
-    });
+  for (const item of items) {
+    host.appendChild(renderApprovalCard(item, api, session));
+  }
+}
+
+function renderApprovalCard(
+  approval: PendingApproval,
+  api: ApiClient,
+  session: Session,
+): HTMLElement {
+  const card = document.createElement('div');
+  card.className = `card approval approval-${approval.sensitivity}`;
+  card.dataset['id'] = approval.id;
+
+  const head = document.createElement('div');
+  head.className = 'row approval-head';
+
+  const toolName = document.createElement('strong');
+  toolName.textContent = approval.toolName;
+  head.appendChild(toolName);
+
+  const sens = document.createElement('span');
+  sens.className = `pill pill-${approval.sensitivity}`;
+  sens.textContent = approval.sensitivity;
+  head.appendChild(sens);
+
+  card.appendChild(head);
+
+  // WYSIWYS display
+  const display = document.createElement('div');
+  display.className = 'approval-display';
+  if (approval.displayTemplate) {
+    display.textContent = applyTemplate(approval.displayTemplate, approval.input);
+  } else {
+    const pre = document.createElement('pre');
+    pre.textContent = JSON.stringify(approval.input, null, 2);
+    display.appendChild(pre);
+  }
+  card.appendChild(display);
+
+  const ts = document.createElement('div');
+  ts.className = 'muted small';
+  ts.textContent = `Requested ${new Date(approval.requestedAt).toLocaleString()}`;
+  card.appendChild(ts);
+
+  const actions = document.createElement('div');
+  actions.className = 'row approval-actions';
+
+  const approveBtn = document.createElement('button');
+  approveBtn.className = 'btn';
+  approveBtn.type = 'button';
+  approveBtn.textContent = approval.sensitivity === 'danger' ? 'Approve & sign (danger)' : 'Approve & sign';
+
+  const rejectBtn = document.createElement('button');
+  rejectBtn.className = 'btn btn-secondary';
+  rejectBtn.type = 'button';
+  rejectBtn.textContent = 'Reject';
+
+  const inlineStatus = document.createElement('div');
+  inlineStatus.className = 'muted small approval-inline-status';
+
+  approveBtn.addEventListener('click', () => {
+    void handleApprove(approval, api, session, { approveBtn, rejectBtn, status: inlineStatus });
   });
+  rejectBtn.addEventListener('click', () => {
+    void handleReject(approval, api, { approveBtn, rejectBtn, status: inlineStatus });
+  });
+
+  actions.appendChild(approveBtn);
+  actions.appendChild(rejectBtn);
+  card.appendChild(actions);
+  card.appendChild(inlineStatus);
+
+  return card;
+}
+
+interface ButtonRefs {
+  readonly approveBtn: HTMLButtonElement;
+  readonly rejectBtn: HTMLButtonElement;
+  readonly status: HTMLDivElement;
+}
+
+async function handleApprove(
+  approval: PendingApproval,
+  api: ApiClient,
+  _session: Session,
+  refs: ButtonRefs,
+): Promise<void> {
+  refs.approveBtn.disabled = true;
+  refs.rejectBtn.disabled = true;
+  refs.status.textContent = 'Requesting signature…';
+  refs.status.className = 'muted small approval-inline-status';
+
+  try {
+    // 1. Server-challenge holen (replay-Schutz). Fallback: client-Challenge,
+    //    falls Backend-Route noch nicht existiert — Server muss in dem Fall
+    //    den challenge im sign-Body ignorieren oder selbst injizieren.
+    let challengeBytes: Uint8Array;
+    let allowCredentials: PublicKeyCredentialDescriptor[] | undefined;
+    try {
+      const ch = await api.getApprovalChallenge(approval.id);
+      challengeBytes = b64UrlToBytes(ch.challengeB64);
+      allowCredentials = ch.allowCredentialIdsB64.map((idB64) => ({
+        type: 'public-key' as const,
+        id: toArrayBuffer(b64UrlToBytes(idB64)),
+      }));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        // Backend route not deployed yet — fall back to embedded data on the
+        // approval object (if present) or a fresh random.
+        const embedded = approval.challengeB64 ? b64UrlToBytes(approval.challengeB64) : crypto.getRandomValues(new Uint8Array(32));
+        challengeBytes = embedded;
+        if (approval.allowCredentialIdsB64) {
+          allowCredentials = approval.allowCredentialIdsB64.map((idB64) => ({
+            type: 'public-key' as const,
+            id: toArrayBuffer(b64UrlToBytes(idB64)),
+          }));
+        }
+      } else {
+        throw err;
+      }
+    }
+
+    // 2. WebAuthn-Sign mit PRF-Extension
+    const salt = new TextEncoder().encode(`approval:${approval.id}`);
+    const prfResult = await evalPrf({
+      salt,
+      challenge: challengeBytes,
+      ...(allowCredentials ? { allowCredentials } : {}),
+    });
+
+    // 3. PRF-Session anlegen wenn das Tool credentials braucht
+    let prfSessionId: string | undefined;
+    const needsPrf =
+      approval.requiresPrf === true ||
+      approval.toolName.startsWith('credentials.') ||
+      approval.toolName.startsWith('credentials/');
+    if (needsPrf) {
+      refs.status.textContent = 'Stashing PRF session…';
+      const session = await api.storePrfSession({
+        prfOutput: bytesToB64(prfResult.prfOutput),
+      });
+      prfSessionId = session.sessionId;
+    }
+
+    // 4. Signature an Server schicken
+    refs.status.textContent = 'Submitting approval…';
+    const signature = bytesToB64(prfResult.signature);
+    await api.approveApproval({
+      id: approval.id,
+      signature,
+      ...(prfSessionId ? { prfSessionId } : {}),
+    });
+
+    // 5. Poll result
+    refs.status.textContent = 'Tool executing…';
+    try {
+      await api.pollResult(approval.id);
+      refs.status.textContent = 'Tool completed.';
+      refs.status.className = 'ok small approval-inline-status';
+    } catch {
+      refs.status.textContent = 'Approved. (result polling failed)';
+    }
+
+    // Card aus Liste entfernen — refresh wird bald folgen
+    setTimeout(() => {
+      const card = document.querySelector(`.card[data-id="${approval.id}"]`);
+      card?.remove();
+    }, 800);
+  } catch (err) {
+    refs.status.textContent = `Failed: ${(err as Error).message}`;
+    refs.status.className = 'err small approval-inline-status';
+    refs.approveBtn.disabled = false;
+    refs.rejectBtn.disabled = false;
+  }
+}
+
+async function handleReject(
+  approval: PendingApproval,
+  api: ApiClient,
+  refs: ButtonRefs,
+): Promise<void> {
+  refs.approveBtn.disabled = true;
+  refs.rejectBtn.disabled = true;
+  refs.status.textContent = 'Rejecting…';
+  refs.status.className = 'muted small approval-inline-status';
+
+  const reason = window.prompt('Reject reason (optional)') ?? undefined;
+
+  try {
+    await api.rejectApproval({ id: approval.id, ...(reason ? { reason } : {}) });
+    refs.status.textContent = 'Rejected.';
+    refs.status.className = 'ok small approval-inline-status';
+    setTimeout(() => {
+      const card = document.querySelector(`.card[data-id="${approval.id}"]`);
+      card?.remove();
+    }, 800);
+  } catch (err) {
+    refs.status.textContent = `Failed: ${(err as Error).message}`;
+    refs.status.className = 'err small approval-inline-status';
+    refs.approveBtn.disabled = false;
+    refs.rejectBtn.disabled = false;
+  }
+}
+
+function toArrayBuffer(u: Uint8Array): ArrayBuffer {
+  const out = new ArrayBuffer(u.byteLength);
+  new Uint8Array(out).set(u);
+  return out;
 }
 
 function applyTemplate(template: string, input: Record<string, unknown>): string {
@@ -159,13 +337,4 @@ function applyTemplate(template: string, input: Record<string, unknown>): string
     }
     return typeof cur === 'string' ? cur : JSON.stringify(cur);
   });
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }

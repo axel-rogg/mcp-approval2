@@ -23,3 +23,5 @@ export type {
   SubMcpAuthConfig,
   SubMcpToolCacheEntry,
 } from './sub-mcp.js';
+export { pendingApprovalsTable } from './approvals.js';
+export { costLedgerTable } from './cost.js';
