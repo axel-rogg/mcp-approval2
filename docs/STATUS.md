@@ -1,7 +1,8 @@
-# Status: mcp-approval2 Greenfield-Build (2026-05-13, post-Burst-4)
+# Status: mcp-approval2 Greenfield-Build (2026-05-13, post-Burst-5)
 
-> Snapshot nach Burst 1+2+3+4. **Phase 0-6 Code-Complete**, Pilot-
-> Production-Pfad konkret. Plan-Ref:
+> Snapshot nach Burst 1+2+3+4+5. **Pilot-Production code-side komplett**,
+> verbleibend nur externe Setup-Aufgaben (GCP, OpenBao-Live-Deploy, DNS,
+> Pilot-Firma-DPA). Plan-Ref:
 > [docs/plans/active/PLAN-architecture-v1.md](plans/active/PLAN-architecture-v1.md).
 > Diese Datei ist die Single-Source-of-Truth fuer "wo stehen wir + was fehlt
 > bis Pilot-Production". Bei Aenderungen: Datum oben bumpen + entsprechende
@@ -9,19 +10,34 @@
 
 ## TL;DR
 
-- **5 Commits** auf main (plus 1 lokal-only fuer Workflows)
-- **~300 Tests gruen** (188 server + 65 adapters + 47 core)
+- **6 Commits** auf main (plus 1 lokal-only fuer Workflows)
+- **~394 Tests gruen** (243 server + 104 adapters + 47 core)
 - **Alle 4 Workspaces tsc-clean** mit strict + noUncheckedIndexedAccess
-- **PWA installierbar** (vite build success, Manifest + SW)
-- **Live-Adapter**: OpenBao (KEK), Vertex AI (Embeddings+Chat), Postgres (mit RLS)
-- **CLI-Tools**: db-migrate, vault-bootstrap, health-check, seed
+- **PWA installierbar** (vite build success, Manifest + SW + WebAuthn-PRF)
+- **Live-Adapter**: OpenBao (KEK + per-User-DEK), Vertex AI (EU embed+chat),
+  Postgres (mit RLS), MinIO/S3 (Blob)
+- **CLI-Tools**: db-migrate (transaktional + drift-detection), vault-bootstrap,
+  health-check, seed
+- **Cross-Service-Bridge zu mcp-knowledge2**: POST /internal/v1/dek/resolve
+  funktional (ADR-0001 Variant B), JWKS-RS256 mit Live-Public-Key-Export
+- **Pilot-Doku**: Onboarding-, Incident-Response-, Token-Rotation-Runbooks
+  + DPA-/DPIA-Templates + Sub-Processor-List
 
-**Was noch fehlt fuer Pilot-Start in Firma**:
-1. mcp-knowledge2-Service live (paralleler Greenfield-Agent)
-2. Sub-MCP-Server-Migration (cf/github/gws/gcloud/utils auf X-User-JWT)
-3. Production-Deploy (GCP-Setup + OpenBao-Live + CI-Pipeline)
-4. App-Factory-Wiring fuer Approval+Cost-Gate finalisieren
-5. DPA-Template fuer Firma
+**Verbleibend (alles ausserhalb Code, braucht externe Setup):**
+1. **GCP-Provisioning** (Cloud SQL Postgres EU + Vertex-AI-Project + Service-
+   Account-Keys + Budget-Alerts)
+2. **OpenBao Live-Deploy** + AppRole-Bootstrap (`vault-bootstrap.ts` ready)
+3. **DNS + TLS** fuer mcp-approval2 + mcp-knowledge2
+4. **Deploy-Pipeline** (GitHub Actions Workflow lokal vorbereitet, braucht
+   PAT-Scope-Erweiterung)
+5. **mcp-knowledge2 Drift-Resolutions D-1..D-12** (siehe `CROSS-SERVICE-
+   CONTRACT.md` im Schwester-Repo — 12 Adapter-Side-Fixes fuer volle Wire-
+   Compat. Z.B. body_b64 statt body, Problem-Detail-Errors statt
+   `{error:{code,message}}`)
+6. **DPA-Anpassung** fuer Pilot-Firma (Template ist da, braucht firma-
+   spezifische Klauseln)
+7. **Sub-MCP-Server-Migration** (cf/github/gws/gcloud/utils Worker auf
+   X-User-JWT-Header — separate Repos)
 
 ## Was steht
 
