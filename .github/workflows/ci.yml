@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: validate (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20.x', '22.x']
+
+    # Service-Container fuer Integration-Tests (Phase 2+).
+    # pgvector/pgvector:pg16 = Postgres 16 mit pgvector extension preinstalled.
+    # OpenBao = Self-Hosted Vault-Fork (MPL2) fuer KEK / Transit-Engine.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: mcp_approval_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      openbao:
+        image: openbao/openbao:latest
+        env:
+          BAO_DEV_ROOT_TOKEN_ID: dev-root-token
+          BAO_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+        ports:
+          - 8200:8200
+        options: >-
+          --health-cmd "wget -qO- http://127.0.0.1:8200/v1/sys/health || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Wird von Integration-Tests konsumiert (Phase 2+).
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/mcp_approval_test
+      OPENBAO_ADDR: http://localhost:8200
+      OPENBAO_TOKEN: dev-root-token
+      # Determinismus + saubere CI-Logs.
+      CI: 'true'
+      FORCE_COLOR: '1'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # Zusaetzlicher Cache-Layer ueber actions/setup-node hinaus:
+      # node_modules pro lockfile-hash + node-version cachen.
+      - name: Cache workspace node_modules
+        id: cache-node-modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            apps/*/node_modules
+            packages/*/node_modules
+          key: nm-${{ runner.os }}-node${{ matrix.node }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            nm-${{ runner.os }}-node${{ matrix.node }}-
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck (all workspaces)
+        run: npm run typecheck
+
+      - name: Lint (all workspaces)
+        run: npm run lint
+
+      - name: Test (all workspaces)
+        run: npm run test

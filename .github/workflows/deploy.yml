@@ -1,0 +1,55 @@
+name: Deploy
+
+# STUB — Deploy ist in Phase 0 noch nicht aktiv.
+#
+# Sobald die Deployment-Strategie steht (Self-Host Postgres in EU vs.
+# Cloudflare-Adapter fuer Privat-Setup, siehe PLAN-architecture-v1.md §0
+# Deployment & Tenancy), wird dieser Workflow scharfgeschaltet.
+#
+# Trigger-Vorgabe: nur explizit per workflow_dispatch ODER auf push.main
+# wenn die Commit-Message ein `[deploy]`-Tag traegt (Konvention vom
+# mcp-approval-Vorgaenger). Konkret folgendes muss VOR-Aktivierung gesetzt
+# werden:
+#   - GitHub-Secrets: DATABASE_URL_PROD, OPENBAO_ADDR_PROD, OPENBAO_TOKEN_PROD,
+#     CF_API_TOKEN (falls Cloudflare-Adapter), VERTEX_AI_KEY
+#   - Environment-Protection-Rules (manual-approve auf "production")
+#   - Smoke-Test-Skript fuer post-deploy-Verifikation
+#
+# Bis dahin: noop. `workflow_dispatch` bleibt verfuegbar fuer manuelle Probes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Deploy target (placeholder — noop bis aktiviert)'
+        required: false
+        default: 'none'
+
+jobs:
+  noop:
+    name: noop (deploy not yet wired)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Announce
+        run: |
+          echo "Deploy workflow is a stub — see TODOs in .github/workflows/deploy.yml"
+          echo "Phase 0 ships without an active deploy pipeline."
+          echo "Activation tracked in docs/plans/active/PLAN-architecture-v1.md."
+
+  # TODO: build job
+  # build:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-node@v4
+  #       with: { node-version: '20.x', cache: npm }
+  #     - run: npm ci --no-audit --no-fund
+  #     - run: npm run build
+
+  # TODO: deploy job (gated on environment: production)
+  # deploy:
+  #   needs: build
+  #   runs-on: ubuntu-latest
+  #   environment: production
+  #   steps:
+  #     - run: echo "deploy steps go here (wrangler deploy / docker push / etc.)"
