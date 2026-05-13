@@ -26,3 +26,37 @@ cloudflare_zone_id = "REPLACE_ME_32_HEX"
 # domain_mcp            = "mcp2.ai-toolhub.org"
 # domain_knowledge      = "knowledge2.ai-toolhub.org"
 # domain_app            = "app2.ai-toolhub.org"
+
+# ---------------------------------------------------------------------------
+# GitHub-Terraform (module: github-repo)
+# ---------------------------------------------------------------------------
+# The GitHub provider reads its credential from $GITHUB_TOKEN (classic PAT
+# with `repo` + `workflow` scopes). NEVER put the token here — keep it in
+# the shell env or a secrets manager. See runbook-github-terraform.md.
+#
+#   export GITHUB_TOKEN=ghp_xxxxx
+
+cloudflare_api_token = "REPLACE_ME_CLOUDFLARE_API_TOKEN"
+
+# R2 S3-compatible keys (Cloudflare → R2 → Manage API tokens).
+r2_access_key_id     = "REPLACE_ME_R2_ACCESS_KEY_ID"
+r2_secret_access_key = "REPLACE_ME_R2_SECRET_ACCESS_KEY"
+
+# Separate SSH key for GH-Actions deploys (NOT the operator key).
+# Generate locally with:
+#   ssh-keygen -t ed25519 -f ~/.ssh/hetzner-deploy -N "" -C "gh-actions@mcp-approval2"
+# Then paste the contents of ~/.ssh/hetzner-deploy below, AND put the matching
+# .pub key into the VM's authorized_keys.
+hetzner_deploy_ssh_private_key = <<-EOT
+-----BEGIN OPENSSH PRIVATE KEY-----
+REPLACE_ME
+-----END OPENSSH PRIVATE KEY-----
+EOT
+
+# Internal service-token shared with the VM .env file.
+# Generate: openssl rand -hex 32
+mcp_approval_internal_token = "REPLACE_ME_HEX_64"
+
+# Optional. Leave empty if you don't pull private images from ghcr.io.
+# PAT scope: read:packages.
+ghcr_token = ""

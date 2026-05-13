@@ -59,3 +59,49 @@ variable "domain_app" {
   default     = "app2.ai-toolhub.org"
   description = "FQDN for the PWA."
 }
+
+# --- GitHub-Terraform inputs ------------------------------------------------
+#
+# These power the `github-repo` module (see github.tf). The GitHub provider
+# itself reads its token from $GITHUB_TOKEN — that env-var is NOT a Terraform
+# variable, just a runtime requirement.
+#
+# All sensitive values are gitignored via .tfvars rules — never commit
+# terraform.tfvars.
+
+variable "cloudflare_api_token" {
+  type        = string
+  sensitive   = true
+  description = "Cloudflare API token (used by github-repo module to seed CLOUDFLARE_API_TOKEN secret for GH workflows)."
+}
+
+variable "r2_access_key_id" {
+  type        = string
+  sensitive   = true
+  description = "R2 S3-compatible access key ID, surfaced to GH workflows."
+}
+
+variable "r2_secret_access_key" {
+  type        = string
+  sensitive   = true
+  description = "R2 S3-compatible secret access key, surfaced to GH workflows."
+}
+
+variable "hetzner_deploy_ssh_private_key" {
+  type        = string
+  sensitive   = true
+  description = "Separate SSH private key for GH-Actions auto-deploy (NOT the operator key — see runbook-github-terraform.md)."
+}
+
+variable "mcp_approval_internal_token" {
+  type        = string
+  sensitive   = true
+  description = "Internal service-token shared with the VM .env. Generate via: openssl rand -hex 32"
+}
+
+variable "ghcr_token" {
+  type        = string
+  sensitive   = true
+  default     = ""
+  description = "Optional PAT with read:packages for private ghcr.io pulls. Empty string skips creation of GHCR_TOKEN."
+}
