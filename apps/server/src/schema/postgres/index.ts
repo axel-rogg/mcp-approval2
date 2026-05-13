@@ -17,3 +17,9 @@ export {
   oauthAuthzCodesTable,
   oauthRefreshTokensTable,
 } from './oauth.js';
+export { subMcpServersTable, SUB_MCP_AUTH_MODES } from './sub-mcp.js';
+export type {
+  SubMcpAuthMode,
+  SubMcpAuthConfig,
+  SubMcpToolCacheEntry,
+} from './sub-mcp.js';

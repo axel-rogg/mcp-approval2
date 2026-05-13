@@ -1,87 +1,34 @@
 /**
  * mcp-approval2 server entry.
  *
- * Plan-Ref: PLAN-architecture-v1.md §2, §3, §11.
+ * Plan-Ref: PLAN-architecture-v1.md §2, §3, §11 (Burst-3 Final-Wiring).
  *
  * Aufbau:
- *   - loadConfig(env) — Pflicht-Vars validieren.
- *   - createDbAdapter(config) — Postgres oder SQLite.
- *   - serverContext { config, db } wird in alle Routen injiziert.
- *   - request-id + error-handler global.
- *   - Routen-Mount.
+ *   - `loadConfig(env)` validiert Pflicht-Vars (zod).
+ *   - `createDbAdapter(config)` waehlt Postgres oder SQLite.
+ *   - `createServerContext` baut `{config, db}`.
+ *   - Optional-Adapter (KEK + Knowledge) je nach Env-Var gebaut.
+ *   - `createApp(server, deps)` aus `./app-factory.js` mounten.
+ *
+ * Re-Export von `createApp` + Typen, damit Tests via `import { createApp }
+ * from './index.js'` weiterhin durchlaufen (Backward-Compat zur Burst-2-Phase).
  */
-import { Hono } from 'hono';
 import { serve } from '@hono/node-server';
-import type { AppBindings, ServerContext } from './lib/context.js';
+import { LocalKekProvider } from '@mcp-approval2/adapters';
 import { loadConfig, type AppConfig } from './lib/config.js';
 import { createDbAdapter } from './lib/db.js';
-import { requestId } from './middleware/request-id.js';
-import { errorHandler } from './middleware/error-handler.js';
-import { healthRoutes } from './routes/health.js';
-import { googleAuthRoutes } from './routes/auth/google.js';
-import { sessionRoutes } from './routes/auth/session.js';
-import { webauthnRoutes } from './routes/auth/webauthn.js';
-import { inviteRoutes } from './routes/auth/invite.js';
-import { recoveryRoutes } from './routes/auth/recovery.js';
-import { credentialsRoutes } from './routes/credentials.js';
-import { createCredentialsService, type CredentialsService } from './services/credentials.js';
-import { createPrfSessionService, type PrfSessionService } from './services/prf-session.js';
-import { knowledgeProxyRoutes } from './routes/knowledge-proxy.js';
-import type { KnowledgeService } from './services/knowledge.js';
-import type { KekProvider } from '@mcp-approval2/adapters';
+import type { ServerContext } from './lib/context.js';
+import { createApp, type CreateAppDeps } from './app-factory.js';
+import { createKnowledgeService } from './services/knowledge.js';
+import { emitAudit, type AuditEvent } from './services/audit.js';
 
-export interface CreateAppDeps {
-  /**
-   * KEK-Provider fuer Credential-Encrypt/Decrypt. Optional — wenn nicht
-   * uebergeben, sind die `/v1/credentials/*`-Routes nicht montiert.
-   */
-  readonly kekProvider?: KekProvider;
-  /** Optional: bestehender CredentialsService (Tests). Override gewinnt. */
-  readonly credentials?: CredentialsService;
-  /** Optional: bestehender PrfSessionService (Tests). */
-  readonly prfSessions?: PrfSessionService;
-  /**
-   * Optional: KnowledgeService gegen mcp-knowledge2.
-   * Wenn nicht uebergeben sind die `/v1/knowledge/*`-Routes nicht montiert.
-   */
-  readonly knowledge?: KnowledgeService;
-}
-
-export async function createApp(
-  server: ServerContext,
-  deps: CreateAppDeps = {},
-): Promise<Hono<AppBindings>> {
-  const app = new Hono<AppBindings>();
-  app.use('*', requestId());
-  app.onError(errorHandler());
-
-  app.route('/', healthRoutes());
-  app.route('/', googleAuthRoutes(server));
-  app.route('/', sessionRoutes(server));
-  app.route('/', webauthnRoutes(server));
-  app.route('/', inviteRoutes(server));
-  app.route('/', recoveryRoutes(server));
-
-  const credentials =
-    deps.credentials ??
-    (deps.kekProvider
-      ? createCredentialsService({ db: server.db, kekProvider: deps.kekProvider })
-      : null);
-  if (credentials) {
-    const prfSessions = deps.prfSessions ?? createPrfSessionService();
-    app.route('/', credentialsRoutes({ server, credentials, prfSessions }));
-  }
-
-  if (deps.knowledge) {
-    app.route('/', knowledgeProxyRoutes(server, { knowledge: deps.knowledge }));
-  }
-
-  return app;
-}
+// Re-exports — Tests + Burst-2-Subagents importieren von hier.
+export { createApp } from './app-factory.js';
+export type { CreateAppDeps } from './app-factory.js';
 
 /**
- * createServerContext mit minimalem env-Subset — fuer Tests, die nicht durch
- * `process.env` gehen wollen.
+ * Baut den geteilten `{config, db}`-Container. Tests koennen einen Stub-Db
+ * via `createApp({config, db})` direkt einsetzen, ohne `loadConfig` zu fahren.
  */
 export async function createServerContext(env: NodeJS.ProcessEnv): Promise<ServerContext> {
   const config: AppConfig = loadConfig(env);
@@ -89,13 +36,118 @@ export async function createServerContext(env: NodeJS.ProcessEnv): Promise<Serve
   return { config, db };
 }
 
-// Boot-Pfad. `main`-Wrapper nur wenn nicht im Test-Modus.
+// ───────────────────────────────────────────────────────────────────────────
+// Optional-Dependency-Build — KEK + Knowledge je nach Env-Var verfuegbar.
+// ───────────────────────────────────────────────────────────────────────────
+
+interface BootEnv {
+  readonly MASTER_KEY_BASE64?: string;
+  readonly VAULT_ADDR?: string;
+  readonly VAULT_TOKEN?: string;
+  readonly VAULT_TRANSIT_PATH?: string;
+  readonly KNOWLEDGE_URL?: string;
+  readonly JWT_PRIVATE_KEY?: string;
+  readonly JWT_KID?: string;
+}
+
+async function buildOptionalDeps(
+  server: ServerContext,
+  bootEnv: BootEnv,
+): Promise<CreateAppDeps> {
+  const deps: Mutable<CreateAppDeps> = {};
+
+  // ─── KEK-Provider ─────────────────────────────────────────────────────
+  // Dev-Pfad: LocalKekProvider mit MASTER_KEY_BASE64.
+  // Production-Pfad (OpenBao via AppRoleAuth) wird im naechsten Burst-Schritt
+  // verkabelt — der OpenBao-Provider liegt in @mcp-approval2/adapters bereit,
+  // aber der `StaticTokenAuth`/`AppRoleAuth`-Helper ist noch nicht ueber den
+  // Package-Index exportiert. Aktuell: wenn VAULT_ADDR gesetzt aber kein
+  // MASTER_KEY_BASE64 → Warnung loggen, sonst Local-Provider.
+  if (bootEnv.VAULT_ADDR && !bootEnv.MASTER_KEY_BASE64) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[mcp-approval2] VAULT_ADDR set but OpenBao boot-path is not yet wired ' +
+        'through @mcp-approval2/adapters (need StaticTokenAuth re-export). ' +
+        'Falling back to no-credentials-mode. Set MASTER_KEY_BASE64 for dev or ' +
+        'inject kekProvider via createApp() directly.',
+    );
+  }
+  if (bootEnv.MASTER_KEY_BASE64) {
+    const masterKey = decodeBase64(bootEnv.MASTER_KEY_BASE64);
+    if (masterKey.byteLength !== 32) {
+      throw new Error('MASTER_KEY_BASE64 must decode to 32 bytes');
+    }
+    deps.kekProvider = new LocalKekProvider({ masterKey });
+  }
+
+  // ─── KnowledgeService ────────────────────────────────────────────────
+  // Nur wenn URL + Private-Key gesetzt. Audit-Sink ist der gemeinsame
+  // Postgres-`audit_log`-Sink (siehe services/audit.ts).
+  if (bootEnv.KNOWLEDGE_URL && bootEnv.JWT_PRIVATE_KEY) {
+    const audit = {
+      async emit(event: AuditEvent): Promise<void> {
+        await emitAudit(server.db, event);
+      },
+    };
+    const knowledgeEnv: {
+      KNOWLEDGE_URL: string;
+      JWT_PRIVATE_KEY: string;
+      JWT_ISSUER: string;
+      JWT_AUDIENCE: string;
+      JWT_KID?: string;
+    } = {
+      KNOWLEDGE_URL: bootEnv.KNOWLEDGE_URL,
+      JWT_PRIVATE_KEY: bootEnv.JWT_PRIVATE_KEY,
+      JWT_ISSUER: server.config.JWT_ISSUER,
+      JWT_AUDIENCE: 'mcp-knowledge2',
+    };
+    if (bootEnv.JWT_KID !== undefined) knowledgeEnv.JWT_KID = bootEnv.JWT_KID;
+    deps.knowledge = await createKnowledgeService({ env: knowledgeEnv, audit });
+  }
+
+  return deps;
+}
+
+type Mutable<T> = { -readonly [P in keyof T]: T[P] };
+
+function decodeBase64(b64: string): Uint8Array {
+  if (typeof Buffer !== 'undefined') {
+    const buf = Buffer.from(b64, 'base64');
+    return new Uint8Array(buf);
+  }
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function pickBootEnv(env: NodeJS.ProcessEnv): BootEnv {
+  const out: Mutable<BootEnv> = {};
+  if (env['MASTER_KEY_BASE64']) out.MASTER_KEY_BASE64 = env['MASTER_KEY_BASE64'];
+  if (env['VAULT_ADDR']) out.VAULT_ADDR = env['VAULT_ADDR'];
+  if (env['VAULT_TOKEN']) out.VAULT_TOKEN = env['VAULT_TOKEN'];
+  if (env['VAULT_TRANSIT_PATH']) out.VAULT_TRANSIT_PATH = env['VAULT_TRANSIT_PATH'];
+  if (env['KNOWLEDGE_URL']) out.KNOWLEDGE_URL = env['KNOWLEDGE_URL'];
+  if (env['JWT_PRIVATE_KEY']) out.JWT_PRIVATE_KEY = env['JWT_PRIVATE_KEY'];
+  if (env['JWT_KID']) out.JWT_KID = env['JWT_KID'];
+  return out;
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// CLI-Boot
+// ───────────────────────────────────────────────────────────────────────────
+
 async function main(): Promise<void> {
   const server = await createServerContext(process.env);
-  const app = await createApp(server);
+  const deps = await buildOptionalDeps(server, pickBootEnv(process.env));
+  const app = await createApp(server, deps);
   const port = server.config.PORT;
   // eslint-disable-next-line no-console
   console.log(`[mcp-approval2] listening on :${port}`);
+  // eslint-disable-next-line no-console
+  console.log(
+    `[mcp-approval2] credentials=${deps.kekProvider ? 'on' : 'off'} knowledge=${deps.knowledge ? 'on' : 'off'}`,
+  );
   serve({ fetch: app.fetch, port });
 }
 
