@@ -1,6 +1,13 @@
 # PLAN — mcp-approval2 Architektur v1 (Decisions Complete)
 
-> **Status: ✅ DECISIONS COMPLETE — Ready for Phase 0 (Skeleton)**
+> **Status: ✅ DECISIONS COMPLETE + IMPLEMENTATION-PHASEN 0-6 GESETZT (2026-05-13)**
+>
+> Codebase-Status: 4 Commits, 148 Tests grün, alle Workspaces tsc-clean.
+> Detail-Stand: [docs/STATUS.md](../../STATUS.md). Verbleibende Lücken bis
+> Pilot-Production dort dokumentiert (Approval-PWA-E2E, mcp-knowledge2-
+> Service-Live, Sub-MCP-Migration, Cost-Controls, Production-Deploy).
+>
+> **Original-Status:** DECISIONS COMPLETE — Ready for Phase 0 (Skeleton)
 >
 > Erstellt: 2026-05-13. v0 (Decision-Document) abgeschlossen am 2026-05-13
 > in einer Decision-Session (Bundle 1-6). Dieses File konsolidiert die
