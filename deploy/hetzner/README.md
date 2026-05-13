@@ -23,6 +23,7 @@ for the full architecture and rationale.
 | `backup.sh` | Nightly DB dump + Vault snapshot → Storage Box (optional) |
 | `restore.sh` | Restore from a backup directory |
 | `healthcheck.sh` | Status snapshot, exit non-zero on any red |
+| `watchtower-notifications.md` | Notification-Setups (Slack, Discord, Email, webhook) |
 
 ## Prerequisites
 
@@ -89,6 +90,109 @@ bash update.sh
 
 `update.sh` pulls the repo, pulls images, restarts containers, runs
 migrations, reloads Caddy (zero-downtime), and runs the healthcheck.
+
+## Auto-Updates via Watchtower
+
+Watchtower polled ghcr.io alle 5 min und pulled neue Image-Tags
+automatisch. Überwacht nur **mcp-approval2** + **mcp-knowledge2** (NICHT
+Postgres/OpenBao/Caddy — die musst du manuell mit `bash update.sh`
+aktualisieren). Watchtower selbst ist ebenfalls aus dem Auto-Update
+ausgenommen (rekursiv-gefährlich).
+
+### Wie es funktioniert
+
+1. CI baut neues Image bei `push` to `main` → `ghcr.io/axel-rogg/mcp-approval2:latest`
+2. Watchtower checkt Image-Digest alle 5 min (`WATCHTOWER_POLL_INTERVAL`)
+3. Wenn neuer Digest: stoppt alten Container, pulled neuen, startet ihn
+   (mit gleichen env + volumes + network)
+4. Rolling-Restart (`WATCHTOWER_ROLLING_RESTART=true`): nicht beide
+   gleichzeitig, sondern nacheinander
+5. Alte Images werden aufgeräumt (`WATCHTOWER_CLEANUP=true`)
+
+Watchtower entscheidet anhand des Image-Digests, nicht des Tag-Strings →
+robuster für `latest`-Floating-Tags.
+
+### Auto-Update aktivieren / deaktivieren
+
+Per Container-Label (im `docker-compose.yml`):
+```yaml
+services:
+  mcp-approval2:
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"   # in / out
+```
+
+Auf einem laufenden Container ad hoc:
+```bash
+# Aktivieren
+docker label add <container_name> com.centurylinklabs.watchtower.enable=true
+
+# Deaktivieren (sofort)
+docker label add <container_name> com.centurylinklabs.watchtower.enable=false
+```
+
+### Notifications (optional)
+
+Watchtower kann nach jedem Update-Event eine Notification schicken
+(Slack, Discord, Email, generic Webhook).
+
+Setup in `.env`:
+```bash
+WATCHTOWER_NOTIFICATIONS=shoutrrr
+WATCHTOWER_NOTIFICATION_URL=slack://<bot_token>@<channel_id>
+WATCHTOWER_NOTIFICATIONS_LEVEL=info
+```
+
+Beispiele für Slack/Discord/Email/Webhook stehen in
+[`watchtower-notifications.md`](watchtower-notifications.md).
+
+### Watchtower-Logs einsehen
+
+```bash
+docker compose logs -f watchtower
+```
+
+Erwartete Log-Patterns:
+- `Checking for updates`
+- `Found new <image>:<tag> signature`
+- `Pulling <image>`
+- `Stopping <container>` → `Starting <container>`
+- `Session done` (mit Counter `Scanned/Updated/Failed`)
+
+### Disable kurzfristig (z.B. während Migration)
+
+```bash
+docker compose pause watchtower
+
+# Nach Migration:
+docker compose unpause watchtower
+```
+
+Alternativ den Service komplett ausschalten:
+```bash
+docker compose stop watchtower
+# … später:
+docker compose start watchtower
+```
+
+### Image-Tag-Strategy
+
+- `latest` → Watchtower pulled bei jedem Image-Digest-Change (Default für
+  prod).
+- `vX.Y.Z` (semver) → Watchtower folgt NICHT zwischen Tags; pulled nur
+  bei einem Re-Push desselben Tags mit anderem Digest. Pinning sinnvoll
+  für canary / staging.
+- Empfehlung: production-VM nutzt `TAG=latest` + `KNOWLEDGE_TAG=latest`,
+  dev-VM kann auf einen spezifischen Tag pinnen.
+
+### Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Watchtower pulled nicht | Label fehlt | `docker inspect <container> | grep watchtower` |
+| `unauthorized: authentication required` in Logs | `GHCR_TOKEN` leer / abgelaufen | Neuen PAT mit `read:packages` erzeugen, in `.env` setzen, `docker compose up -d watchtower` |
+| Container restartet ständig | Neues Image bricht den Start | `WATCHTOWER_POLL_INTERVAL` hochsetzen, manuell auf stabilen Tag pinnen |
+| Watchtower sieht Updates, restartet aber nicht | Container hat label `enable=false` oder Watchtower hat `WATCHTOWER_LABEL_ENABLE=true` und Label fehlt | Labels in `docker-compose.yml` prüfen |
 
 ### Backup (cron)
 

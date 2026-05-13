@@ -68,6 +68,8 @@ services:
   mcp-approval2:
     image: ghcr.io/axel-rogg/mcp-approval2:${TAG:-latest}
     container_name: mcp-approval2
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
     environment:
       # ── Database ────────────────────────────────────────────
       DATABASE_URL: postgres://app:${POSTGRES_PASSWORD}@postgres:5432/approval2
@@ -122,6 +124,8 @@ services:
   mcp-knowledge2:
     image: ghcr.io/axel-rogg/mcp-knowledge2:${KNOWLEDGE_TAG:-latest}
     container_name: mcp-knowledge2
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
     environment:
       DATABASE_URL: postgres://app:${POSTGRES_PASSWORD}@postgres:5432/knowledge2
       JWKS_URL: http://mcp-approval2:8787/.well-known/jwks.json
@@ -149,11 +153,50 @@ services:
     restart: unless-stopped
     networks: [internal]
 
+  # ──────────────────────────────────────────────────────────────────────
+  # Watchtower — auto-update mcp-approval2 + mcp-knowledge2 (NOT postgres/
+  # openbao/caddy; those are infrastructure and must be updated manually).
+  # Opt-in via com.centurylinklabs.watchtower.enable=true label.
+  # See README.md "Auto-Updates via Watchtower" + watchtower-notifications.md
+  # ──────────────────────────────────────────────────────────────────────
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - watchtower-data:/data
+    environment:
+      # Polling-Intervall (Sekunden, Default 300 = 5 min)
+      WATCHTOWER_POLL_INTERVAL: ${WATCHTOWER_POLL_INTERVAL:-300}
+      # Nur Container mit Label überwachen (opt-in pattern)
+      WATCHTOWER_LABEL_ENABLE: "true"
+      # Neue Images pullen + alte aufräumen
+      WATCHTOWER_CLEANUP: "true"
+      # Rolling-Update — nicht alle Container gleichzeitig
+      WATCHTOWER_ROLLING_RESTART: "true"
+      # Stop-Timeout für graceful shutdown
+      WATCHTOWER_TIMEOUT: 30s
+      # Auth für private Registry (ghcr.io)
+      REPO_USER: ${GHCR_USER:-}
+      REPO_PASS: ${GHCR_TOKEN:-}
+      # Optional: Notifications (siehe watchtower-notifications.md)
+      WATCHTOWER_NOTIFICATIONS: ${WATCHTOWER_NOTIFICATIONS:-}
+      WATCHTOWER_NOTIFICATION_URL: ${WATCHTOWER_NOTIFICATION_URL:-}
+      WATCHTOWER_NOTIFICATIONS_LEVEL: ${WATCHTOWER_NOTIFICATIONS_LEVEL:-info}
+      # Watchtower-Log-Level
+      WATCHTOWER_LOG_LEVEL: ${WATCHTOWER_LOG_LEVEL:-info}
+    networks: [internal]
+    labels:
+      # Watchtower NICHT selbst auto-update (rekursiv-gefährlich)
+      com.centurylinklabs.watchtower.enable: "false"
+
 volumes:
   pgdata:
   vault-data:
   caddy-data:
   caddy-config:
+  watchtower-data:
 
 networks:
   internal:
