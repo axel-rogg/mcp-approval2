@@ -1,10 +1,27 @@
-# Status: mcp-approval2 Greenfield-Build (2026-05-13)
+# Status: mcp-approval2 Greenfield-Build (2026-05-13, post-Burst-4)
 
-> Snapshot nach Burst 1+2+3 (Phase 0-6 Bauphase). Plan-Ref:
+> Snapshot nach Burst 1+2+3+4. **Phase 0-6 Code-Complete**, Pilot-
+> Production-Pfad konkret. Plan-Ref:
 > [docs/plans/active/PLAN-architecture-v1.md](plans/active/PLAN-architecture-v1.md).
 > Diese Datei ist die Single-Source-of-Truth fuer "wo stehen wir + was fehlt
 > bis Pilot-Production". Bei Aenderungen: Datum oben bumpen + entsprechende
 > Sektion editieren.
+
+## TL;DR
+
+- **5 Commits** auf main (plus 1 lokal-only fuer Workflows)
+- **~300 Tests gruen** (188 server + 65 adapters + 47 core)
+- **Alle 4 Workspaces tsc-clean** mit strict + noUncheckedIndexedAccess
+- **PWA installierbar** (vite build success, Manifest + SW)
+- **Live-Adapter**: OpenBao (KEK), Vertex AI (Embeddings+Chat), Postgres (mit RLS)
+- **CLI-Tools**: db-migrate, vault-bootstrap, health-check, seed
+
+**Was noch fehlt fuer Pilot-Start in Firma**:
+1. mcp-knowledge2-Service live (paralleler Greenfield-Agent)
+2. Sub-MCP-Server-Migration (cf/github/gws/gcloud/utils auf X-User-JWT)
+3. Production-Deploy (GCP-Setup + OpenBao-Live + CI-Pipeline)
+4. App-Factory-Wiring fuer Approval+Cost-Gate finalisieren
+5. DPA-Template fuer Firma
 
 ## Was steht
 
@@ -80,53 +97,59 @@
 - ⏳ TODO: Rate-Limit-Middleware (Token-Bucket pro User + pro Tenant — Plan
   beschrieben, Code fehlt)
 - ⏳ TODO: GDPR-Export (ZIP-Stream) + Erase mit Crypto-Shred (30d-Grace)
-- ⏳ TODO: Admin-Routen (User-List, Suspend, Audit-View — Plan-Ref §4)
-- ⏳ TODO: Cost-Controls (Vertex-AI-Budget pro User vor Inference-Calls)
+- ✅ Admin-Routes (User-List, Suspend, Audit-View) — `apps/server/src/routes/admin.ts`
+- ✅ Cost-Controls (Vertex-AI-Budget pro User) — `services/cost-tracker.ts` +
+  `middleware/cost-gate.ts` mit X-Cost-*-Header
 - ⏳ TODO: SIEM-Export-Endpoint
 - ⏳ TODO: Structured-Logging (pino) — heute haengen `console.log/error`-Calls
   ohne korreliert mit `requestId`
 
 ## PWA-Status (apps/web)
 
-- ✅ Skeleton-Build (`vite` + vanilla-TS, kein Framework)
-- ✅ Login-Page `/` → Click-Through nach `/auth/google/start`
-- ✅ Approval-View `/#approvals` (default-Route nach Login) — pollt
-  `/v1/approvals/pending` alle 5s und rendert WYSIWYS-Template
-- ✅ WebAuthn-Sign-Off-Skeleton (`signApproval(id)` in src/auth.ts) inkl.
-  PRF-Extension-Wire-Shape — Backend-Endpoints fehlen noch
-- ⏳ TODO: Echter PWA-Build (Manifest, Service-Worker, Web-Push), Icon-Set,
-  Offline-Cache
-- ⏳ TODO: WYSIWYS-Display-Template-Resolver (Tool-Manifest `display_template`
-  Feld), heute Stringersatz `{{path.to.value}}`
-- ⏳ TODO: Tool-Defaults / Profile / Hints — wenn als Feature gewuenscht (in
-  mcp-approval als PLAN-prefs umgesetzt, hier offen)
-- ⏳ TODO: Storage-Browser (PWA-Topbar-Icon, "browse my objects") — gegen
-  `/v1/knowledge/objects`-Proxy
+- ✅ Build mit vite (~23kB JS / ~5kB CSS), PWA installierbar
+- ✅ Hash-Routing (`#/login`, `#/approvals`, `#/credentials`, `#/enroll-passkey`)
+- ✅ Login-Page → Click-Through nach `/auth/google/start`
+- ✅ Approval-View pollt `/v1/approvals/pending` alle 5s und rendert
+  WYSIWYS-display_rendered, Approve/Reject-Buttons
+- ✅ WebAuthn-PRF-Sign-Off im Approval-Flow (PRF-Salt = `approval:<id>`),
+  PRF-Session-Stash an Backend wenn Tool credentials braucht
+- ✅ Credentials-View: Add-Form mit PRF-Sign (Salt = `credentials:add:<provider>:<label>`)
+- ✅ Service-Worker (cache-first static / network-only API), Manifest, Icon
+- ✅ Mobile-first CSS mit Dark-Mode (prefers-color-scheme)
+- ⏳ TODO: WYSIWYS-Display-Template-Resolver in PWA (heute Backend rendert
+  display_rendered komplett — Plan-Pattern: PWA rendert nochmal als
+  Verification)
+- ⏳ TODO: Storage-Browser (gegen `/v1/knowledge/objects`-Proxy)
+- ⏳ TODO: Tool-Defaults / Profile / Hints — wenn als Feature gewuenscht
 
 ## Was fehlt fuer Pilot-Production
 
 ### Code
-1. **Approval-Flow End-to-End**: Backend-Routen + DB-Tabelle + State-Machine
-   (pending → executing → expired) + PWA-Click-Through. Heute Tool-Calls mit
-   `sensitivity != read` wirft `ApprovalRequiredError` aber es gibt nichts
-   wohin der User klicken kann.
+1. **Approval-Flow End-to-End**: ✅ COMPLETE (Burst 4)
+   — DB-Tabelle `pending_approvals` + State-Machine + 5 PWA-facing Routes
+   + WebAuthn-PRF-Sign-Off + Re-Dispatch nach Approval. Anbindung in
+   `app-factory.ts` noch pending (Routes-Mount + Tool-Registry-Bridge).
 2. **mcp-knowledge2 Service**: paralleler Greenfield-Build mit JWT-Auth-
    Boundary; `@mcp-approval2/adapters/knowledge`-HTTP-Client wartet darauf.
 3. **Sub-MCP-Server-Migration**: `mcp-gws`, `mcp-utils`, etc. brauchen
    Anpassung an den neuen Internal-Auth (`X-User-JWT` statt heutigem Bearer-
-   Master-Token), plus den Sub-MCP-Gateway aus Phase 5 fertig.
+   Master-Token), plus den Sub-MCP-Gateway aus Phase 5 ist im Repo fertig
+   (`src/mcp/gateway/`) aber Mount-Wiring noch pending.
 4. **OpenBao Boot-Path im index.ts**: heute hat `apps/server/src/index.ts`
    nur den `LocalKekProvider`-Dev-Pfad; Production-Boot mit AppRole-Token-
-   Bootstrap fehlt. `OpenBaoKekProvider` selbst ist fertig — der
-   `StaticTokenAuth`/`AppRoleAuth`-Helper muss noch ueber den Package-Index
-   re-exportiert werden.
-5. **DB-Migration-Tooling**: Drizzle-Migrate-CLI ist verlinkt (`db:migrate`-
-   Script), aber Migrations-Files unter `apps/server/migrations/` muessen
-   gegen das finale Schema generiert + commited werden.
-6. **Cost-Controls Live**: Vertex-AI-Budget-Check + Quota-Hook in
-   `gws/client.ts`-pendant.
+   Bootstrap fehlt. `OpenBaoKekProvider` ist fertig — `vault-bootstrap.ts`-
+   CLI in `apps/server/scripts/` ist ebenfalls fertig. Wiring: optional
+   produktiv aktivieren wenn VAULT_ADDR gesetzt.
+5. **DB-Migration-Tooling**: ✅ COMPLETE — `apps/server/scripts/migrate.ts`
+   mit transaktional Apply + sha256-Drift-Detection + `--dry-run` /
+   `--target` Flags. Migrations 0001-0006 vorhanden.
+6. **Cost-Controls Live**: ✅ COMPLETE — Vertex-Adapter ist live,
+   `cost-tracker` mit Daily-Budget pro User, `cost-gate` Middleware mit 429.
 7. **Monitoring + Observability**: pino-http + OpenTelemetry-Spans + Metrics-
    Endpoint (Prometheus-Format) + Audit-Tail-Endpoint fuer SOC.
+8. **Final Wire-Up**: `app-factory.ts` ergaenzen um Approval-Routes
+   + Cost-Gate + Sub-MCP-Gateway-Mount (alle Module fertig, Mount-Wiring
+   ist die letzte Strecke vor Pilot-Smoke).
 
 ### Ops
 1. **Production-Deploy-Pipeline**: GitHub-Actions-Deploy + Secrets-Sync
