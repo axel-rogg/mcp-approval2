@@ -1,0 +1,45 @@
+name: Terraform Plan (read-only)
+
+on:
+  pull_request:
+    paths:
+      - 'terraform/**'
+      - '.github/workflows/terraform-plan.yml'
+  workflow_dispatch:
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [privat]   # business wird spaeter aktiviert
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ~1.6
+
+      - name: Terraform fmt check
+        run: terraform -chdir=terraform fmt -recursive -check
+
+      - name: Terraform Init
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: terraform -chdir=terraform/environments/${{ matrix.env }} init
+
+      - name: Terraform Validate
+        run: terraform -chdir=terraform/environments/${{ matrix.env }} validate
+
+      - name: Terraform Plan
+        env:
+          HCLOUD_TOKEN:                   ${{ secrets.HCLOUD_TOKEN }}
+          CLOUDFLARE_API_TOKEN:           ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TF_VAR_operator_ssh_public_key: ${{ secrets.OPERATOR_SSH_PUBLIC_KEY }}
+          TF_VAR_cloudflare_zone_id:      ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          AWS_ACCESS_KEY_ID:              ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY:          ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: terraform -chdir=terraform/environments/${{ matrix.env }} plan -no-color
