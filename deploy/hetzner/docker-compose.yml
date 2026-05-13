@@ -1,0 +1,160 @@
+# docker-compose.yml — mcp-approval2 + mcp-knowledge2 Hetzner-Stack
+#
+# Boot order:  postgres (healthcheck) → openbao → mcp-approval2 → mcp-knowledge2 → caddy
+# Network:     internal (bridge) — Caddy is the only public-facing service via :80/:443
+# State:       pgdata, vault-data, caddy-data, caddy-config (named volumes)
+#
+# Run:   docker compose --env-file .env up -d
+# Logs:  docker compose logs -f <service>
+# Stop:  docker compose down            (keeps volumes)
+#        docker compose down -v         (DESTRUCTIVE: removes pgdata + vault-data!)
+
+version: '3.9'
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: mcp-caddy
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      mcp-approval2:
+        condition: service_started
+      mcp-knowledge2:
+        condition: service_started
+    restart: unless-stopped
+    networks: [internal]
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: mcp-postgres
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: approval2
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U app -d approval2']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks: [internal]
+
+  openbao:
+    image: quay.io/openbao/openbao:latest
+    container_name: mcp-openbao
+    cap_add: [IPC_LOCK]
+    environment:
+      BAO_LOCAL_CONFIG: |
+        storage "file" { path = "/vault/data" }
+        listener "tcp" { address = "0.0.0.0:8200" tls_disable = 1 }
+        ui = true
+        api_addr = "http://openbao:8200"
+        disable_mlock = false
+    volumes:
+      - vault-data:/vault/data
+    command: server
+    restart: unless-stopped
+    networks: [internal]
+
+  mcp-approval2:
+    image: ghcr.io/axel-rogg/mcp-approval2:${TAG:-latest}
+    container_name: mcp-approval2
+    environment:
+      # ── Database ────────────────────────────────────────────
+      DATABASE_URL: postgres://app:${POSTGRES_PASSWORD}@postgres:5432/approval2
+      # ── Vault / OpenBao ─────────────────────────────────────
+      VAULT_ADDR: http://openbao:8200
+      VAULT_TOKEN: ${VAULT_TOKEN}
+      # ── Server ──────────────────────────────────────────────
+      PORT: 8787
+      BASE_URL: https://${DOMAIN_MCP}
+      WEBAUTHN_RP_ID: ${DOMAIN_MCP}
+      # ── JWT RS256 (signing) ─────────────────────────────────
+      JWT_RS256_PRIVATE_KEY_PEM: ${JWT_RS256_PRIVATE_KEY_PEM}
+      JWT_RS256_PUBLIC_KEY_PEM: ${JWT_RS256_PUBLIC_KEY_PEM}
+      JWT_KID: ${JWT_KID}
+      JWT_ISSUER: mcp-approval2
+      # ── Internal Service Token (Sub-MCP ↔ Approval) ─────────
+      MCP_APPROVAL_INTERNAL_TOKEN: ${MCP_APPROVAL_INTERNAL_TOKEN}
+      # ── KC2 (intra-network) ─────────────────────────────────
+      KNOWLEDGE_URL: http://mcp-knowledge2:8788
+      # ── Sub-MCPs auf Cloudflare (cross-cloud HTTPS) ─────────
+      GATEWAY_CF_URL: https://cf.ai-toolhub.org
+      GATEWAY_GITHUB_URL: ${GATEWAY_GITHUB_URL:-}
+      GATEWAY_GWS_URL: https://gws.ai-toolhub.org
+      GATEWAY_UTILS_URL: https://utils.ai-toolhub.org
+      GATEWAY_GCLOUD_URL: https://gcloud.ai-toolhub.org
+      # ── Google OAuth (Front-Door Login) ─────────────────────
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET}
+      # ── Vertex AI (optional; mount SA-JSON via volume) ──────
+      VERTEX_AI_PROJECT_ID: ${VERTEX_AI_PROJECT_ID:-}
+      VERTEX_AI_REGION: ${VERTEX_AI_REGION:-europe-west4}
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/vertex-sa.json
+      # ── Logging ─────────────────────────────────────────────
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      NODE_ENV: production
+    volumes:
+      - ./secrets/vertex-sa.json:/secrets/vertex-sa.json:ro
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost:8787/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      openbao:
+        condition: service_started
+    restart: unless-stopped
+    networks: [internal]
+
+  mcp-knowledge2:
+    image: ghcr.io/axel-rogg/mcp-knowledge2:${KNOWLEDGE_TAG:-latest}
+    container_name: mcp-knowledge2
+    environment:
+      DATABASE_URL: postgres://app:${POSTGRES_PASSWORD}@postgres:5432/knowledge2
+      JWKS_URL: http://mcp-approval2:8787/.well-known/jwks.json
+      JWT_ISSUER: mcp-approval2
+      JWT_AUDIENCE: mcp-knowledge2
+      MCP_APPROVAL_BASE_URL: http://mcp-approval2:8787
+      MCP_APPROVAL_INTERNAL_TOKEN: ${MCP_APPROVAL_INTERNAL_TOKEN}
+      VERTEX_REGION: ${VERTEX_AI_REGION:-europe-west4}
+      VERTEX_PROJECT_ID: ${VERTEX_AI_PROJECT_ID:-}
+      BACKUP_MASTER_KEY: ${KNOWLEDGE_BACKUP_MASTER_KEY_BASE64}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      PORT: 8788
+      NODE_ENV: production
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost:8788/health']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mcp-approval2:
+        condition: service_started
+    restart: unless-stopped
+    networks: [internal]
+
+volumes:
+  pgdata:
+  vault-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  internal:
+    driver: bridge

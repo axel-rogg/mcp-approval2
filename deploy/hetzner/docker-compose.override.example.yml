@@ -1,0 +1,53 @@
+# docker-compose.override.example.yml — local-dev overrides
+#
+# Usage:  cp docker-compose.override.example.yml docker-compose.override.yml
+#         docker compose up -d
+#
+# Compose automatically merges docker-compose.override.yml on top of
+# docker-compose.yml when both are present. The override file is gitignored
+# so per-machine tweaks (port exposures, image tags, mounted source code)
+# never accidentally land in production.
+#
+# Typical local-dev tweaks below:
+#  - expose postgres + openbao on the host (so local CLIs can hit them)
+#  - swap Caddy off (use direct ports), or run Caddy on alt ports
+#  - mount local source tree into mcp-approval2 (live-reload via ts-node)
+#  - pin TAG to a feature branch image
+
+version: '3.9'
+
+services:
+  # Expose postgres + openbao on localhost for psql / bao CLI access.
+  postgres:
+    ports:
+      - '127.0.0.1:5432:5432'
+
+  openbao:
+    ports:
+      - '127.0.0.1:8200:8200'
+
+  # Expose mcp-approval2 + mcp-knowledge2 on the host so we can bypass Caddy
+  # and run vitest / curl against them directly. Comment out if Caddy is up.
+  mcp-approval2:
+    ports:
+      - '127.0.0.1:8787:8787'
+    environment:
+      LOG_LEVEL: debug
+      NODE_ENV: development
+    # Hot-reload: mount the local repo and override the entrypoint.
+    # volumes:
+    #   - ../../:/app
+    # command: ['npm', 'run', 'dev']
+
+  mcp-knowledge2:
+    ports:
+      - '127.0.0.1:8788:8788'
+    environment:
+      LOG_LEVEL: debug
+      NODE_ENV: development
+
+  # Skip Caddy locally — too noisy with self-signed certs and Let's Encrypt
+  # staging. If you DO want Caddy locally, set DOMAIN_MCP=localhost in .env
+  # and use the `local` tls block in your Caddyfile.
+  caddy:
+    profiles: ['production-only']

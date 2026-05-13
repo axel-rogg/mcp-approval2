@@ -1,0 +1,28 @@
+# ---------------------------------------------------------------------------
+# Template — copy to terraform.tfvars and fill values.
+# terraform.tfvars is gitignored. NEVER commit values.
+# ---------------------------------------------------------------------------
+
+# Hetzner Cloud API token (Project → Security → API tokens, Read & Write).
+hcloud_token = "REPLACE_ME"
+
+# Operator SSH public key (OpenSSH single-line). Generate with:
+#   ssh-keygen -t ed25519 -C "operator@laptop" -f ~/.ssh/mcp-approval2_ed25519
+# then paste contents of ~/.ssh/mcp-approval2_ed25519.pub here.
+operator_ssh_public_key = "ssh-ed25519 AAAAC3... operator@laptop"
+
+# Cloudflare zone ID for ai-toolhub.org (32-char hex). Look up:
+#   curl -s 'https://api.cloudflare.com/client/v4/zones?name=ai-toolhub.org' \
+#     -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" | jq -r '.result[0].id'
+cloudflare_zone_id = "REPLACE_ME_32_HEX"
+
+# --- Optional overrides (defaults are fine for single-user) ---------------
+
+# server_type           = "cx21"
+# location              = "fsn1"
+# allowed_ssh_ips       = ["198.51.100.42/32"]   # production: lock to your IP
+# data_volume_size_gb   = 0                       # set e.g. 20 if you want pgdata on a sep. volume
+
+# domain_mcp            = "mcp2.ai-toolhub.org"
+# domain_knowledge      = "knowledge2.ai-toolhub.org"
+# domain_app            = "app2.ai-toolhub.org"
