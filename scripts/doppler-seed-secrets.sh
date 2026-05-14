@@ -89,10 +89,10 @@ echo "  ✓ VAPID_PUBLIC_KEY"
 
 # Operator SSH Public-Key (existing key wenn vorhanden)
 if [[ -f "$HOME/.ssh/id_ed25519.pub" ]]; then
-  doppler secrets set "OPERATOR_SSH_PUBLIC_KEY=$(cat $HOME/.ssh/id_ed25519.pub)" -p "$PROJECT" -c "$CONFIG" --silent
+  doppler secrets set "OPERATOR_SSH_PUBLIC_KEY=$(cat "$HOME/.ssh/id_ed25519.pub")" -p "$PROJECT" -c "$CONFIG" --silent
   echo "  ✓ OPERATOR_SSH_PUBLIC_KEY (aus ~/.ssh/id_ed25519.pub)"
 elif [[ -f "$HOME/.ssh/id_rsa.pub" ]]; then
-  doppler secrets set "OPERATOR_SSH_PUBLIC_KEY=$(cat $HOME/.ssh/id_rsa.pub)" -p "$PROJECT" -c "$CONFIG" --silent
+  doppler secrets set "OPERATOR_SSH_PUBLIC_KEY=$(cat "$HOME/.ssh/id_rsa.pub")" -p "$PROJECT" -c "$CONFIG" --silent
   echo "  ✓ OPERATOR_SSH_PUBLIC_KEY (aus ~/.ssh/id_rsa.pub)"
 else
   echo "  ⚠  Kein SSH-Key in ~/.ssh/ gefunden — OPERATOR_SSH_PUBLIC_KEY skipped"
@@ -101,7 +101,7 @@ fi
 
 # Hetzner-Deploy-SSH-Key (separat von Operator-Key, nur für GH-Actions)
 ssh-keygen -t ed25519 -f "$TMPDIR/hetzner-deploy" -N "" -C "github-actions-hetzner-deploy" -q
-doppler secrets set "HETZNER_DEPLOY_SSH_PRIVATE_KEY=$(cat $TMPDIR/hetzner-deploy)" -p "$PROJECT" -c "$CONFIG" --silent
+doppler secrets set "HETZNER_DEPLOY_SSH_PRIVATE_KEY=$(cat "$TMPDIR/hetzner-deploy")" -p "$PROJECT" -c "$CONFIG" --silent
 HETZNER_DEPLOY_PUB=$(cat "$TMPDIR/hetzner-deploy.pub")
 echo "  ✓ HETZNER_DEPLOY_SSH_PRIVATE_KEY"
 echo ""

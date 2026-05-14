@@ -58,24 +58,34 @@ doppler_get() {
 }
 
 # ── 3. TF_VAR_* mapping (only the variables declared in
-#      environments/privat/variables.tf). ──
-export TF_VAR_hcloud_token="$(doppler_get HCLOUD_TOKEN)"
-export TF_VAR_operator_ssh_public_key="$(doppler_get OPERATOR_SSH_PUBLIC_KEY)"
-export TF_VAR_cloudflare_zone_id="$(doppler_get CLOUDFLARE_ZONE_ID)"
-export TF_VAR_cloudflare_api_token="$(doppler_get CLOUDFLARE_API_TOKEN)"
-export TF_VAR_r2_access_key_id="$(doppler_get AWS_ACCESS_KEY_ID)"
-export TF_VAR_r2_secret_access_key="$(doppler_get AWS_SECRET_ACCESS_KEY)"
-export TF_VAR_hetzner_deploy_ssh_private_key="$(doppler_get HETZNER_DEPLOY_SSH_PRIVATE_KEY)"
-export TF_VAR_mcp_approval_internal_token="$(doppler_get MCP_APPROVAL_INTERNAL_TOKEN)"
+#      environments/privat/variables.tf).
+#
+# Split `local var=$(...)` into two statements so jq-failures surface via
+# `set -e` instead of being swallowed by `export`'s always-success exit
+# (shellcheck SC2155). ──
+TF_VAR_hcloud_token="$(doppler_get HCLOUD_TOKEN)"
+TF_VAR_operator_ssh_public_key="$(doppler_get OPERATOR_SSH_PUBLIC_KEY)"
+TF_VAR_cloudflare_zone_id="$(doppler_get CLOUDFLARE_ZONE_ID)"
+TF_VAR_cloudflare_api_token="$(doppler_get CLOUDFLARE_API_TOKEN)"
+TF_VAR_r2_access_key_id="$(doppler_get AWS_ACCESS_KEY_ID)"
+TF_VAR_r2_secret_access_key="$(doppler_get AWS_SECRET_ACCESS_KEY)"
+TF_VAR_hetzner_deploy_ssh_private_key="$(doppler_get HETZNER_DEPLOY_SSH_PRIVATE_KEY)"
+TF_VAR_mcp_approval_internal_token="$(doppler_get MCP_APPROVAL_INTERNAL_TOKEN)"
+export TF_VAR_hcloud_token TF_VAR_operator_ssh_public_key \
+  TF_VAR_cloudflare_zone_id TF_VAR_cloudflare_api_token \
+  TF_VAR_r2_access_key_id TF_VAR_r2_secret_access_key \
+  TF_VAR_hetzner_deploy_ssh_private_key TF_VAR_mcp_approval_internal_token
+
 # Optional: GHCR PAT for private package pulls — empty string is fine.
 export TF_VAR_ghcr_token=""
 
 # Domains: defaults already match in variables.tf, no overrides needed.
 
 # ── 4. Provider-native env-vars. ──
-export HCLOUD_TOKEN="$(doppler_get HCLOUD_TOKEN)"
-export CLOUDFLARE_API_TOKEN="$(doppler_get CLOUDFLARE_API_TOKEN)"
-export GITHUB_TOKEN="$(doppler_get GITHUB_TOKEN)"
+HCLOUD_TOKEN="$(doppler_get HCLOUD_TOKEN)"
+CLOUDFLARE_API_TOKEN="$(doppler_get CLOUDFLARE_API_TOKEN)"
+GITHUB_TOKEN="$(doppler_get GITHUB_TOKEN)"
+export HCLOUD_TOKEN CLOUDFLARE_API_TOKEN GITHUB_TOKEN
 
 # R2 backend uses S3 protocol → reads AWS_* from env. Already loaded from
 # .dev.vars above; re-export from Doppler if present (Doppler wins for
