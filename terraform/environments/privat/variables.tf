@@ -23,8 +23,8 @@ variable "cloudflare_zone_id" {
 
 variable "server_type" {
   type        = string
-  default     = "cx21"
-  description = "Hetzner server type. cx21 = 4 vCPU / 8 GB RAM, ~6 EUR/Mo."
+  default     = "cpx22"
+  description = "Hetzner server type. cpx22 = 2 vCPU / 4 GB RAM / 80 GB, ~8.64 EUR/Mo (cx21+cpx21 beide EOL fuer fsn1 ab 2026-05). Upgrade-Path bei OOM: cpx32 (4c/8GB/160GB, ~15.12 EUR/Mo) via live-rescale."
 }
 
 variable "location" {
