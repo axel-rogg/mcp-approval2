@@ -1,7 +1,7 @@
 # Runbook: Hetzner Initial-Deploy + Updates
 
 > **Status:** Ready
-> **Letzte Verifikation:** 2026-05-13
+> **Letzte Verifikation:** 2026-05-14 (post-audit)
 > **Estimated time:** 45-60 min (Initial-Deploy) / 5-10 min (Update)
 
 Operations-Runbook fuer mcp-approval2 auf Hetzner Cloud CX21
@@ -24,37 +24,34 @@ Operations-Runbook fuer mcp-approval2 auf Hetzner Cloud CX21
 
 ## Schritte
 
-### 1. Terraform-Bootstrap
+### 1. Terraform-Bootstrap (Doppler-driven, no tfvars)
+
+Voraussetzung: `bash scripts/doppler-bootstrap.sh` einmalig ausfuehren +
+Doppler-Config `privat` mit `bash scripts/doppler-seed-secrets.sh` befuellen
+(siehe [runbook-doppler.md](runbook-doppler.md) Phase 3).
 
 ```bash
-cd /workspaces/mcp-approval2/terraform/environments/privat
+cd /workspaces/mcp-approval2
 
-# Provider initialisieren + R2-Backend
-terraform init
-
-# Variablen pruefen (terraform.tfvars NICHT committed, lokal anlegen)
-cat > terraform.tfvars <<'EOF'
-instance_name          = "mcp-approval2-privat"
-operator_ssh_public_key = "ssh-ed25519 AAAA... operator@mcp-approval2"
-allowed_ssh_ips        = ["1.2.3.4/32"]   # eigene IPv4
-domain_mcp             = "mcp2.ai-toolhub.org"
-domain_knowledge       = "knowledge2.ai-toolhub.org"
-domain_app             = "app2.ai-toolhub.org"
-hcloud_token           = "..."
-cloudflare_api_token   = "..."
-cloudflare_zone_id     = "..."
-EOF
-
-terraform plan
-terraform apply
+# Wrapper liest alle Secrets aus Doppler, mappt auf TF_VAR_* +
+# provider-native ENV-Vars, exect terraform. Kein terraform.tfvars
+# noetig — Werte leben ausschliesslich in Doppler.
+bash scripts/doppler-run-terraform.sh init     # einmalig pro Maschine
+bash scripts/doppler-run-terraform.sh plan
+bash scripts/doppler-run-terraform.sh apply
 ```
 
 Erwartetes Output:
-- 1× `hcloud_server` (CX21, Frankfurt, Ubuntu 24.04)
-- 1× `hcloud_firewall` mit Rules :22 (operator-IP), :80, :443 (world)
-- 1× `hcloud_volume` (20 GB)
-- 3× `cloudflare_dns_record` (A-Records mcp2/knowledge2/app2)
-- Output: `vm_ipv4`, `vm_ipv6`
+- 1× `hcloud_server` (CX21, Frankfurt, Ubuntu 24.04) mit `prevent_destroy=true`
+- 1× `hcloud_firewall` mit Rules :22 (default 0.0.0.0/0, Key-only + fail2ban),
+  :80, :443 (world), ICMP
+- 0..1× `hcloud_volume` (default 0 GB = disabled; aktivieren via Doppler-Var
+  `data_volume_size_gb`) — falls aktiv: ebenfalls `prevent_destroy=true`
+- 6× `cloudflare_dns_record` (A + AAAA fuer mcp2/knowledge2/app2)
+- 1× GitHub-Repo-Settings (Branch-Protection, Environments, Doppler-Token-Secret)
+- 2× Doppler-Service-Tokens (VM + GH-Actions, sensitive Outputs)
+- Output: `vm_ipv4`, `vm_ipv6`, `default_hetzner_fqdn_v4`, `coop_bypass_url`,
+  `allowed_origins_csv`
 
 ### 2. DNS-Propagation pruefen
 
@@ -82,24 +79,55 @@ cd mcp-approval2
 Erwartetes Output: cloud-init hat bereits docker + git + ufw + fail2ban installiert.
 Check via `docker --version` (≥ 24) + `docker compose version` (≥ v2).
 
-### 4. Secrets generieren + .env editieren
+### 4. Secrets-Quelle waehlen — Doppler ODER lokale generate-secrets.sh
+
+**Empfohlen: Doppler-VM-Sync.** Token-File einmalig deponieren, danach
+holt sich die VM `.env` selbst:
+
+```bash
+# Operator-Host:
+cd /workspaces/mcp-approval2/terraform/environments/privat
+bash /workspaces/mcp-approval2/scripts/doppler-run-terraform.sh \
+  output -raw doppler_vm_token  # NICHT loggen, direkt in ssh-pipe
+
+# VM (als deploy-User):
+echo 'dp.st.privat.XXX' > /opt/mcp-approval2/.doppler-token
+chmod 600 /opt/mcp-approval2/.doppler-token
+bash /opt/mcp-approval2/scripts/doppler-vm-sync.sh   # schreibt .env
+```
+
+**Fallback: lokal generieren** (wenn Doppler noch nicht eingerichtet):
 
 ```bash
 cd /opt/mcp-approval2/deploy/hetzner
 bash generate-secrets.sh > .env
 chmod 600 .env
 
-# Manuell ergaenzen:
-# - GOOGLE_OAUTH_CLIENT_ID / SECRET (aus GCP Console)
-# - VERTEX_AI_PROJECT_ID
-# - Domain-Variablen (APPROVAL_DOMAIN=mcp2.ai-toolhub.org etc.)
+# Manuell ergaenzen / pruefen:
+# - GOOGLE_OAUTH_CLIENT_ID + SECRET (aus GCP Console)
+# - VERTEX_AI_PROJECT_ID (optional)
+# - ALLOWED_EMAILS (CSV, Whitelist fuer Google-OAuth-Login)
+# - ALLOWED_ORIGINS (CSV — Pflicht fuer Coop-Bypass / app2.ai-toolhub.org)
 nano .env
 ```
 
-Erwartetes Output: `.env` enthaelt
-`POSTGRES_PASSWORD`, `VAULT_TOKEN` (kommt erst nach vault-init), `JWT_RS256_*`,
-`MCP_APPROVAL_INTERNAL_TOKEN`, `KNOWLEDGE_MASTER_KEY_BASE64`,
-`APPROVAL_DOMAIN`, `KNOWLEDGE_DOMAIN`, `APP_DOMAIN`.
+`.env` enthaelt nach Generate / Doppler-Sync u.a.:
+- **Generated:** `POSTGRES_PASSWORD`, `MCP_APPROVAL_INTERNAL_TOKEN`,
+  `JWT_RS256_PRIVATE_KEY_PEM` + `_PUBLIC_KEY_PEM`, `JWT_KID`,
+  `JWT_SECRET` (HS256 fuer Sessions + OAuth-tokens),
+  `MASTER_KEY_BASE64` (KEK fuer Credential-Encrypt),
+  `KNOWLEDGE_BACKUP_MASTER_KEY_BASE64`, `VAPID_*`, `HETZNER_DEPLOY_SSH_PRIVATE_KEY`
+- **Operator fuellt:** `VAULT_TOKEN` (nach `vault-init.sh`), `GOOGLE_OAUTH_*`,
+  `ALLOWED_EMAILS`, `ALLOWED_ORIGINS`, `VERTEX_AI_*`
+- **Domain-Defaults:** `DOMAIN_MCP`, `DOMAIN_KNOWLEDGE`, `DOMAIN_APP`
+
+**Warum JWT_SECRET + MASTER_KEY_BASE64 Pflicht sind:**
+[apps/server/src/lib/config.ts](../../apps/server/src/lib/config.ts) verlangt
+`JWT_SECRET ≥ 32 chars` (HS256-Pfad: `auth/session/issuer.ts`,
+`mcp/oauth/token.ts`, `routes/internal/credentials.ts`). Ohne
+`MASTER_KEY_BASE64` faellt der KEK-Provider auf "no-credentials-mode" zurueck
+(`index.ts:69-77`) — alle `/v1/credentials/*` + GDPR-Routes bleiben
+unmontiert. Audit-Finding #1 + #4 (2026-05-14).
 
 ### 5. Initial-Stack-Start
 
@@ -109,17 +137,19 @@ bash setup.sh
 ```
 
 Was setup.sh macht:
-1. `docker compose pull` (Images von ghcr.io ziehen)
-2. `docker compose up -d postgres openbao` (DB + Vault zuerst)
-3. `bash vault-init.sh` → schreibt unseal-keys + root-token nach
+1. Doppler-Sync (falls Token-File da) → schreibt aktuelles `.env`
+2. `docker compose pull` (Images von ghcr.io ziehen)
+3. `docker compose up -d postgres openbao` (DB + Vault zuerst)
+4. `bash vault-init.sh` → schreibt unseal-keys + root-token nach
    `/opt/mcp-approval2/.vault-init-output` (3 Keys, Threshold 2)
-4. **WICHTIG:** unseal-keys + root-token sofort offline backupen
+5. **WICHTIG:** unseal-keys + root-token sofort offline backupen
    (Paper-Wallet oder verschluesselter USB-Stick), dann
    `shred -u /opt/mcp-approval2/.vault-init-output`
-5. `VAULT_TOKEN` in `.env` setzen
-6. `docker compose up -d` (alle Services)
-7. `docker compose exec mcp-approval2 node scripts/migrate.js`
-8. `docker compose exec mcp-knowledge2 node scripts/migrate.js`
+6. `VAULT_TOKEN` in Doppler (oder `.env`) setzen
+7. `docker compose up -d` (alle Services)
+8. `docker compose exec -T mcp-approval2 npx tsx scripts/migrate.ts` — **fail-fast**, kein
+   `|| echo WARN` mehr. Falls hier abbricht: `docker compose logs mcp-approval2`.
+9. `docker compose exec -T mcp-knowledge2 npx tsx scripts/migrate.ts`
 
 Erwartetes Output: alle 5 Services running (`docker compose ps`).
 
@@ -176,10 +206,12 @@ bash deploy/hetzner/update.sh
 
 Was update.sh macht:
 1. `git pull --rebase origin main`
-2. `docker compose -f deploy/hetzner/docker-compose.yml pull`
-3. `docker compose -f deploy/hetzner/docker-compose.yml up -d` (rolling)
-4. `docker compose exec mcp-approval2 node scripts/migrate.js` (nur wenn Migrations gepullt)
-5. Smoke `bash deploy/hetzner/healthcheck.sh`
+2. Doppler-Sync (falls Token-File da) → `.env` aktualisiert
+3. `docker compose -f deploy/hetzner/docker-compose.yml pull`
+4. `docker compose -f deploy/hetzner/docker-compose.yml up -d` (rolling)
+5. `docker compose exec -T mcp-approval2 npx tsx scripts/migrate.ts` — fail-fast
+6. `docker compose exec -T mcp-knowledge2 npx tsx scripts/migrate.ts` — fail-fast
+7. Smoke `bash deploy/hetzner/healthcheck.sh`
 
 Erwartetes Output: alle Services restart, kein Downtime > 30s pro Service
 (Caddy macht graceful-reload, mcp-approval2 hat Health-Probe).
@@ -233,6 +265,29 @@ docker compose -f deploy/hetzner/docker-compose.yml logs postgres
   → **Loesung:** `.env` ist in `.gitignore` — wenn doch geaendert ist es
     eine Local-Override, mit `git stash` schuetzen, `update.sh` laufen,
     `git stash pop` zurueck.
+
+- **Problem:** `terraform destroy` failed mit
+  `Resource has prevent_destroy lifecycle = true`
+  → **Loesung:** Schutz ist Absicht (Audit-Finding #1, 2026-05-14). VM +
+    Volume halten User-Daten / pgdata. Echtes Destroy:
+    1. In [terraform/modules/hetzner-mcp-instance/main.tf](../../terraform/modules/hetzner-mcp-instance/main.tf)
+       `lifecycle { prevent_destroy = true }` auskommentieren.
+    2. `bash scripts/doppler-run-terraform.sh apply` (state-update).
+    3. `bash scripts/doppler-run-terraform.sh destroy`.
+    4. Block wieder rein-committen damit das Loch nicht offen bleibt.
+
+- **Problem:** Container bootet mit `ZodError: JWT_SECRET must be >= 32 chars`
+  → **Loesung:** `JWT_SECRET` fehlt in `.env`. Entweder via Doppler
+    (`doppler secrets get JWT_SECRET --plain -p mcp-approval2 -c privat`)
+    nachsehen / via `doppler-seed-secrets.sh` neu generieren, oder
+    `openssl rand -hex 32` lokal in `.env` setzen. Audit-Finding #1.
+
+- **Problem:** `/v1/credentials/*` antwortet 404
+  → **Loesung:** `MASTER_KEY_BASE64` fehlt — Server faellt auf
+    no-credentials-mode zurueck und mountet die Credential-Routes nicht
+    ([apps/server/src/index.ts:69-77](../../apps/server/src/index.ts#L69)).
+    Logs: `[mcp-approval2] credentials=off ...`. Fix: 32 Bytes base64 in
+    Doppler oder `.env` setzen.
 
 ## Verifikation
 

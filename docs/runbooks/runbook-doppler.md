@@ -52,21 +52,24 @@ Hetzner-VM, später GCP-Business).
 
 Das `doppler-setup`-Modul legt im Doppler-Workplace an:
 - Project `mcp-approval2`
-- 3 Configs: `dev` / `privat` / `business`
-- 28 Secret-Placeholders (leere Werte, in Phase 3 zu füllen)
+- 2 Configs: `dev` / `privat` (business removed 2026-05-14 — Decision: keine
+  Business-Credentials in Doppler)
+- 33 Secret-Placeholders (leere Werte, in Phase 3 zu füllen / vom Seed-
+  Script automatisch befüllt)
 - 2 Service-Tokens: für VM und für GH-Actions
 
 ```bash
-# 1. .dev.vars laden (enthält DOPPLER_TOKEN aus Phase 1)
+# 1. Erst-Apply legt das Doppler-Project + Configs + leere Placeholders an.
+#    Der doppler-run-terraform.sh-Wrapper liest DOPPLER_TOKEN aus .dev.vars,
+#    mappt Secrets auf TF_VAR_* + provider-native ENV-Vars.
 cd /workspaces/mcp-approval2
-set -a && source .dev.vars && set +a
+bash scripts/doppler-run-terraform.sh init
+bash scripts/doppler-run-terraform.sh apply -target='module.doppler'
 
-# 2. In das privat-Environment wechseln
-cd terraform/environments/privat
-
-# 3. Init + apply (legt das Doppler-Project + Configs an)
-terraform init
-terraform apply -target='module.doppler'
+# 2. Initial-Seed: Crypto-Keys + Random-Tokens generieren und in das
+#    privat-Config schreiben (Gruppe A aus altem .dev.vars, Gruppe B frisch).
+#    Idempotent — re-run sicher, bestehende Werte werden ueberschrieben.
+bash scripts/doppler-seed-secrets.sh
 ```
 
 Erwartete Outputs:
@@ -86,9 +89,11 @@ Erwartete Outputs:
 
 ## Phase 3 — Secrets im Doppler-UI manuell befüllen (15-30 min)
 
-Öffne <https://dashboard.doppler.com/workplace/projects/mcp-approval2/configs/privat>.
+Öffne <https://dashboard.doppler.com/projects/mcp-approval2/configs/privat>.
 
-Die 28 Placeholders sind nach Themen sortiert. Hier die Quellen-Map:
+Die 33 Placeholders sind nach Themen sortiert. **Viele füllt das Seed-Script
+aus Phase 2 automatisch** — die Tabelle markiert, was du noch manuell machen
+musst. Hier die Quellen-Map:
 
 ### 3.1 Aus dem alten `.dev.vars` (mcp-approval Repo) übernehmen
 
@@ -122,15 +127,30 @@ Die 28 Placeholders sind nach Themen sortiert. Hier die Quellen-Map:
 | `DOMAIN_KNOWLEDGE` | `knowledge2.ai-toolhub.org` |
 | `DOMAIN_APP` | `app2.ai-toolhub.org` |
 
-### 3.4 Later — werden erst nach Phase 6 von der VM gestempelt
+### 3.4 Vom Seed-Script (Phase 2) befüllt — nichts zu tun
+
+`scripts/doppler-seed-secrets.sh` schreibt diese Werte automatisch:
+
+| Secret-Name | Inhalt |
+|---|---|
+| `POSTGRES_PASSWORD` | `openssl rand -hex 24` |
+| `MCP_APPROVAL_INTERNAL_TOKEN` | `openssl rand -hex 32` |
+| `JWT_SECRET` | `openssl rand -hex 32` (HS256, Sessions + OAuth-tokens) |
+| `MASTER_KEY_BASE64` | `openssl rand 32 \| base64` (KEK fuer Credential-Encrypt) |
+| `JWT_RS256_PRIVATE_KEY_PEM` + `_PUBLIC_KEY_PEM` + `JWT_KID` | RSA-2048 keypair |
+| `KNOWLEDGE_BACKUP_MASTER_KEY_BASE64` | 32 raw bytes base64 |
+| `VAPID_PRIVATE_KEY` + `VAPID_PUBLIC_KEY` | P-256 fuer Web-Push |
+| `OPERATOR_SSH_PUBLIC_KEY` | aus `~/.ssh/id_ed25519.pub` (oder id_rsa.pub) |
+| `HETZNER_DEPLOY_SSH_PRIVATE_KEY` | frisch generiert fuer GH-Actions |
+| `ACME_EMAIL` | aus `git config user.email` |
+
+### 3.5 Werden erst von der VM gefüllt
 
 | Secret-Name | Quelle |
 |---|---|
-| `HETZNER_VM_HOST` | `terraform output vm_ipv4` nach Phase 6 |
-| `WEBAUTHN_RP_ID` | = `DOMAIN_APP` ohne Schema |
-| `POSTGRES_PASSWORD` | von `generate-secrets.sh` |
-| `JWT_SECRET` | von `generate-secrets.sh` |
-| `VAULT_UNSEAL_KEY` | von `vault-init.sh` auf der VM (NICHT in Doppler bis sicher) |
+| `HETZNER_FQDN_V4` | `terraform output -raw default_hetzner_fqdn_v4` nach Phase 6 |
+| `ALLOWED_ORIGINS` | `terraform output -raw allowed_origins_csv` nach Phase 6 |
+| `VAULT_TOKEN` | von `vault-init.sh` auf der VM (Root-Token, NICHT in Doppler bis nach Audit) |
 
 > **Tipp:** Die "later"-Felder kannst du in Phase 3 leer lassen. Doppler
 > zeigt sie dann mit dem Badge "empty" — beim VM-Setup in Phase 6
@@ -184,9 +204,12 @@ bash scripts/doppler-bootstrap.sh
 Danach im Daily-Use:
 
 ```bash
-# Terraform mit Doppler-Env (statt terraform.tfvars / set -a)
-doppler run -- terraform plan
-doppler run -- terraform apply
+# Terraform: doppler-run-terraform.sh Wrapper (NICHT plain `doppler run`).
+#   Mappt Doppler-Namen auf TF_VAR_* + provider-native ENV-Vars (HCLOUD_TOKEN,
+#   CLOUDFLARE_API_TOKEN, GITHUB_TOKEN, AWS_* fuer R2-Backend), cd in
+#   environments/privat, exec terraform.
+bash scripts/doppler-run-terraform.sh plan
+bash scripts/doppler-run-terraform.sh apply
 
 # Tests mit Doppler-Env
 doppler run -- npm test
@@ -200,6 +223,28 @@ doppler secrets get HCLOUD_TOKEN --plain
 > Die Werte landen NICHT in der Shell-History oder im Shell-Env des
 > Aufrufers — nur im Child-Prozess. Genau das Verhalten das wir
 > für Token-Hygiene wollen.
+
+### Neue Placeholder hinzufuegen (chicken-and-egg)
+
+Wenn du ein neues `doppler_secret` in `modules/doppler-setup/main.tf`
+ergaenzt **und** den Wert vorher schon im Doppler-UI / via CLI gesetzt
+hast: `terraform apply` wuerde versuchen den Wert auf `""` zu setzen
+(Create-Phase nutzt den `value`-Arg, `ignore_changes` greift erst danach).
+
+Loesung: **erst importieren, dann apply**:
+
+```bash
+bash scripts/doppler-run-terraform.sh import \
+  "module.doppler.doppler_secret.placeholder_<name>" \
+  "mcp-approval2.privat.<SECRET_NAME>"
+
+bash scripts/doppler-run-terraform.sh plan   # sollte jetzt no-op fuer das Secret
+```
+
+Beispiel-Workflow fuer JWT_SECRET + MASTER_KEY_BASE64 (2026-05-14
+Pre-Deploy-Audit): Secrets via `openssl rand` ins Doppler-Config gesetzt,
+Resource-Blocks in `main.tf` ergaenzt, dann `terraform import` fuer beide,
+dann `apply` → keine Drift.
 
 ---
 
@@ -306,15 +351,10 @@ terraform output -raw doppler_vm_token    # in VM-Token-File schreiben (Phase 6)
 
 ### 7.3 Multi-Instance (Business-Config aktivieren)
 
-Wenn die GCP-Business-Instance kommt:
-
-1. `terraform apply` mit `create_business_environment = true` in
-   `environments/privat/github.tf` (oder neuer `environments/business/`).
-2. Im Doppler-UI: Project `mcp-approval2` → Config `business` → Werte
-   eintragen (kann unabhängig von `privat` divergieren — andere Zone-ID,
-   andere Domain, etc.).
-3. Im GitHub-Sync: zusätzliches Mapping `business` → `gcp-business`
-   anlegen.
+> **Stand 2026-05-14:** Business-Environment wurde aus dem Doppler-Modul
+> entfernt (User-Decision: keine Business-Credentials in Doppler).
+> Wenn die GCP-Business-Instance kommt, eigenes Setup ohne Doppler-Mirror
+> oder separater Doppler-Workplace.
 
 ---
 

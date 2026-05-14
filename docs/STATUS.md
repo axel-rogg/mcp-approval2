@@ -1,12 +1,51 @@
-# Status: mcp-approval2 Greenfield-Build (2026-05-13, post-Burst-5)
+# Status: mcp-approval2 Greenfield-Build (2026-05-14, post-Pre-Deploy-Audit)
 
-> Snapshot nach Burst 1+2+3+4+5. **Pilot-Production code-side komplett**,
-> verbleibend nur externe Setup-Aufgaben (GCP, OpenBao-Live-Deploy, DNS,
-> Pilot-Firma-DPA). Plan-Ref:
+> Snapshot nach Burst 1+2+3+4+5 + Pre-Deploy-Audit. **Pilot-Production
+> code-side komplett**, Doppler-Single-Source-of-Truth verkabelt,
+> Terraform-Plan clean (19 to add). Bereit fuer Erst-`terraform apply` auf
+> Hetzner CX21. Plan-Ref:
 > [docs/plans/active/PLAN-architecture-v1.md](plans/active/PLAN-architecture-v1.md).
 > Diese Datei ist die Single-Source-of-Truth fuer "wo stehen wir + was fehlt
 > bis Pilot-Production". Bei Aenderungen: Datum oben bumpen + entsprechende
 > Sektion editieren.
+
+## Pre-Deploy-Audit 2026-05-14
+
+Vor dem ersten `terraform apply` ein paralleler Pass (Subagent-Audit +
+Hand-Verifikation) auf den App-Code + die Terraform-Module:
+
+**App-Code — 4 CRITICAL gefixt** (Commit 86d7b41):
+- #1 Env-Var-Naming: `translateBootEnv()` Shim in `apps/server/src/index.ts`
+  mappt Compose-Namen (BASE_URL / WEBAUTHN_RP_ID / GOOGLE_OAUTH_CLIENT_*)
+  auf zod-Schema-Namen. JWT_SECRET + MASTER_KEY_BASE64 in Doppler + compose.
+- #2 Migrations: `tsx` von devDeps → deps, `setup.sh` + `update.sh` nutzen
+  `npx tsx scripts/migrate.ts` mit fail-fast statt `|| echo WARN`.
+- #3 PWA: Dockerfile baut `apps/web`, Runtime kopiert `apps/web/dist`,
+  Hono mountet `serveStatic` + SPA-Fallback.
+- #4 KEK: `MASTER_KEY_BASE64` durchverdrahtet → LocalKekProvider-Branch
+  ([index.ts:78-84](../apps/server/src/index.ts#L78)) kickt jetzt.
+
+**App-Code — 3 HIGH gefixt** (Commit 8808c1e):
+- #6 PG-Retry: `waitForDb()` mit exponential backoff (250ms→4s, 30s Deadline)
+  vor `serve()` — schliesst Reboot-Race.
+- #9 JWT-PEM-Preflight: `preflightJwtKeys()` parsed Keys beim Boot, broken
+  PEM crasht fail-fast.
+- #10 Compose: `version: '3.9'` raus (Compose v2 warnt sonst).
+
+**Terraform — 3 Findings gefixt** (Commit e5f6040):
+- #1 `prevent_destroy = true` auf `hcloud_server.mcp` + `hcloud_volume.data`.
+- #7 `placeholder_count` 31 → 33 (JWT_SECRET + MASTER_KEY_BASE64).
+- #9 `doppler_dashboard_url`: `/workplace/`-Segment raus.
+
+**Verifikation:**
+- `npm run typecheck` clean ueber alle Workspaces
+- `apps/server` Vitest 397/397 grün
+- `bash scripts/doppler-run-terraform.sh plan`: 19 to add, 0 changes
+- Doppler-Config `privat` mit 33 Placeholders, alle Crypto-Secrets befuellt
+
+Audit-Findings #5 (`ALLOWED_ORIGINS` in `generate-secrets.sh`) bleibt offen
+als Coop-Bypass-Polish — Operator setzt das nach `terraform output` per Hand
+in Doppler.
 
 ## TL;DR
 
