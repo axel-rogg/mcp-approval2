@@ -21,6 +21,7 @@ import type { ServerContext } from './lib/context.js';
 import { createApp, type CreateAppDeps } from './app-factory.js';
 import { createKnowledgeService } from './services/knowledge.js';
 import { emitAudit, type AuditEvent } from './services/audit.js';
+import { getSigningKey, getJwksPublicKey } from './auth/jwt-signing.js';
 
 // Re-exports — Tests + Burst-2-Subagents importieren von hier.
 export { createApp } from './app-factory.js';
@@ -199,8 +200,82 @@ function pickBootEnv(env: NodeJS.ProcessEnv): BootEnv {
 // CLI-Boot
 // ───────────────────────────────────────────────────────────────────────────
 
+/**
+ * Wartet darauf dass der DB-Adapter ueberhaupt `SELECT 1` beantworten kann.
+ *
+ * Hintergrund: Postgres ist beim Compose-Boot via `depends_on:
+ * condition: service_healthy` geschuetzt — aber bei einem Hetzner-VM-Reboot
+ * starten alle Container parallel. postgres-js verbindet lazy beim ersten
+ * Query, ein Race-Window von einigen Sekunden ist realistisch.
+ *
+ * Exponential-Backoff, ~30s Gesamt-Budget. Wir loggen jeden Retry damit ein
+ * Reboot-Race in den Logs sichtbar bleibt.
+ */
+async function waitForDb(server: ServerContext): Promise<void> {
+  const raw = server.db.unsafe('boot-preflight DB-ping waitForDb()');
+  const start = Date.now();
+  const deadline = start + 30_000;
+  let attempt = 0;
+  let delay = 250;
+  for (;;) {
+    attempt += 1;
+    try {
+      await raw.query('SELECT 1');
+      if (attempt > 1) {
+        // eslint-disable-next-line no-console
+        console.log(`[mcp-approval2] DB ready after ${attempt} attempts`);
+      }
+      return;
+    } catch (err) {
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `DB did not accept SELECT 1 within 30s (last error: ${(err as Error).message})`,
+        );
+      }
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[mcp-approval2] DB not ready (attempt ${attempt}): ${(err as Error).message}. Retry in ${delay}ms`,
+      );
+      await new Promise((r) => setTimeout(r, delay));
+      delay = Math.min(delay * 2, 4_000);
+    }
+  }
+}
+
+/**
+ * Parst RS256-PEM-Schluessel beim Boot statt erst beim ersten Sign/Verify.
+ *
+ * Warum schon hier: PEM-Newline-Round-Trip (env -> Doppler -> .env -> compose)
+ * kann unbemerkt brechen. Ein Pre-Flight-Parse macht den Fehler beim Boot
+ * sichtbar, nicht erst stunden spaeter beim ersten JWKS-Sign. Bei nicht
+ * gesetzten Keys (Dev-Fallback HS256) ueberspringen wir die Pruefung.
+ */
+async function preflightJwtKeys(env: NodeJS.ProcessEnv): Promise<void> {
+  const priv = env['JWT_RS256_PRIVATE_KEY_PEM'];
+  const pub = env['JWT_RS256_PUBLIC_KEY_PEM'];
+  if (!priv && !pub) return; // dev/test fallback path (HS256 via JWT_SECRET)
+  if (priv && !pub) {
+    throw new Error(
+      'JWT_RS256_PRIVATE_KEY_PEM set but JWT_RS256_PUBLIC_KEY_PEM missing — both required',
+    );
+  }
+  if (pub && !priv) {
+    throw new Error(
+      'JWT_RS256_PUBLIC_KEY_PEM set but JWT_RS256_PRIVATE_KEY_PEM missing — both required',
+    );
+  }
+  // getSigningKey + getJwksPublicKey both parse via `jose` (importPKCS8 / importSPKI).
+  // A bad PEM throws synchronously here. Guard the env-shape against zod
+  // exactOptionalPropertyTypes (priv/pub are already string after the guards
+  // above, but tsc can't see that through the env-index narrowing).
+  await getSigningKey({ JWT_RS256_PRIVATE_KEY_PEM: priv as string });
+  await getJwksPublicKey({ JWT_RS256_PUBLIC_KEY_PEM: pub as string });
+}
+
 async function main(): Promise<void> {
   const server = await createServerContext(process.env);
+  await waitForDb(server);
+  await preflightJwtKeys(process.env);
   const deps = await buildOptionalDeps(server, pickBootEnv(process.env));
   const app = await createApp(server, deps);
   const port = server.config.PORT;

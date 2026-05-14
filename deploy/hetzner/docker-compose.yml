@@ -8,8 +8,9 @@
 # Logs:  docker compose logs -f <service>
 # Stop:  docker compose down            (keeps volumes)
 #        docker compose down -v         (DESTRUCTIVE: removes pgdata + vault-data!)
-
-version: '3.9'
+#
+# `version:` key dropped — Compose v2 ignores it and prints a deprecation
+# warning on every `up`. Schema is implicit-latest.
 
 services:
   caddy:
