@@ -18,7 +18,7 @@
 **Hetzner-Phase (Pilot):**
 - Postgres 16 mit `pgvector` (existing compose-service `postgres`, separate Datenbank `knowledge2` — schon angelegt in [postgres-init.sql](../../deploy/hetzner/postgres-init.sql)).
 - Hetzner Object Storage als S3-Backend (`https://fsn1.your-objectstorage.com`, EU-Falkenstein).
-- Vertex AI EU (`europe-west4`) fuer Embeddings (`text-embedding-005`, 768-dim) + optional Chat (Quality-Gate).
+- Vertex AI EU (`europe-west4`) fuer Embeddings (`text-multilingual-embedding-002`, 768-dim) + optional Chat (Quality-Gate).
 - OpenBao (compose-service `openbao`, Transit-Engine) als KEK-Provider. mcp-knowledge2 nutzt `vault://transit/keys/knowledge2` (single-tenant Pilot) — Multi-User-Cutover-Pfad in §5.3.
 - JWKS-Pull von `https://mcp2.ai-toolhub.org/.well-known/jwks.json` zur RS256-JWT-Validation (sub=userId).
 
@@ -90,7 +90,7 @@ Constraint "gleiche Target-Architektur" ist nur ehrlich erreichbar wenn der Adap
 | `env.DB` (D1) | `db.scoped(userId)` + Drizzle |
 | `env.R2` | `blob.put/get` (S3BlobAdapter) |
 | `env.OBJECTS_VEC` (Vectorize) | `pgvector`-Spalte + `src/search/hybrid.ts` — strong-consistent (§5.1) |
-| `env.AI.run('@cf/baai/bge-m3')` | `ai.embed()` (Vertex `text-embedding-005`, 768-dim) |
+| `env.AI.run('@cf/baai/bge-m3')` | `ai.embed()` (Vertex `text-multilingual-embedding-002`, 768-dim) |
 | `env.IDEMPOTENCY_KV` | PG-Tabelle `idempotency_keys (key, response_body, expires_at)` |
 | `env.MASTER_KEY` | `kek.wrap()` (OpenBao Transit, key `knowledge2`; multi-user-future siehe §5.3) |
 | `wrangler.jsonc triggers.crons` | node-cron in-process (Phase 1), pg-boss (Phase 3) |
@@ -244,7 +244,9 @@ v1 hatte `objects.embedding_blob BLOB` als D1-Mirror neben Vectorize weil Vector
 - **Trade-off:** HNSW-Index-Insert ist synchron mit dem INSERT → +5-15 ms Insert-Latenz (gemessen p95 fuer 768-dim Vector + m=16). Akzeptabel — Pilot schreibt <10 docs/Tag.
 - **Falls Insert-Last steigt** (>100/min): IVFFlat statt HNSW reduziert Build-Time, kostet Recall. Tuning-Hebel fuer Phase 3+.
 
-**Dimension 768** (Vertex `text-embedding-005`). Pilot leer → keine Migration.
+**Dimension 768** (Vertex `text-multilingual-embedding-002`). Pilot leer → keine Migration.
+
+**Modell-Wahl Begruendung (User-Decision 2026-05-14):** Multilingual ist Pflicht — User schreibt primaer Deutsch, v1 nutzte bge-m3 (multilingual via Workers AI). Der initial vorgeschlagene `text-embedding-005` ist English-optimized und waere ein Quality-Regression gegen v1 fuer DE-Content. `text-multilingual-embedding-002` ist Google's expliziter Multilingual-Embedder (100+ Sprachen, gleiche 768-dim, drop-in im AiAdapter-Pfad). Upgrade-Path zu `gemini-embedding-001` (Matryoshka 768/1536/3072, SOTA MTEB) bleibt offen — Re-Embed-Job + Schema-Migration der Vector-Dimension, kein Architektur-Umbau.
 
 ### 5.2 Hetzner Object Storage als S3-Backend
 
@@ -380,7 +382,7 @@ const ConfigSchema = z.object({
   // AI (Vertex EU) — KANONISCHE Namen aligned mit mcp-approval2 (H2)
   VERTEX_AI_PROJECT_ID: z.string().optional(),
   VERTEX_AI_REGION: z.string().default('europe-west4'),
-  VERTEX_AI_EMBED_MODEL: z.string().default('text-embedding-005'),
+  VERTEX_AI_EMBED_MODEL: z.string().default('text-multilingual-embedding-002'),
   GOOGLE_APPLICATION_CREDENTIALS: z.string().optional(),
 
   KNOWLEDGE_BACKUP_MASTER_KEY_BASE64: z.string().optional(),
@@ -618,7 +620,7 @@ Doppler-Var `DOMAIN_KNOWLEDGE` (Default `knowledge2.ai-toolhub.org`) existiert.
 |---|---|---|
 | Q1 | Image-Tag-Naming | behalten (`ghcr.io/axel-rogg/mcp-knowledge2`) |
 | Q2 | Crypto-Reuse mit `@mcp-approval2/core`? | **Reuse + lokales AAD-Modul** (§6, gewaehlt B) |
-| Q3 | Embedding-Dim 768 oder 1024? | **768** (Vertex `text-embedding-005`) |
+| Q3 | Embedding-Dim 768 oder 1024? | **768** (Vertex `text-multilingual-embedding-002`) |
 | Q4 | Idempotency PG oder Redis? | **PG** (kein zusaetzlicher Container) |
 | Q5 | Cron-Engine? | **`node-cron` Phase 1**, `pg-boss` Phase 3 wenn Job-Vielfalt waechst |
 | Q6 | Uploads HMAC oder presigned-PUT? | **`@aws-sdk/s3-request-presigner`** (Drop Custom-HMAC) |
