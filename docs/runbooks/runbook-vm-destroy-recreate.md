@@ -24,11 +24,19 @@ Diese sieben Stores sind nach `destroy` weg:
 | `.vault-init-output.json` (VM-side, chmod 600) | Unseal-Keys weg → muss neu init + offline backup |
 | Cloudflare-DNS-Records | werden re-applied (gleiche Domains, neue IP) — kein User-Eingriff noetig |
 
-**NICHT verloren:**
-- Doppler-Secrets (32/35 in Doppler, separate Backend-Storage)
-- GitHub-Repo + Branch-Protection (terraform-managed, idempotent)
+**NICHT verloren** (durch gezielten Targeted-Destroy auf nur VM + DNS):
+- Doppler-Project + alle 33 Secrets (Werte bleiben in Doppler erhalten)
+- Doppler-Service-Tokens (VM + GH-Actions)
+- GitHub-Repo + Branch-Protection + Environments + Action-Secrets
+- Cloudflare-Zone (nur die 6 DNS-Records werden re-created mit neuer IP)
 - Terraform-State (R2-Backend)
 - Code (Git-Repo)
+
+> **CRITICAL:** Das Skript nutzt `terraform destroy -target=module.vm
+> -target=module.dns -auto-approve` — explizit getarget. Ein
+> untargetes `terraform destroy` haette das Doppler-Project + alle
+> Secrets weggewischt (kein `prevent_destroy` auf den Placeholders),
+> Re-Setup waere dann ~1-2h statt 15-22 min.
 
 ### 2. Vault-Init-Output muss offline gesichert werden
 Das Script erstellt **NEUE** Unseal-Keys + Root-Token jedes Mal. Es legt

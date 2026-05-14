@@ -110,9 +110,19 @@ if [[ $RESUME -eq 0 ]]; then
     log "  (schon auskommentiert oder Pattern nicht da — verifizier manuell)"
   fi
 
-  # ─── Step 2: terraform destroy ───────────────────────────────────────
-  log "[2/17] terraform destroy"
-  bash "$REPO_ROOT/scripts/doppler-run-terraform.sh" destroy -auto-approve 2>&1 | tee -a "$LOG_FILE" || die "terraform destroy failed" 2
+  # ─── Step 2: terraform destroy (TARGETED — nur VM + DNS) ─────────────
+  # Untargetes `destroy` wuerde auch das Doppler-Project + alle 33 Secret-
+  # Placeholders sowie die GitHub-Repo-Settings (Branch-Protection,
+  # Environments, etc.) loeschen. `prevent_destroy=true` greift nur auf
+  # `github_repository.settings` und blockierte das partiell — aber die
+  # Doppler-Secrets WAEREN WEG. Deshalb: explizit auf VM + DNS targeten.
+  #
+  # Was bleibt nach Step 2: module.doppler.*, module.github.* (inkl. Repo-
+  # Settings, Branch-Protection, Doppler-Token-Sec rets), data.cloudflare_zone.
+  log "[2/17] terraform destroy (targeted: module.vm + module.dns)"
+  bash "$REPO_ROOT/scripts/doppler-run-terraform.sh" destroy \
+    -target=module.vm -target=module.dns -auto-approve 2>&1 \
+    | tee -a "$LOG_FILE" || die "terraform destroy failed" 2
 
   # ─── Step 3: prevent_destroy wieder einkommentieren ──────────────────
   log "[3/17] prevent_destroy wieder einkommentieren"
