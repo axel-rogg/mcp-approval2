@@ -1,37 +1,49 @@
-# Status: mcp-approval2 Greenfield-Build (2026-05-14, Pilot deployed + powered off)
+# Status: mcp-approval2 Greenfield-Build (2026-05-14, Pilot deployed + VM destroyed)
 
 > Snapshot nach Burst 1+2+3+4+5 + Pre-Deploy-Audit + **Erst-Deploy auf
-> Hetzner**. Pilot-Production hat einmal live gelaufen (3/3 Smoke-Tests
-> gruen, https-Certs ausgestellt), Stack wurde nach Verifikation
-> heruntergefahren + VM ist `off`. Bereit fuer naechste Session
-> (Restart-Recipe in [runbooks/runbook-vm-start-stop.md](runbooks/runbook-vm-start-stop.md)).
+> Hetzner + Destroy**. Pilot-Production hat live gelaufen (3/3 Smoke-Tests
+> gruen, https-Certs ausgestellt), Stack wurde verifiziert, dann VM
+> per `scripts/vm-destroy-only.sh` (targeted destroy, nur `module.vm` +
+> `module.dns`) komplett geloescht — 11 Resourcen weg. Doppler-Project,
+> GitHub-Repo-Settings, Terraform-State alle intakt. Restart-Recipe in
+> [runbooks/runbook-vm-destroy-recreate.md](runbooks/runbook-vm-destroy-recreate.md).
 > Plan-Ref: [docs/plans/active/PLAN-architecture-v1.md](plans/active/PLAN-architecture-v1.md).
 > Diese Datei ist die Single-Source-of-Truth fuer "wo stehen wir + was fehlt
 > bis Pilot-Production". Bei Aenderungen: Datum oben bumpen + entsprechende
 > Sektion editieren.
 
-## Deploy-Status 2026-05-14
+## Deploy-Status 2026-05-14 (post-Destroy)
 
-**Aktuell:** Stack down, VM powered off (Hetzner berechnet ~50% = ~15 Cent/Tag).
+**Aktuell:** VM komplett destroyed via targeted `terraform destroy
+-target=module.vm -target=module.dns`. Hetzner-Kosten **0 EUR/Tag**.
 
 | Komponente | Status | Anmerkung |
 |---|---|---|
-| Terraform-State (R2-Backend EU) | ✅ applied | 19+4 Ressourcen, prevent_destroy auf VM+Volume |
-| Hetzner-VM `privat-mcp` | ⏸ powered-off | id=130957874, ipv4=178.105.120.198, Type cpx22 (4GB RAM) |
-| Cloudflare-DNS (mcp2/knowledge2/app2) | ✅ live | A + AAAA Records |
-| Doppler-Config `privat` | ✅ 32/35 gefuellt | 3 leer: VAULT_TOKEN (gesetzt nach Power-On), VERTEX_* (optional) |
-| GitHub-Repo Settings + Branch-Protection | ✅ applied | inkl. DOPPLER_TOKEN_GHA + hetzner-production env |
-| OpenBao (Vault) | ✅ initialisiert + unsealed | data persistent in Docker-Volume `hetzner_vault-data`, sealed nach Power-On bis manuell unseal |
-| Postgres + pgvector | ✅ healthy | pgdata in `hetzner_pgdata` |
-| mcp-approval2 (App) | ✅ lief healthy + `credentials=on knowledge=on` | Image lokal gebaut weil GHCR-Pull auth-blocked, ghcr.io/axel-rogg/mcp-approval2:latest tag in Docker daemon |
-| Caddy (TLS) | ✅ Let's Encrypt Certs issued | 3 Vhosts: mcp2/app2/coop-bypass |
-| mcp-knowledge2 | ❌ entfernt | Image-Architektur passt nicht (BLOB_*/VERTEX_PROJECT). Greenfield-v2 in Plan-Phase, siehe `plans/PLAN-mcp-knowledge2-v2-architecture.md` |
-| watchtower (auto-update) | ❌ entfernt | Docker-API-Version-Mismatch (Daemon vs Client), nicht-blocking |
+| Terraform-State (R2-Backend EU) | ✅ intakt | module.vm + module.dns leer (11 Ressourcen destroyed), module.doppler + module.github + cloudflare_zone data weiter da |
+| Hetzner-VM `privat-mcp` | ❌ destroyed | id 130957874 weg, IP 178.105.120.198 freigegeben |
+| Cloudflare-DNS-Records | ❌ destroyed | 6 A+AAAA-Records (mcp2/knowledge2/app2) weg. Naechstes `terraform apply` re-created sie mit neuer IP. |
+| Cloudflare-Zone `ai-toolhub.org` | ✅ intakt | data-block-Reference, war nie terraform-owned |
+| Doppler-Project `mcp-approval2/privat` | ✅ 32/35 gefuellt | unangetastet vom destroy |
+| Doppler-Service-Tokens (VM + GH-Actions) | ✅ intakt | weiter gueltig fuer neue VM |
+| GitHub-Repo Settings + Branch-Protection | ✅ intakt | DOPPLER_TOKEN_GHA + hetzner-production env unangetastet |
+| Docker-Volumes auf der VM | ❌ destroyed | pgdata, vault-data, caddy-data, caddy-config alle weg (Phase 1 = leer, kein Daten-Verlust) |
+| OpenBao Root-Token + Unseal-Keys (alte) | ⚠ unbrauchbar | Vault-Daten weg → alte Keys koennen nichts mehr entschluesseln. Beim naechsten Re-Provisioning werden NEUE generiert. |
+| Letztes funktionierendes Setup | 📦 dokumentiert | siehe Live-Fixes unten + runbook-vm-destroy-recreate.md |
 
-**Smoke (live verifiziert vor Shutdown):**
-- `https://mcp2.ai-toolhub.org/health` → 200 ✓
-- `https://app2.ai-toolhub.org/` → 200 (PWA) ✓
-- `https://static.198.120.105.178.clients.your-server.de/health` → 200 (Coop-Bypass) ✓
+**Smoke (live verifiziert vor Shutdown, ist jetzt nicht mehr reachable):**
+- `https://mcp2.ai-toolhub.org/health` → war 200 ✓ (DNS-Record destroyed)
+- `https://app2.ai-toolhub.org/` → war 200 (PWA) ✓ (DNS-Record destroyed)
+- `https://static.198.120.105.178.clients.your-server.de/health` → war 200 (Coop-Bypass) ✓ (Hetzner-IP-FQDN existiert nicht mehr)
+
+**Restart-Pfad:** [runbook-vm-destroy-recreate.md](runbooks/runbook-vm-destroy-recreate.md) +
+[scripts/vm-destroy-recreate.sh](../scripts/vm-destroy-recreate.sh) ohne
+`destroy`-Phase (= Steps 5-17). Geschaetzte Restart-Zeit: 15-22 min
+inklusive Lets-Encrypt-Cert-Issuance.
+
+**Sister-Project mcp-approval (v1, CF Workers):**
+Doppler-Project `mcp-approval` wurde am 2026-05-14 auf 29 User-Secrets
+erweitert (vorher 12, +17 Placeholders fuer alle CF-Worker-Secrets).
+Runbook im v1-Repo: `mcp-approval/docs/runbooks/runbook-doppler-mcp-approval.md`
 
 **Live-Fixes waehrend Erst-Deploy** (alle committed):
 - cloud-init `docker-compose-plugin` failed → Docker official apt repo (`5d279f7` und ad-hoc)
