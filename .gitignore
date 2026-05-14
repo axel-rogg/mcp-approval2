@@ -22,6 +22,10 @@ npm-debug.log*
 # Claude Code — local-only permission overrides
 .claude/settings.local.json
 
+# VM destroy-recreate output (sensitive!) — vault-init-Backups
+.vault-init-backups/
+.vm-destroy-recreate.log
+
 # OS
 .DS_Store
 Thumbs.db
