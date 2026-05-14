@@ -53,13 +53,16 @@ services:
     image: quay.io/openbao/openbao:latest
     container_name: mcp-openbao
     cap_add: [IPC_LOCK]
+    # `disable_mlock` Konfig-Option wurde in OpenBao Ende 2026 entfernt.
+    # mlock ist jetzt immer aktiv; deshalb braucht der Container IPC_LOCK
+    # (oben) und der Host darf nicht swappen — VM-default ist ohnehin
+    # kein swap-File konfiguriert.
     environment:
       BAO_LOCAL_CONFIG: |
         storage "file" { path = "/vault/data" }
         listener "tcp" { address = "0.0.0.0:8200" tls_disable = 1 }
         ui = true
         api_addr = "http://openbao:8200"
-        disable_mlock = false
     volumes:
       - vault-data:/vault/data
     command: server
