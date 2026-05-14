@@ -37,11 +37,16 @@ resource "hcloud_server" "mcp" {
   # destructive action and cloud-init only runs on first boot anyway.
   # If the bootstrap script needs to change post-creation, do it via SSH
   # or a re-image workflow, not by rebuilding.
+  #
+  # `prevent_destroy = true` blocks `terraform destroy` + accidental
+  # resource-renames from nuking the only VM. Real destroy: comment this
+  # out, `terraform apply`, then `terraform destroy`.
   lifecycle {
     ignore_changes = [
       user_data,
       image,
     ]
+    prevent_destroy = true
   }
 }
 
@@ -104,6 +109,12 @@ resource "hcloud_volume" "data" {
     instance    = var.instance_name
     environment = var.environment
     managed_by  = "terraform"
+  }
+
+  # Volume haelt pgdata + R2-Cache. Verlust = User-Daten weg. Real destroy:
+  # diesen Block auskommentieren, `terraform apply`, dann `terraform destroy`.
+  lifecycle {
+    prevent_destroy = true
   }
 }
 

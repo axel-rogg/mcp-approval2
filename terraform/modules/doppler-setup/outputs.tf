@@ -26,11 +26,18 @@ output "github_actions_service_token" {
 }
 
 output "doppler_dashboard_url" {
-  value       = "https://dashboard.doppler.com/workplace/projects/${doppler_project.mcp_approval2.name}/configs"
-  description = "Direkt-Link in die Doppler-UI fuer dieses Project."
+  # Workplace-Slug ist nicht via Provider-Output abrufbar — der Dashboard-Pfad
+  # `/projects/<name>/configs` redirected zum richtigen Workplace, sobald der
+  # User eingeloggt ist. Saubere Alternative waere `data.doppler_workplace`,
+  # aktuell unterstuetzt der Provider das aber nicht.
+  value       = "https://dashboard.doppler.com/projects/${doppler_project.mcp_approval2.name}/configs"
+  description = "Direkt-Link in die Doppler-UI fuer dieses Project (Workplace-Slug resolvt der Login)."
 }
 
 output "placeholder_count" {
-  value       = 31
+  # Wenn neue Placeholder dazukommen: zaehlt
+  #   grep -c '^resource "doppler_secret" "placeholder_' main.tf
+  # und hier eintragen.
+  value       = 33
   description = "Anzahl der angelegten Secret-Placeholders (User muss Werte in Doppler-UI eintragen)."
 }
