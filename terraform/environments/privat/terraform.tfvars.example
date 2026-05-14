@@ -1,62 +1,121 @@
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # Template — copy to terraform.tfvars and fill values.
 # terraform.tfvars is gitignored. NEVER commit values.
-# ---------------------------------------------------------------------------
+# ===========================================================================
+#
+# ─────────────────────────────────────────────────────────────────────────
+# CLOUDFLARE-CREDENTIALS (WIEDERVERWENDET aus mcp-approval/terraform/)
+# ─────────────────────────────────────────────────────────────────────────
+#
+# Die Cloudflare-Zone ai-toolhub.org wird bereits von
+# /workspaces/mcp-approval/terraform/ managed (47 Resources: Workers,
+# Cert-Packs, Access-Apps, Rulesets, Zone-Settings). Wir nutzen hier
+# die GLEICHEN Credentials, legen aber NUR neue Resources an
+# (mcp2.*, knowledge2.*, app2.*). Siehe Isolation-Garantien in
+# docs/runbooks/runbook-cloudflare-takeover.md.
+#
+# Existing values uebernehmen:
+#
+#   cd /workspaces/mcp-approval
+#   grep -E "CLOUDFLARE_|R2_|ACCOUNT_ID" .dev.vars
+#
+#   # oder via terraform-state des existierenden Repos:
+#   cd /workspaces/mcp-approval/terraform
+#   terraform output    # falls Outputs gesetzt sind
+#   terraform state list | grep cloudflare_zone
+#
+# Vor dem ersten apply IMMER laufen lassen:
+#   bash scripts/verify-terraform-isolation.sh
+# ===========================================================================
 
+# ---------------------------------------------------------------------------
+# Hetzner (NEU — mcp-approval hat keine VM)
+# ---------------------------------------------------------------------------
 # Hetzner Cloud API token (Project → Security → API tokens, Read & Write).
 hcloud_token = "REPLACE_ME"
 
-# Operator SSH public key (OpenSSH single-line). Generate with:
+# ---------------------------------------------------------------------------
+# Operator SSH (kann gleich wie mcp-approval oder neu sein)
+# ---------------------------------------------------------------------------
+# OpenSSH single-line. Generate with:
 #   ssh-keygen -t ed25519 -C "operator@laptop" -f ~/.ssh/mcp-approval2_ed25519
 # then paste contents of ~/.ssh/mcp-approval2_ed25519.pub here.
 operator_ssh_public_key = "ssh-ed25519 AAAAC3... operator@laptop"
 
-# Cloudflare zone ID for ai-toolhub.org (32-char hex). Look up:
+# ---------------------------------------------------------------------------
+# Cloudflare-Zone (WIEDERVERWENDET aus mcp-approval)
+# ---------------------------------------------------------------------------
+# Zone-ID fuer ai-toolhub.org (32-char hex). Look up:
 #   curl -s 'https://api.cloudflare.com/client/v4/zones?name=ai-toolhub.org' \
 #     -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" | jq -r '.result[0].id'
+# Oder in mcp-approval/terraform/:
+#   terraform state show cloudflare_zone.ai_toolhub | grep '^[[:space:]]*id'
 cloudflare_zone_id = "REPLACE_ME_32_HEX"
 
-# --- Optional overrides (defaults are fine for single-user) ---------------
-
+# ---------------------------------------------------------------------------
+# Optional overrides — defaults sind safe (alle Subdomains haben "2"-Suffix
+# und werden von der reserved-subdomain-precondition akzeptiert).
+# ---------------------------------------------------------------------------
 # server_type           = "cx21"
 # location              = "fsn1"
 # allowed_ssh_ips       = ["198.51.100.42/32"]   # production: lock to your IP
-# data_volume_size_gb   = 0                       # set e.g. 20 if you want pgdata on a sep. volume
+# data_volume_size_gb   = 0                       # set e.g. 20 fuer pgdata-Volume
 
+# WARNUNG: domain_mcp/domain_knowledge/domain_app DUERFEN NICHT auf eine
+# existierende Subdomain (mcp, app, knowledge, gws, gcloud, utils) zeigen.
+# Die cloudflare-dns-Modul-Precondition wirft sonst einen Plan-Error.
 # domain_mcp            = "mcp2.ai-toolhub.org"
 # domain_knowledge      = "knowledge2.ai-toolhub.org"
 # domain_app            = "app2.ai-toolhub.org"
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # GitHub-Terraform (module: github-repo)
-# ---------------------------------------------------------------------------
-# The GitHub provider reads its credential from $GITHUB_TOKEN (classic PAT
-# with `repo` + `workflow` scopes). NEVER put the token here — keep it in
-# the shell env or a secrets manager. See runbook-github-terraform.md.
+# ===========================================================================
+# Der GitHub provider liest seinen Token aus $GITHUB_TOKEN (classic PAT
+# mit `repo` + `workflow` scopes). NIE den Token hier ablegen — Shell-env
+# oder Password-Manager. Siehe runbook-github-terraform.md.
 #
 #   export GITHUB_TOKEN=ghp_xxxxx
 
+# ---------------------------------------------------------------------------
+# Cloudflare-API-Token (WIEDERVERWENDET — gleicher Token wie mcp-approval)
+# Wird als CLOUDFLARE_API_TOKEN-Secret in den GH-Workflows seeded.
+# ---------------------------------------------------------------------------
 cloudflare_api_token = "REPLACE_ME_CLOUDFLARE_API_TOKEN"
 
-# R2 S3-compatible keys (Cloudflare → R2 → Manage API tokens).
+# ---------------------------------------------------------------------------
+# R2-State-Backend-Creds (WIEDERVERWENDET — gleicher Bucket/Creds, anderer Key)
+# ---------------------------------------------------------------------------
+# Wir nutzen den gleichen R2-Bucket (`terraform-state`) und die gleichen
+# R2-Credentials wie mcp-approval/terraform/, aber unterschiedliche
+# State-Keys (mcp-approval2/privat/ vs. mcp-approval/...). Backend-Setup
+# siehe backend.tf.
+#
+# Credentials Source:
+#   grep -E "R2_ACCESS_KEY_ID|R2_SECRET_ACCESS_KEY" /workspaces/mcp-approval/.dev.vars
 r2_access_key_id     = "REPLACE_ME_R2_ACCESS_KEY_ID"
 r2_secret_access_key = "REPLACE_ME_R2_SECRET_ACCESS_KEY"
 
-# Separate SSH key for GH-Actions deploys (NOT the operator key).
-# Generate locally with:
+# ---------------------------------------------------------------------------
+# Separate SSH key fuer GH-Actions deploys (NEU, NICHT der operator key).
+# Generate locally:
 #   ssh-keygen -t ed25519 -f ~/.ssh/hetzner-deploy -N "" -C "gh-actions@mcp-approval2"
-# Then paste the contents of ~/.ssh/hetzner-deploy below, AND put the matching
-# .pub key into the VM's authorized_keys.
+# Dann den Public-Key auf der VM in authorized_keys legen.
+# ---------------------------------------------------------------------------
 hetzner_deploy_ssh_private_key = <<-EOT
 -----BEGIN OPENSSH PRIVATE KEY-----
 REPLACE_ME
 -----END OPENSSH PRIVATE KEY-----
 EOT
 
-# Internal service-token shared with the VM .env file.
-# Generate: openssl rand -hex 32
+# ---------------------------------------------------------------------------
+# Internal service-token shared mit der VM .env (NEU generieren).
+#   openssl rand -hex 32
+# ---------------------------------------------------------------------------
 mcp_approval_internal_token = "REPLACE_ME_HEX_64"
 
-# Optional. Leave empty if you don't pull private images from ghcr.io.
-# PAT scope: read:packages.
+# ---------------------------------------------------------------------------
+# Optional: PAT mit read:packages fuer private ghcr.io-Pulls.
+# Leer lassen wenn keine privaten Container-Images.
+# ---------------------------------------------------------------------------
 ghcr_token = ""

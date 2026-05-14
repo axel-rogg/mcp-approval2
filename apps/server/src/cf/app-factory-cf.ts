@@ -204,6 +204,10 @@ function buildConfigFromEnv(env: CfEnv): AppConfig {
     RP_ID: env.RP_ID ?? env.WEBAUTHN_RP_ID ?? 'localhost',
     RP_NAME: env.RP_NAME ?? 'mcp-approval2',
     RP_ORIGIN: rpOrigin,
+    // Multi-Origin Allowlist — auf CF Workers selten benutzt (eigene
+    // Custom-Domain), Default leer = nur RP_ORIGIN ist erlaubt. Hetzner-
+    // Path nutzt die env-CSV-Variante (siehe lib/config.ts schema).
+    ALLOWED_ORIGINS: [],
     INVITE_TTL_SEC: 24 * 60 * 60,
     RECOVERY_TTL_SEC: 24 * 60 * 60,
   };

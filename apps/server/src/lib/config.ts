@@ -49,6 +49,25 @@ const ConfigSchema = z.object({
   RP_NAME: z.string().default('mcp-approval2'),
   RP_ORIGIN: z.string().url().default('http://localhost:8787'),
 
+  // Multi-Origin Allowlist (CSV in env, parsed in-place).
+  //
+  // Hintergrund: derselbe Server hoert hinter mehreren Origins (z.B.
+  // `https://mcp2.ai-toolhub.org` PLUS `https://static.X.X.X.X.clients.your-server.de`
+  // als Coop-Zscaler-Bypass). WebAuthn ist Origin-bound — wir lesen pro Request
+  // den eingehenden Origin, pruefen ihn gegen diese Allowlist, und leiten daraus
+  // die RP-ID ab (siehe `resolveRpId()`/`resolveOrigin()` unten).
+  //
+  // Leerer Default = nur `RP_ORIGIN` ist erlaubt (Single-Domain-Setup).
+  ALLOWED_ORIGINS: z
+    .string()
+    .default('')
+    .transform((s) =>
+      s
+        .split(',')
+        .map((o) => o.trim())
+        .filter(Boolean),
+    ),
+
   // Invite / Recovery
   INVITE_TTL_SEC: z.coerce.number().int().positive().default(24 * 60 * 60),
   RECOVERY_TTL_SEC: z.coerce.number().int().positive().default(24 * 60 * 60),
@@ -63,4 +82,66 @@ export function loadConfig(env: NodeJS.ProcessEnv | Record<string, string | unde
     throw new Error(`Invalid environment configuration: ${issues}`);
   }
   return parsed.data;
+}
+
+// ---------------------------------------------------------------------------
+// Multi-Origin Helpers.
+//
+// Beim Multi-Domain-Setup (PLAN-architecture-v1.md §3.4 Multi-Origin) hoert
+// derselbe Server unter mehreren Origins. Wir lesen pro Request den `Origin`-
+// bzw. `Host`-Header, validieren ihn gegen `ALLOWED_ORIGINS` (Anti-Spoofing)
+// und leiten daraus RP-ID + RP-Origin fuer WebAuthn ab.
+//
+// Aufruf-Pattern in Handlern:
+//   const origin = resolveOrigin(request, config);
+//   const rpId   = resolveRpId(origin);
+//   beginRegistration({ ...config, RP_ID: rpId, RP_ORIGIN: origin }, input);
+//
+// Achtung: WebAuthn ist Origin-bound. Ein Passkey, der unter Origin A enrolled
+// wurde, funktioniert NICHT unter Origin B. Pro Origin braucht der User einen
+// separaten Passkey, die zum selben Account verlinkt sind (siehe
+// docs/runbooks/runbook-coop-bypass.md).
+// ---------------------------------------------------------------------------
+
+/**
+ * Liest den Origin aus einem HTTP-Request (Hono / Fetch-Request kompatibel)
+ * und prueft ihn gegen `config.ALLOWED_ORIGINS`. Fallback auf `config.RP_ORIGIN`
+ * wenn:
+ *   - der Header fehlt,
+ *   - der Origin nicht in der Allowlist ist (Anti-Host-Header-Spoofing),
+ *   - `ALLOWED_ORIGINS` leer ist (Single-Domain-Setup).
+ */
+export function resolveOrigin(
+  request: { headers: { get(name: string): string | null } },
+  config: AppConfig,
+): string {
+  const allow = config.ALLOWED_ORIGINS;
+  // Bevorzugt `Origin` (browser-set, von WebAuthn benutzt); Fallback auf
+  // `Host` + Protokoll-Annahme. Wir greifen NICHT auf `request.url` zurueck —
+  // hinter Caddy zeigt das auf den internen Container-Port.
+  const originHdr = request.headers.get('origin');
+  if (originHdr && (allow.length === 0 || allow.includes(originHdr))) {
+    return originHdr;
+  }
+  const host = request.headers.get('host');
+  if (host) {
+    const candidate = `https://${host}`;
+    if (allow.includes(candidate)) {
+      return candidate;
+    }
+  }
+  return config.RP_ORIGIN;
+}
+
+/**
+ * Extrahiert die WebAuthn-RP-ID (eTLD+1-Host) aus einem Origin-URL-String.
+ * Beispiel: `https://mcp2.ai-toolhub.org` -> `mcp2.ai-toolhub.org`.
+ */
+export function resolveRpId(origin: string): string {
+  try {
+    return new URL(origin).hostname;
+  } catch {
+    // Kein gueltiger URL -> behandle als Hostname-String direkt.
+    return origin;
+  }
 }

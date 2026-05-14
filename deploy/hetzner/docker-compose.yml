@@ -80,6 +80,11 @@ services:
       PORT: 8787
       BASE_URL: https://${DOMAIN_MCP}
       WEBAUTHN_RP_ID: ${DOMAIN_MCP}
+      # Multi-Origin Allowlist (CSV). Pflicht-Eintraege: alle Caddy-vhosts
+      # die mcp-approval2 forwarden — DOMAIN_MCP, DOMAIN_APP und (optional)
+      # HETZNER_FQDN_V4 fuer Coop-Bypass. Server parsed das in
+      # apps/server/src/lib/config.ts. Siehe runbook-coop-bypass.md.
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
       # ── JWT RS256 (signing) ─────────────────────────────────
       JWT_RS256_PRIVATE_KEY_PEM: ${JWT_RS256_PRIVATE_KEY_PEM}
       JWT_RS256_PUBLIC_KEY_PEM: ${JWT_RS256_PUBLIC_KEY_PEM}

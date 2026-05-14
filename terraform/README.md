@@ -91,6 +91,53 @@ Credentials are R2 API tokens (`AWS_ACCESS_KEY_ID` + `AWS_SECRET_ACCESS_KEY`)
 from `.env` / `.dev.vars`. See `mcp-approval/terraform/README.md` for how
 those were minted.
 
+## Isolation von mcp-approval/terraform/
+
+Dieses Repo (`mcp-approval2/terraform/`) ist **physisch getrennt** von
+`mcp-approval/terraform/`, das die Zone `ai-toolhub.org` plus 47 weitere
+Cloudflare-Resources (Worker-Domains, Cert-Packs, Access-Apps, Rulesets,
+Zone-Settings) managed.
+
+Wir teilen uns Credentials + R2-Bucket, niemals State-Files oder Resources:
+
+| Layer | Trennung |
+|---|---|
+| Backend-State-Key | unterschiedliche Pfade im selben R2-Bucket (`mcp-approval2/privat/...` vs. `mcp-approval/...`) |
+| Resources | nur neue Subdomain-Names (`mcp2.*`, `knowledge2.*`, `app2.*`) |
+| Zone-Object | read-only via `data "cloudflare_zone"` in `environments/privat/main.tf` |
+| Zone-Settings (SSL/TLS/HSTS) | NICHT managed im neuen Repo |
+| Cert-Packs | NICHT managed (Universal-Cert deckt eh alle subs) |
+| Access-Apps, Rulesets | NICHT managed |
+
+Pre-Apply-Safety-Check (PFLICHT vor erstem apply):
+
+```bash
+bash scripts/verify-terraform-isolation.sh
+```
+
+Das Skript prueft:
+
+- Backend-Key gehoert `mcp-approval2/privat`
+- Keine `resource "cloudflare_zone"`-Blocks
+- `modules/cloudflare-dns` hat Reserved-Subdomain-Precondition aktiv
+- `terraform plan` zeigt KEIN destroy/update auf `mcp.*`, `app.*`,
+  `knowledge.*`, `gws.*`, `gcloud.*`, `utils.*`
+
+Garantien:
+
+- `terraform apply` touched NIE Resources die in `mcp-approval/terraform/` leben
+- `terraform destroy` zerstoert ausschliesslich eigene Resources
+  (mcp2/knowledge2/app2 + Hetzner-VM)
+- Beide Repos koennen parallel `terraform plan/apply` laufen lassen, ohne
+  sich gegenseitig zu beeinflussen
+
+Falls `var.domain_mcp = "mcp.ai-toolhub.org"` (ohne `2`) gesetzt wird:
+`terraform plan` schlaegt mit einer aussagekraeftigen Precondition-Error fehl,
+**bevor** irgend ein API-Call an Cloudflare rausgeht.
+
+Setup-Anleitung fuer den Takeover der existing Credentials:
+[docs/runbooks/runbook-cloudflare-takeover.md](../docs/runbooks/runbook-cloudflare-takeover.md).
+
 ## What's intentionally NOT here
 
 - **Worker bindings (D1/R2/Vectorize/KV)** — those still live in

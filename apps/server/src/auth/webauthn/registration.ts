@@ -7,6 +7,15 @@
  * meldet zurueck, ob er PRF supported. Das speichern wir als `prf_supported`
  * in `webauthn_credentials`. Echte PRF-Eval-Outputs werden NICHT bei der
  * Enrollment uebertragen — nur bei Login (siehe authentication.ts).
+ *
+ * Multi-Origin (Coop-Bypass via Hetzner-FQDN, PLAN-architecture-v1.md §3.4):
+ * `beginRegistration`/`finishRegistration` lesen RP-ID + RP-Origin aktuell
+ * aus `config.RP_ID`/`config.RP_ORIGIN`. Fuer Multi-Origin-Support sollte
+ * der Caller (HTTP-Handler) `resolveOrigin(request, config)` +
+ * `resolveRpId(origin)` aus `lib/config.ts` aufrufen und das Ergebnis als
+ * Override-Felder reinreichen (siehe TODO unten). Bis dahin: ein
+ * RP_ID/RP_ORIGIN pro Deployment, Coop-Browser nutzt die FQDN-Variante via
+ * separater RP-ID + separatem Passkey-Enrollment.
  */
 import {
   generateRegistrationOptions,

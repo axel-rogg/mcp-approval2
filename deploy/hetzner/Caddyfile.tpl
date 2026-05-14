@@ -5,6 +5,10 @@
 #   ${DOMAIN_MCP}        — main MCP endpoint (e.g. mcp2.ai-toolhub.org)
 #   ${DOMAIN_KNOWLEDGE}  — knowledge-core endpoint
 #   ${DOMAIN_APP}        — PWA frontend (same backend as DOMAIN_MCP)
+#   ${HETZNER_FQDN_V4}   — optional Coop-Zscaler-bypass FQDN
+#                          (Hetzner-default reverse-DNS, *.your-server.de).
+#                          If empty, the bypass vhost is omitted at render
+#                          time (see render-config.sh).
 #
 # Result is written to ./Caddyfile and mounted into the Caddy container.
 
@@ -68,4 +72,36 @@ ${DOMAIN_APP} {
   }
 
   reverse_proxy mcp-approval2:8787
+}
+
+# ── Coop-Bypass: Hetzner-Default-FQDN (*.your-server.de) ───────────────────
+# Backstory: Coop-Firmen-Browser laeuft hinter Zscaler-Proxy, der unsere
+# eigene Domain *.ai-toolhub.org als "newly registered" blockt — aber
+# *.your-server.de wird durchgelassen. Wir exposen die gleichen Backends
+# zusaetzlich unter dieser FQDN.
+#
+# WebAuthn-Hinweis: Origin ist hier eine andere als ${DOMAIN_MCP}, der
+# Coop-Browser muss einen SEPARATEN Passkey enrollen. Beide Passkeys
+# gehoeren demselben User-Account (siehe runbook-coop-bypass.md).
+#
+# ${HETZNER_FQDN_V4} wird vom render-config.sh ggf. weggelassen, wenn
+# in .env nicht gesetzt — der vhost-Block existiert dann gar nicht.
+${HETZNER_FQDN_V4} {
+  encode zstd gzip
+
+  header {
+    Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    -Server
+  }
+
+  # Routet PWA + Approval-API + MCP-Endpoints — selbes Backend wie
+  # ${DOMAIN_MCP}. mcp-knowledge2 wird bewusst NICHT exposed hier
+  # (intra-network only).
+  reverse_proxy mcp-approval2:8787 {
+    health_uri /health
+    health_interval 30s
+    health_timeout 5s
+  }
 }
