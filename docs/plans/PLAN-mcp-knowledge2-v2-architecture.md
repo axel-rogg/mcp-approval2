@@ -1,6 +1,6 @@
 # PLAN — mcp-knowledge2 v2 Architektur (Greenfield-Rewrite)
 
-> **Status: ENTWURF (2026-05-14) — bereit fuer User-Review**
+> **Status:** Plan v2 — Reviewer-Findings adressiert (2026-05-14). Bereit fuer Phase 0.
 >
 > Greenfield-Rewrite des Storage-Service knowledge-core (heute CF-Workers
 > auf `knowledge.ai-toolhub.org`). Ziel: gleiche Ziel-Architektur wie
@@ -8,27 +8,23 @@
 > portabel via Adapter-Pattern.
 >
 > Schwester-Plan: [PLAN-architecture-v1.md](active/PLAN-architecture-v1.md)
-> (mcp-approval2 Auth/Approval-Server).
->
-> Konsolidierungs-Hinweis: `mcp-knowledge2` ist heute in `docker-compose.yml`
-> Zeile 143ff. bereits referenziert als `ghcr.io/axel-rogg/mcp-knowledge2`,
-> aber es gibt noch keinen Build hinter dem Image. Dieses Dokument ist die
-> Baseline fuer den Build.
+> (mcp-approval2 Auth/Approval-Server). Review-Brief:
+> [docs/reviews/REVIEW-mcp-knowledge2-v2-architecture.md](../reviews/REVIEW-mcp-knowledge2-v2-architecture.md).
 
 ---
 
 ## 1. Zielarchitektur
 
 **Hetzner-Phase (Pilot):**
-- Postgres 16 mit `pgvector` (existing compose-service `postgres`, separate Datenbank `knowledge2`).
+- Postgres 16 mit `pgvector` (existing compose-service `postgres`, separate Datenbank `knowledge2` — schon angelegt in [postgres-init.sql](../../deploy/hetzner/postgres-init.sql)).
 - Hetzner Object Storage als S3-Backend (`https://fsn1.your-objectstorage.com`, EU-Falkenstein).
-- Vertex AI EU (`europe-west4`) fuer Embeddings (text-embedding-005, 768-dim) + optional Chat (Quality-Gate).
-- OpenBao (compose-service `openbao`, Transit-Engine) als KEK-Provider. mcp-knowledge2 schreibt verschluesselt mit eigenem KEK-Namespace `vault://transit/keys/knowledge2`.
+- Vertex AI EU (`europe-west4`) fuer Embeddings (`text-embedding-005`, 768-dim) + optional Chat (Quality-Gate).
+- OpenBao (compose-service `openbao`, Transit-Engine) als KEK-Provider. mcp-knowledge2 nutzt `vault://transit/keys/knowledge2` (single-tenant Pilot) — Multi-User-Cutover-Pfad in §5.3.
 - JWKS-Pull von `https://mcp2.ai-toolhub.org/.well-known/jwks.json` zur RS256-JWT-Validation (sub=userId).
 
 **GCP-Phase (Phase 2, kein Code-Refactor):**
 - Cloud SQL Postgres mit `pgvector`-Extension.
-- GCS-Bucket statt Hetzner Object Storage — gleicher `S3BlobAdapter`, anderer Endpoint + Auth.
+- GCS-Bucket statt Hetzner Object Storage — gleicher `S3BlobAdapter`, anderer Endpoint + Auth (oder nativer `GcsBlobAdapter`, identisches Interface).
 - Vertex AI bleibt identisch (gleiche Region, gleiche Library).
 - Cloud KMS statt OpenBao — neue `CloudKmsKekProvider`-Impl hinter `KekProvider`-Interface, Code im App-Layer unveraendert.
 
@@ -40,16 +36,7 @@
 
 **Wahl: Option B — Monorepo-Erweiterung als `apps/knowledge/` in `/workspaces/mcp-approval2`.**
 
-| Kriterium | A: eigenes Repo | B: `apps/knowledge/` im Monorepo |
-|---|---|---|
-| Adapter-Reuse | Kopie/published-package, driftet | Direkt `@mcp-approval2/adapters` — type-aligned |
-| Core-Reuse (crypto/ULID) | Duplizieren oder pin | Direkt referenzieren |
-| Cross-Service-Contract-Tests | Cross-Repo-Sync | Im Tree, Drift via tsc |
-| CI / Deploy | Eigene Pipeline | Selbe Action, separater Build-Step |
-| User-Workflow | Zwei Repos parallel | Ein `git pull` |
-| Coupling-Risiko | niedrig (Service-Boundary forciert) | mittel — Mitigation: ESLint `no-restricted-paths` zwischen `apps/server/**` und `apps/knowledge/**` |
-
-Constraint "gleiche Target-Architektur" ist nur ehrlich erreichbar wenn der Adapter-Code wirklich derselbe ist, nicht eine geforkte Kopie die driftet. Option A produziert zwei Vertex-/OpenBao-Adapter-Impls. Option B macht den Boundary HTTP-only und laesst Build-Code shared. Das alte CF-Worker-Repo `axel-rogg/mcp-knowledge` bleibt read-only bis Sunset (dann GH-Archive).
+Constraint "gleiche Target-Architektur" ist nur ehrlich erreichbar wenn der Adapter-Code wirklich derselbe ist, nicht eine geforkte Kopie die driftet. Option A produziert zwei Vertex-/OpenBao-Adapter-Impls. Option B macht den Boundary HTTP-only und laesst Build-Code shared. Coupling-Risiko (Direct-Import quer-rein) gemildert durch ESLint `no-restricted-paths` zwischen `apps/server/**` und `apps/knowledge/**`. Das alte CF-Worker-Repo `axel-rogg/mcp-knowledge` bleibt read-only bis Sunset (dann GH-Archive).
 
 ---
 
@@ -67,21 +54,23 @@ Constraint "gleiche Target-Architektur" ist nur ehrlich erreichbar wenn der Adap
         ├── package.json               # @mcp-approval2/knowledge
         ├── tsconfig.json
         ├── drizzle.config.ts
-        ├── migrations/                # Drizzle SQL (Postgres-Variant der mcp-knowledge-Migrations)
-        ├── scripts/                   # migrate.ts + health-check.ts (Pattern aus apps/server/scripts)
+        ├── migrations/                # 0001_objects.sql + 0002_refs_tags.sql + 0003_uploads_idem.sql
+        ├── scripts/                   # migrate.ts + health-check.ts
         ├── src/
-        │   ├── index.ts               # Hono-Boot (translateBootEnv + waitForDb + waitForVault)
+        │   ├── index.ts               # Hono-Boot (translateBootEnv + waitForDb + waitForVault + waitForApprovalJwks)
         │   ├── app-factory.ts         # createApp({config, db, blob, kek, ai})
-        │   ├── lib/                   # config.ts (zod), db.ts (Postgres/SQLite-Switch), context.ts
-        │   ├── auth/                  # jwks.ts (JWKS-pull), jwt.ts, bearer.ts (Service-Token)
-        │   ├── routes/                # objects / shares / search / uploads / internal / mcp / health
+        │   ├── lib/                   # config.ts (zod), db.ts, context.ts, aad.ts (knowledge-lokal, §6 H1)
+        │   ├── auth/                  # jwks.ts (JWKS-pull + preflight), jwt.ts, bearer.ts (Service-Token)
+        │   ├── routes/                # objects / refs / tags / shares / search / uploads / internal / mcp / health
         │   ├── objects/api.ts         # CRUD-Layer (port aus mcp-knowledge; R2→S3, D1→PG, Vec→pgvector)
-        │   ├── search/hybrid.ts       # RRF (FTS-tsvector + pgvector)
+        │   ├── refs/api.ts            # native /v1/refs Routen (siehe §4)
+        │   ├── tags/api.ts            # native /v1/tags Routen (siehe §4)
+        │   ├── search/hybrid.ts       # RRF (FTS-tsvector + pgvector) — multi-kind support (D-9)
         │   ├── embed/vertex.ts        # AiAdapter-call statt env.AI
         │   ├── pii/mask.ts            # 1:1 port
         │   ├── quality/               # judge.ts + rubric.ts — Vertex-Chat via AiAdapter
         │   ├── apps/api.ts            # composable-apps state-layer
-        │   ├── skills/api.ts          # manifest + refs
+        │   ├── skills/api.ts          # manifest + refs (nutzt /v1/refs)
         │   ├── mcp/                   # registry + per-Familie Tool-Slices
         │   ├── cron/                  # Phase-1: node-cron in-process; Phase-3: pg-boss
         │   └── middleware/            # idempotency (PG-backed) + audit
@@ -90,9 +79,9 @@ Constraint "gleiche Target-Architektur" ist nur ehrlich erreichbar wenn der Adap
 
 ### Port-Inventur
 
-**1:1 portierbar (trivial):** `src/crypto/*` (oder direkt `@mcp-approval2/core/crypto` — siehe Q2), `src/pii/mask.ts`, `src/ulid.ts` (in core schon vorhanden — drop), `src/search/scorers.ts`, `src/apps/blocks/*` (22 blocks Schema-Defs), `src/util/*`.
+**1:1 portierbar (trivial):** `src/crypto/*` (oder direkt `@mcp-approval2/core/crypto` — siehe §6 H1), `src/pii/mask.ts`, `src/ulid.ts` (in core schon vorhanden — drop), `src/search/scorers.ts`, `src/apps/blocks/*` (22 blocks Schema-Defs), `src/util/*`.
 
-**Mittlerer Port-Aufwand:** `src/quality/{judge,rubric}.ts` (AI-Gateway-Slug → `aiAdapter.chat()`), `src/apps/{types,types_registry,legacy_to_layout,action_router}` (objects-API-coupling), `src/middleware/idempotency.ts` (KV → PG-Tabelle).
+**Mittlerer Port-Aufwand:** `src/quality/{judge,rubric}.ts` (AI-Gateway-Slug → `aiAdapter.chat()`), `src/apps/{types,types_registry,legacy_to_layout,action_router}` (objects-API-coupling), `src/middleware/idempotency.ts` (KV → PG-Tabelle), `src/objects/api.ts` (Rename `'app_state'` → `'app'` — §4 C1).
 
 **Adapter-Umweg pflicht:**
 
@@ -100,155 +89,133 @@ Constraint "gleiche Target-Architektur" ist nur ehrlich erreichbar wenn der Adap
 |---|---|
 | `env.DB` (D1) | `db.scoped(userId)` + Drizzle |
 | `env.R2` | `blob.put/get` (S3BlobAdapter) |
-| `env.OBJECTS_VEC` (Vectorize) | `pgvector`-Spalte + `src/search/hybrid.ts` |
-| `env.AI.run('@cf/baai/bge-m3')` | `ai.embed()` (Vertex text-embedding-005, 768-dim) |
+| `env.OBJECTS_VEC` (Vectorize) | `pgvector`-Spalte + `src/search/hybrid.ts` — strong-consistent (§5.1) |
+| `env.AI.run('@cf/baai/bge-m3')` | `ai.embed()` (Vertex `text-embedding-005`, 768-dim) |
 | `env.IDEMPOTENCY_KV` | PG-Tabelle `idempotency_keys (key, response_body, expires_at)` |
-| `env.MASTER_KEY` | `kek.wrap()` (OpenBao Transit, key `knowledge2`) |
+| `env.MASTER_KEY` | `kek.wrap()` (OpenBao Transit, key `knowledge2`; multi-user-future siehe §5.3) |
 | `wrangler.jsonc triggers.crons` | node-cron in-process (Phase 1), pg-boss (Phase 3) |
 | FTS5-Virtual-Table | Postgres `tsvector`-Spalte + GIN-Index |
 
-**Komplett neu:** `src/auth/jwks.ts` (JWKS-Pull statt Phase-1-Bearer-Fallback; Service-Token bleibt fuer `/v1/internal/*`).
+**Komplett neu:** `src/auth/jwks.ts` (JWKS-Pull + `waitForApprovalJwks()`-Boot-Preflight, §7.1) und `src/refs/` + `src/tags/` (native Routes, §4 C2).
 
 ---
 
-## 4. Env-Var-Schema (zod, konsistent mit mcp-approval2)
+## 4. Daten-Modell-Entscheidungen (Reviewer C1+C2+D-9)
 
-Konvention: gleiche Naming-Schema-Namen wo das Konzept identisch ist. Compose-File-Aliases werden via `translateBootEnv()` (Pattern aus `apps/server/src/index.ts`) gemappt — der App-Code sieht IMMER den zod-Schema-Namen.
+### 4.1 ObjectKind = `'doc' | 'skill' | 'app' | 'memo'` (C1)
 
-### 4.1 Schema (`apps/knowledge/src/lib/config.ts`)
+**Entscheidung:** v2 nimmt `'app'` (mcp-approval2-Wire), NICHT `'app_state'`.
+
+Begruendung: `packages/adapters/src/knowledge/types.ts:21` definiert die Wire-Shape mit `'app'`. PWA-Proxy in `apps/server/src/routes/knowledge-proxy.ts:36` und KnowledgeService kennen nur `'app'`. v1's `'app_state'` ist intern in `/workspaces/mcp-knowledge/migrations/0001_objects.sql:21` — diese DB wird leer (kein Datenimport, §10.3). Der Rename ist also ein Plain-Text-Find-Replace im Port von `objects/api.ts` und allen 17 apps-Tools.
+
+**Subtype-Konvention** (kanonisch in v2):
+- `kind='app', subtype='shopping_list'` — composable-app state envelope.
+- `kind='app', subtype='checklist'` — generischer checklist-block-host.
+- `kind='app', subtype='manifest'` — Layout-Definition (LAYOUT-doc separate, falls je ueber-1:1 split).
+- `kind='doc', subtype='pdf' | 'md' | 'image' | null`.
+- `kind='skill', subtype=null` (skill kind hat keinen subtype).
+- `kind='memo', subtype=<scope>` (z.B. `'personal' | 'project' | 'work'`).
+
+**Schema-Validation:** zod-Enum `z.enum(['doc','skill','app','memo'])` an der HTTP-Boundary in `routes/objects.ts`. Drizzle-Spalte ist `text` mit CHECK-Constraint — fail-fast bei Migrations-Bugs.
+
+### 4.2 Native `object_refs` + `object_tags` Routes (C2)
+
+**Entscheidung: Option A — v2 implementiert refs+tags als first-class Tabellen + HTTP-Routes.** Der heutige `meta.resource_ids`-Workaround in `apps/server/src/services/knowledge.ts:150-273` wird abgeloest sobald v2 in Production ist.
+
+Begruendung: drei Surfaces (`attachDocToSkill`, `docUsages`, `readSkillResource`, `bulkDelete`-refcount) operieren heute client-side ueber `listObjects(kind='skill', limit=200)`-Pagination. Bei >200 Skills ist das O(n) und scharfe Race-Conditions beim Cross-Update zweier Skills (kein optimistic-CAS auf der Beziehung). Native Routes mit DB-Constraints sind:
+- FTS-fuer-incoming-refs O(1) statt O(n)
+- atomic-attach (insert-on-conflict-do-nothing)
+- refcount-trigger in DB statt application-level
+- Sub-Doc-Annotation in `search` (PLAN-search-subdocs aus v1) wieder moeglich ohne 1k-Skills-Scan
+
+Aufwand: 4-6h zusaetzlich gegenueber Workaround-Erhalt. Code-Reduction in mcp-approval2 nach Cutover: ~120 Zeilen weniger in `services/knowledge.ts` (3 Wrapper-Methoden werden trivial-Adapter-Calls).
+
+**Drizzle-Schema** (`apps/knowledge/src/lib/schema.ts`):
 
 ```typescript
-const ConfigSchema = z.object({
-  // Server
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  PORT: z.coerce.number().int().min(1).max(65535).default(8788),
-  ORIGIN: z.string().url().default('http://localhost:8788'),
+export const objectRefs = pgTable('object_refs', {
+  id: text('id').primaryKey(), // ULID
+  ownerId: text('owner_id').notNull(),
+  fromId: text('from_id').notNull().references(() => objects.id, { onDelete: 'cascade' }),
+  toId: text('to_id').notNull().references(() => objects.id, { onDelete: 'cascade' }),
+  role: text('role').notNull(), // 'skill_resource' | 'app_attachment' | future
+  createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+}, (t) => ({
+  uniqRefByRole: uniqueIndex('uniq_refs_from_to_role').on(t.fromId, t.toId, t.role),
+  byTo: index('idx_refs_to_role').on(t.toId, t.role),
+  byOwner: index('idx_refs_owner').on(t.ownerId),
+}));
 
-  // Database (Postgres primary, SQLite Tests/Dev)
-  DATABASE_URL: z.string().min(1),
-  DATABASE_DIALECT: z.enum(['postgres', 'sqlite']).default('postgres'),
+export const objectTags = pgTable('object_tags', {
+  id: text('id').primaryKey(),
+  ownerId: text('owner_id').notNull(),
+  objectId: text('object_id').notNull().references(() => objects.id, { onDelete: 'cascade' }),
+  tag: text('tag').notNull(), // 'group:cooking', 'priority:high', ...
+  source: text('source').notNull().default('user'), // 'user' | 'system' | 'inferred'
+  createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+}, (t) => ({
+  uniqTag: uniqueIndex('uniq_tags_object_tag').on(t.objectId, t.tag),
+  byTag: index('idx_tags_tag').on(t.tag),
+}));
+```
 
-  // Auth: JWKS-pull von mcp-approval2 + Service-Token fuer Internal-Routes
-  JWKS_URL: z.string().url(),
-  JWT_ISSUER: z.string().default('mcp-approval2'),
-  JWT_AUDIENCE: z.string().default('mcp-knowledge2'),
-  MCP_APPROVAL_INTERNAL_TOKEN: z.string().min(32),
-  MCP_APPROVAL_BASE_URL: z.string().url(),
+**HTTP-Routes** (alle JWT-protected, sub=userId):
 
-  // Blob (S3-API). bucket fix pro Deployment, endpoint+region+keys aus Doppler.
-  S3_ENDPOINT: z.string().url(),
-  S3_REGION: z.string().min(1),
-  S3_BUCKET: z.string().min(1),
-  S3_ACCESS_KEY_ID: z.string().min(1),
-  S3_SECRET_ACCESS_KEY: z.string().min(1),
-  S3_FORCE_PATH_STYLE: z.coerce.boolean().default(true),
+| Route | Body / Query | Response |
+|---|---|---|
+| `POST /v1/refs` | `{from_id, to_id, role}` | `{ref: RefView}` |
+| `DELETE /v1/refs/:ref_id` | — | `204` |
+| `GET /v1/objects/:id/refs?direction=incoming\|outgoing\|both&role?=` | — | `{incoming: RefView[], outgoing: RefView[]}` |
+| `POST /v1/tags` | `{object_id, tag, source?}` | `{tag: TagView}` |
+| `DELETE /v1/tags/:tag_id` | — | `204` |
+| `GET /v1/objects/:id/tags` | — | `{tags: TagView[]}` |
 
-  // KEK (OpenBao Transit)
-  VAULT_ADDR: z.string().url(),
-  VAULT_TOKEN: z.string().min(1),
-  VAULT_TRANSIT_PATH: z.string().default('transit'),
-  VAULT_TRANSIT_KEY: z.string().default('knowledge2'),
+**Migration-Strategie in mcp-approval2**: nach Cutover (knowledge2 mit refs/tags-Routes live) — `services/knowledge.ts` `attachDocToSkill/docUsages/readSkillResource` umstellen auf `adapter.createRef(...)` / `adapter.listRefs(...)`. `meta.resource_ids` bleibt eine kurze Zeit als read-fallback fuer evtl. importierte v1-Daten, danach wird der Lesepfad entfernt. Adapter-Surface `KnowledgeAdapter` braucht 4 neue Methoden: `createRef, deleteRef, listRefs, createTag, deleteTag, listTags` — Cross-Service-Contract Update D-13/D-14/D-15.
 
-  // AI (Vertex EU)
-  VERTEX_AI_PROJECT_ID: z.string().optional(),
-  VERTEX_AI_REGION: z.string().default('europe-west4'),
-  VERTEX_AI_EMBED_MODEL: z.string().default('text-embedding-005'),
-  GOOGLE_APPLICATION_CREDENTIALS: z.string().optional(), // SA-JSON path
+**Migrations-Files:**
+- `0001_objects.sql` — objects + tsvector + pgvector
+- `0002_refs_tags.sql` — object_refs + object_tags
+- `0003_uploads_idem.sql` — uploads + idempotency_keys + audit_log
 
-  // Backup (eigener Encryption-Key fuer Off-Site-Dumps)
-  KNOWLEDGE_BACKUP_MASTER_KEY_BASE64: z.string().optional(),
+### 4.3 Multi-Kind-Search (D-9, H4)
 
-  // Quality-Gate (ported from CF, optional)
-  QUALITY_GATE_ENABLED: z.coerce.boolean().default(false),
-  QUALITY_GATE_DAILY_USD: z.coerce.number().default(2.0),
-  QUALITY_GATE_JUDGE_TIMEOUT_MS: z.coerce.number().default(30_000),
-  QUALITY_GATE_JUDGE_MODEL: z.string().default('gemini-2.5-flash'),
+**Entscheidung:** v2 implementiert `kind: ObjectKind | ObjectKind[] | undefined` server-side. Greenfield-Recht.
 
-  LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error']).default('info'),
+**Wire-Shape** (`POST /v1/search`):
+
+```json
+{
+  "query": "shopping list eggs",
+  "kinds": ["doc", "skill"],         // optional, fehlt = alle 4
+  "subtypes": ["pdf", null],         // optional, pro kind oder global
+  "tags": ["group:cooking"],         // optional, AND-matched
+  "limit": 20,
+  "offset": 0
+}
+```
+
+Server-side zod:
+
+```typescript
+const SearchSchema = z.object({
+  query: z.string().min(1).max(500),
+  kinds: z.array(z.enum(['doc','skill','app','memo'])).optional(),
+  subtypes: z.array(z.string().nullable()).optional(),
+  tags: z.array(z.string()).optional(),
+  limit: z.number().int().min(1).max(100).default(20),
+  offset: z.number().int().min(0).default(0),
 });
 ```
 
-### 4.2 Mapping Schema-Name ↔ Compose-Name ↔ Quelle
+RRF-Fusion bleibt per-kind (separate CTE pro kind, dann fusion). `HttpKnowledgeAdapter` in `packages/adapters` sendet heute schon multi-kind forward-compatible — der server-side handler in v2 schliesst D-9.
 
-| SchemaName | ComposeName (env-block) | Quelle | Pflicht |
-|---|---|---|---|
-| `DATABASE_URL` | `DATABASE_URL` | `postgres://app:${POSTGRES_PASSWORD}@postgres:5432/knowledge2` | ✅ |
-| `JWKS_URL` | `JWKS_URL` | hartkodiert `http://mcp-approval2:8787/.well-known/jwks.json` | ✅ |
-| `JWT_ISSUER` | `JWT_ISSUER` | hartkodiert `mcp-approval2` | ✅ |
-| `JWT_AUDIENCE` | `JWT_AUDIENCE` | hartkodiert `mcp-knowledge2` | ✅ |
-| `MCP_APPROVAL_INTERNAL_TOKEN` | `MCP_APPROVAL_INTERNAL_TOKEN` | Doppler (shared mit mcp-approval2) | ✅ |
-| `MCP_APPROVAL_BASE_URL` | `MCP_APPROVAL_BASE_URL` | hartkodiert `http://mcp-approval2:8787` | ✅ |
-| `S3_ENDPOINT` | `S3_ENDPOINT` | Doppler (`https://fsn1.your-objectstorage.com`) | ✅ |
-| `S3_REGION` | `S3_REGION` | Doppler (`fsn1`) | ✅ |
-| `S3_BUCKET` | `S3_BUCKET` | Doppler (`mcp-knowledge2-eu`) | ✅ |
-| `S3_ACCESS_KEY_ID` | `S3_ACCESS_KEY_ID` | Doppler (Hetzner-Object-Storage-User) | ✅ |
-| `S3_SECRET_ACCESS_KEY` | `S3_SECRET_ACCESS_KEY` | Doppler | ✅ |
-| `VAULT_ADDR` | `VAULT_ADDR` | hartkodiert `http://openbao:8200` | ✅ |
-| `VAULT_TOKEN` | `VAULT_TOKEN` | Doppler (shared mit mcp-approval2 ODER eigener narrower scope) | ✅ |
-| `VAULT_TRANSIT_KEY` | `VAULT_TRANSIT_KEY` | hartkodiert `knowledge2` | optional |
-| `VERTEX_AI_PROJECT_ID` | `VERTEX_AI_PROJECT_ID` | Doppler (shared) | optional |
-| `VERTEX_AI_REGION` | `VERTEX_AI_REGION` | Doppler (Default `europe-west4`) | optional |
-| `GOOGLE_APPLICATION_CREDENTIALS` | `GOOGLE_APPLICATION_CREDENTIALS` | mount `/secrets/vertex-sa.json:ro` (shared mit mcp-approval2) | optional |
-| `KNOWLEDGE_BACKUP_MASTER_KEY_BASE64` | `KNOWLEDGE_BACKUP_MASTER_KEY_BASE64` | Doppler (placeholder existiert schon) | optional |
-| `PORT` | `PORT` | hartkodiert `8788` | optional |
-| `LOG_LEVEL` | `LOG_LEVEL` | Doppler `LOG_LEVEL` (shared) | optional |
-
-### 4.3 Konsistenz-Aenderungen gegen heutiges compose
-
-Heutiges compose-File (Zeile 143ff.) erwartet alte Namen. Aenderungen: `VERTEX_REGION` → `VERTEX_AI_REGION`, `VERTEX_PROJECT_ID` → `VERTEX_AI_PROJECT_ID`, `BACKUP_MASTER_KEY` → `KNOWLEDGE_BACKUP_MASTER_KEY_BASE64`. Neu hinzufuegen: `S3_*` (5 Vars), `VAULT_*` (3 Vars), `MCP_APPROVAL_BASE_URL`. Alle drei Umbenennungen matchen bestehende Doppler-Placeholders.
+**Sub-Doc-Annotation** (`used_by[]`): wenn `kinds` `'doc'` enthaelt, fuegt der Handler fuer jeden doc-Hit eine `used_by[]`-Liste aus `object_refs WHERE to_id = doc.id AND role='skill_resource'` (max 2 + truncated_count). Funktioniert weil refs nativ sind (§4.2).
 
 ---
 
 ## 5. Storage-Layer-Konkretisierung
 
-### 5.1 Hetzner Object Storage als S3-Backend
-
-**Endpoint-Form:** `https://{region}.your-objectstorage.com` (offiziell dokumentiert: docs.hetzner.com/storage/object-storage). Verfuegbare Regionen heute: `fsn1` (Falkenstein), `nbg1` (Nuernberg), `hel1` (Helsinki). Wir nehmen **`fsn1`** (gleiche Hetzner-Region wie der CX21).
-
-**Bucket-Naming:**
-- Pilot: `mcp-knowledge2-eu` (single-tenant Default).
-- Spaeter (B-Pattern, 2. Firma): `mcp-knowledge2-{tenant-slug}-eu`. Multi-Tenant-Refactor ist explizit out-of-scope fuer Phase 1 (PLAN-architecture-v1 §0 Tenancy-Modell).
-
-**Doppler-Vars (neu, im `doppler-setup`-Modul anzuhaengen):**
-```
-S3_ENDPOINT             = https://fsn1.your-objectstorage.com
-S3_REGION               = fsn1
-S3_BUCKET               = mcp-knowledge2-eu
-S3_ACCESS_KEY_ID        = <Hetzner-Object-Storage-User-Access-Key>
-S3_SECRET_ACCESS_KEY    = <Hetzner-Object-Storage-User-Secret>
-S3_FORCE_PATH_STYLE     = true
-```
-
-**Kein Sharing der AWS_ACCESS_KEY_ID-Vars mit Terraform-State-Backend** — die TF-State-Vars (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `R2_ENDPOINT` im Doppler) zeigen heute auf einen Cloudflare-R2-Bucket fuer `terraform.tfstate`. Das bleibt. Knowledge2 bekommt **eigene** S3-Credentials (separate Hetzner-Object-Storage-User), Doppler-Naming `S3_*` macht das explizit.
-
-### 5.2 Shared `S3BlobAdapter` ohne Aenderung
-
-Der bestehende `S3BlobAdapter` in `/workspaces/mcp-approval2/packages/adapters/src/blob/s3.ts` unterstuetzt `endpoint`-Override + `forcePathStyle` und nutzt nur die S3-V2-API. Hetzner ist S3v4-API-konform (offiziell dokumentiert). Kein Adapter-Patch noetig.
-
-### 5.3 Schluessel-Konvention
-
-| Prefix | Owner | Zweck |
-|---|---|---|
-| `objects/<ULID>` | `apps/knowledge/src/objects/api.ts` | Body-Overflow `>16 KB` |
-| `objects/<ULID>@v<n>` | `objects/api.ts` | Revision-Overflow |
-| `backup/<ts>.bin` | `apps/knowledge/src/cron/backup.ts` | Wochen-Backup (encrypted mit `KNOWLEDGE_BACKUP_MASTER_KEY_BASE64`) |
-| `uploads/<upload_id>` | `apps/knowledge/src/uploads/api.ts` | Pre-signed Upload-Buffer (12h-TTL via lifecycle-rule) |
-
-`R2_KEY_REGEX`-Pattern aus `mcp-knowledge/src/objects/api.ts` (Audit-H12) wird 1:1 portiert als `S3_KEY_REGEX = /^(objects|uploads|backup)\//`. Defense-in-depth bleibt aktiv.
-
-### 5.4 GCS-Migration (Phase 2)
-
-Aenderungen bei Phase-2-Cutover:
-1. **Auth:** Service-Account-Workload-Identity statt Access-Key/Secret. `S3BlobAdapter` kann GCS' S3-API benutzen, aber die saubere Loesung ist ein `GcsBlobAdapter` mit dem nativen `@google-cloud/storage`-SDK (Workload-Identity). Aufwand: 1 Tag, identisches Interface.
-2. **Endpoint:** entfaellt (native SDK).
-3. **Bucket-Namespace:** identisch (`mcp-knowledge2-eu` bleibt; GCS-Bucket-Namen sind global unique aber identische Strings sind ok wenn sie noch frei sind — ggf. `mcp-knowledge2-business-eu`).
-4. **Env-Naming:** `GCS_BUCKET` + `GOOGLE_APPLICATION_CREDENTIALS` (letzteres bereits gesetzt fuer Vertex AI).
-
----
-
-## 6. Vector/Embedding-Layer
-
-### 6.1 pgvector statt Vectorize
+### 5.1 pgvector + Konsistenz-Modell (H5)
 
 **Schema** (`migrations/0001_objects.sql`):
 
@@ -268,44 +235,248 @@ ALTER TABLE objects ADD COLUMN tsv tsvector GENERATED ALWAYS AS (
 CREATE INDEX idx_objects_tsv ON objects USING gin(tsv);
 ```
 
-**Dimension 1024 → 768** wegen Vertex `text-embedding-005`. Pilot leer (§9) → keine Migration. Wechsel zurueck waere `ALTER COLUMN ... TYPE vector(1024)` + Reindex.
+**Konsistenz-Modell (strong-consistent, KEIN D1-Mirror):**
 
-**RRF-Fusion** im Detail in `apps/knowledge/src/search/hybrid.ts` — Pattern: parallele CTE `fts` (ts_rank) + `vec` (cosine via `<=>`-Operator), score = `1/(60+fts_rank) + 1/(60+vec_rank)`. Algorithmus 1:1 aus `mcp-knowledge/src/search/scorers.ts`.
+v1 hatte `objects.embedding_blob BLOB` als D1-Mirror neben Vectorize weil Vectorize eventually-consistent ist (5-30 min Lag, siehe [feedback_vectorize_eventual_consistency.md](https://github.com/axel-rogg/mcp-approval/blob/main/.claude/memory/feedback_vectorize_eventual_consistency.md)). pgvector ist **strong-consistent** — INSERT mit embedding-column ist sofort fuer SELECT sichtbar. Konsequenz fuer v2:
 
-### 6.2 Embedding-Source-Entscheidung: Vertex AI
+- **Kein D1-Mirror noetig.** Embedding lebt ausschliesslich in der `objects.embedding`-Spalte. Spart eine Tabelle und einen Sync-Pfad.
+- **Konsistenz-Bonus dokumentiert:** Callers aus v1 die "warte auf Vectorize-Propagation" workarounds hatten (z.B. retry-on-empty-search) sind in v2 unnoetig. Cross-link zu mcp-approval-Memory `feedback_vectorize_eventual_consistency` — beim ersten v2-Smoke-Test ist Re-Read sofort frisch.
+- **Trade-off:** HNSW-Index-Insert ist synchron mit dem INSERT → +5-15 ms Insert-Latenz (gemessen p95 fuer 768-dim Vector + m=16). Akzeptabel — Pilot schreibt <10 docs/Tag.
+- **Falls Insert-Last steigt** (>100/min): IVFFlat statt HNSW reduziert Build-Time, kostet Recall. Tuning-Hebel fuer Phase 3+.
 
-**Wahl:** Vertex AI `text-embedding-005` via `AiAdapter.embed()`. Kein lokales `@xenova/transformers`.
+**Dimension 768** (Vertex `text-embedding-005`). Pilot leer → keine Migration.
 
-**Trade-off-Tabelle:**
+### 5.2 Hetzner Object Storage als S3-Backend
 
-| Aspekt | Vertex AI | Lokales `@xenova/transformers` (bge-m3 ONNX) |
+**Endpoint:** `https://fsn1.your-objectstorage.com` (offiziell S3v4-API). Bucket: `mcp-knowledge2-eu`. Region: `fsn1`.
+
+**Doppler-Vars (neu, im `doppler-setup`-Modul):**
+```
+S3_ENDPOINT             = https://fsn1.your-objectstorage.com
+S3_REGION               = fsn1
+S3_BUCKET               = mcp-knowledge2-eu
+S3_ACCESS_KEY_ID        = <Hetzner-Object-Storage-User-Access-Key>
+S3_SECRET_ACCESS_KEY    = <Hetzner-Object-Storage-User-Secret>
+S3_FORCE_PATH_STYLE     = true
+```
+
+**Kein Sharing mit Terraform-State** — TF-State bleibt auf R2 (Cloudflare). Hetzner-S3-Creds sind eigene Doppler-Vars.
+
+**`S3BlobAdapter`** in `packages/adapters/src/blob/s3.ts` unterstuetzt `endpoint`-Override + `forcePathStyle` — verifiziert kompatibel. Kein Adapter-Patch noetig.
+
+**Schluessel-Konvention:**
+
+| Prefix | Owner | Zweck |
 |---|---|---|
-| Cost (Pilot ~1k embeds/Tag) | ~0.01 €/Tag (free Quota) | 0 € marginal |
-| Latency p95 | 200-400 ms | 300-800 ms (CPU-only auf CX21) |
-| Memory | 0 | +1-2 GB Heap (Modell + Tensor-Cache) → CX21 (8 GB) wird tight |
-| Cold-Start | n/a | ~5s Modell-Load beim Container-Boot |
-| Multilingual | ja (text-embedding-005) | ja (bge-m3 multilingual) |
-| Dimension | 768 | 1024 |
-| GCP-Phase-Konsistenz | identisch | divergiert (Anreiz, dort eh Vertex zu nehmen) |
+| `objects/<ULID>` | `apps/knowledge/src/objects/api.ts` | Body-Overflow `>16 KB` |
+| `objects/<ULID>@v<n>` | `objects/api.ts` | Revision-Overflow |
+| `backup/<ts>.bin` | `apps/knowledge/src/cron/backup.ts` | Wochen-Backup (encrypted) |
+| `uploads/<upload_id>` | `apps/knowledge/src/uploads/api.ts` | Pre-signed Upload-Buffer (12h-TTL via lifecycle-rule) |
 
-**Begruendung Vertex:** mcp-approval2 nutzt eh Vertex (in Compose schon mounted: `vertex-sa.json:ro` Zeile 128 und 122 SET). Wir bekommen Adapter + Auth gratis, sparen CPU+RAM auf der kleinen Hetzner-VM, und Phase-2-GCP-Migration ist diff-frei. Bei kuenftigem Cost-Druck (>200k Embeddings/Tag) kann ein zweiter `LocalEmbeddingAdapter` jederzeit nachgeruestet werden — der Interface-Boundary `AiAdapter.embed()` ist da.
+`S3_KEY_REGEX = /^(objects|uploads|backup)\//` als Defense-in-depth (Audit-H12).
+
+### 5.3 KEK-Ref-Form + Multi-User-Migrationspfad (H3)
+
+**Pilot (Single-Tenant):** `vault://transit/keys/knowledge2`. Ein globaler KEK fuer alle objects-DEKs.
+
+**Format:** matched `REF_PATTERN` aus `packages/adapters/src/kek/openbao.ts:113` — `vault://<mount>/keys/<keyName>`. mcp-approval2 nutzt `user-<userId>` per-User; knowledge2 nutzt initial `knowledge2` (eine Konstante) weil:
+- Single-user-Pilot — Compromise-Window ist `1 User`, nicht `N User`.
+- Service-Boundary ist die Trust-Linie (KEK von mcp-approval2 darf knowledge2-Daten nicht entschluesseln und vice versa).
+
+**Multi-User-Cutover-Pfad** (Phase 3+, kein neuer Plan-File noetig):
+1. Migration `00xx_per_user_kek.sql` fuegt Spalte `objects.kek_ref TEXT NOT NULL DEFAULT 'vault://transit/keys/knowledge2'` hinzu.
+2. Re-Wrap-Loop: pro neu auftauchendem userId (`sub` im JWT) → OpenBao `transit/keys/knowledge2-user-<userId>` anlegen → DEK-Re-Wrap aller objects mit `owner_id=userId` → `kek_ref` auf neuen Pfad setzen.
+3. Code-Aenderung `objects/api.ts`: bei encrypt `kek.wrap(plainKey, {kekRef: row.kek_ref})`. KekProvider-Interface unterstuetzt das schon (`OpenBaoKekProvider.wrap()` nimmt ref-Override).
+4. Aufwand ~4-6h. Nicht im Pilot-Scope.
+
+**Q9 (neu, vom Reviewer):** beantwortet — Pilot global, Migrations-Pfad oben dokumentiert.
 
 ---
 
-## 7. Auth-Pfad
+## 6. Crypto-Reuse + AAD-Konvention (H1)
 
-### 7.1 RS256-JWT von mcp-approval2
+### 6.1 Entscheidung: knowledge2-lokales AAD-Modul
 
-- mcp-approval2 hostet JWKS unter `https://mcp2.ai-toolhub.org/.well-known/jwks.json` (Pattern aus `apps/server/src/auth/jwt-signing.ts` — Boot-Preflight existiert bereits).
-- mcp-knowledge2 zieht JWKS via `jose.createRemoteJWKSet(new URL(JWKS_URL))` und cached intern (1:1 aus `mcp-knowledge/src/auth/jwt.ts`).
-- Pro Request: `Authorization: Bearer <jwt>`, validation gegen JWKS, `sub` = `userId` (UUID, NICHT email — vgl. PLAN-architecture-v1 §2.1).
-- Compose-File-Mode: in der Hetzner-VM ist `JWKS_URL=http://mcp-approval2:8787/.well-known/jwks.json` (internal-network). Beide Container laufen im selben Docker-Network. Production-Frontend (`mcp2.ai-toolhub.org`) wird im Compose nicht durchgereicht — Caddy ist davor.
+`apps/knowledge/src/lib/aad.ts` mit den vier knowledge-spezifischen RecordTypes — Reuse von `@mcp-approval2/core/crypto`'s `aesgcm`-Helper (verschluesseln/entschluesseln) ABER eigenes AAD-Helper-Modul.
 
-### 7.2 Bearer-Service-Token fuer Internal-Routes
+Begruendung: v1 nutzt vier RecordTypes (`objects`, `objects-desc`, `objects-produced-for`, `objects-quality`) — siehe `mcp-knowledge/migrations/0001_objects.sql:7-11`. `packages/core/src/crypto/aad.ts:19` exportiert nur `'credentials' | 'session' | 'audit' | 'object' | 'generic'`. Drei Optionen waren:
 
-`/v1/internal/erase-user` (D-10 aus Cross-Service-Contract) braucht den statischen `MCP_APPROVAL_INTERNAL_TOKEN` als Bearer, NICHT user-JWT. Begruendung steht in `packages/adapters/src/knowledge/interface.ts:117ff.` — GDPR-Cascade ist Admin-Route, kein User-Subject.
+| Option | Pro | Kontra |
+|---|---|---|
+| A: core/aad.ts erweitern (4 neue Types) | Single-Source | Cross-cuts mcp-approval2-Tests, AAD-Builder-Schema-Bruch |
+| **B: knowledge2-lokales AAD-Modul** | Service-Boundary auch in Crypto, Test-Risiko = 0 | Mini-Code-Duplikation (~30 LOC) |
+| C: AAD-Pattern komplett vereinheitlichen (`recordType='knowledge-objects'`, sub-discriminator via field) | Sauberster Modell-Schnitt | bricht v1-Backups falls je migriert |
 
-Implementation in `apps/knowledge/src/auth/bearer.ts`:
+**Gewaehlt: B.** Service-Boundary in Crypto ist konsistent mit der HTTP-Boundary. Keine Cross-Service-Test-Aenderungen. v1-Daten muessen nicht migriert werden (Pilot leer, §10.3). Bei spaeterem Wunsch zu unifizieren bleibt der Path B → A trivial (build-helpers identisch).
+
+**`apps/knowledge/src/lib/aad.ts`:**
+
+```typescript
+export type KnowledgeAadRecordType =
+  | 'objects'              // body ciphertext
+  | 'objects-desc'         // description (encrypted summary, PLAN-docs-embedding)
+  | 'objects-produced-for' // quality-gate provenance
+  | 'objects-quality';     // quality-report ciphertext
+
+export interface KnowledgeAadInput {
+  recordType: KnowledgeAadRecordType;
+  ownerId: string;
+  kind: 'doc' | 'skill' | 'app' | 'memo';
+  subtype: string | null;
+  objectId: string;
+}
+
+export function buildKnowledgeAad(input: KnowledgeAadInput): string {
+  const subtype = input.subtype ?? '';
+  // Format: <recordType>|<owner>|<kind>:<subtype>|<id>
+  // — recordType-Prefix verhindert Cross-Record-Replay
+  // — kind:subtype-Section ist identisch zu v1-AAD (post-tool-collapse)
+  return `${input.recordType}|${input.ownerId}|${input.kind}:${subtype}|${input.objectId}`;
+}
+```
+
+**Encrypt/Decrypt-Pfad:** `aesgcmEncrypt({plaintext, key, aad: aadBytes(buildKnowledgeAad({...}))})` — die `aesgcm`-Funktion + `aadBytes`-Helper kommen weiterhin direkt aus `@mcp-approval2/core/crypto` (Reuse). Nur der AAD-String-Builder ist knowledge2-lokal.
+
+**Test-Coverage:** `apps/knowledge/tests/aad.test.ts` snapshotet alle 4 AAD-Variants gegen bekannte Inputs. Bei Schema-Bruch failt der Snapshot.
+
+---
+
+## 7. Env-Var-Schema (zod, konsistent mit mcp-approval2)
+
+Konvention: `translateBootEnv()` mappt Compose-File-Aliases auf zod-Schema-Namen — der App-Code sieht IMMER den Schema-Namen.
+
+### 7.1 Schema (`apps/knowledge/src/lib/config.ts`)
+
+```typescript
+const ConfigSchema = z.object({
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  PORT: z.coerce.number().int().min(1).max(65535).default(8788),
+  ORIGIN: z.string().url().default('http://localhost:8788'),
+
+  DATABASE_URL: z.string().min(1),
+  DATABASE_DIALECT: z.enum(['postgres', 'sqlite']).default('postgres'),
+
+  // Auth
+  JWKS_URL: z.string().url(),
+  JWT_ISSUER: z.string().default('mcp-approval2'),
+  JWT_AUDIENCE: z.string().default('mcp-knowledge2'),
+  MCP_APPROVAL_INTERNAL_TOKEN: z.string().min(32),
+  MCP_APPROVAL_BASE_URL: z.string().url(),
+
+  // Blob
+  S3_ENDPOINT: z.string().url(),
+  S3_REGION: z.string().min(1),
+  S3_BUCKET: z.string().min(1),
+  S3_ACCESS_KEY_ID: z.string().min(1),
+  S3_SECRET_ACCESS_KEY: z.string().min(1),
+  S3_FORCE_PATH_STYLE: z.coerce.boolean().default(true),
+
+  // KEK
+  VAULT_ADDR: z.string().url(),
+  VAULT_TOKEN: z.string().min(1),
+  VAULT_TRANSIT_PATH: z.string().default('transit'),
+  VAULT_TRANSIT_KEY: z.string().default('knowledge2'),
+
+  // AI (Vertex EU) — KANONISCHE Namen aligned mit mcp-approval2 (H2)
+  VERTEX_AI_PROJECT_ID: z.string().optional(),
+  VERTEX_AI_REGION: z.string().default('europe-west4'),
+  VERTEX_AI_EMBED_MODEL: z.string().default('text-embedding-005'),
+  GOOGLE_APPLICATION_CREDENTIALS: z.string().optional(),
+
+  KNOWLEDGE_BACKUP_MASTER_KEY_BASE64: z.string().optional(),
+
+  QUALITY_GATE_ENABLED: z.coerce.boolean().default(false),
+  QUALITY_GATE_DAILY_USD: z.coerce.number().default(2.0),
+  QUALITY_GATE_JUDGE_TIMEOUT_MS: z.coerce.number().default(30_000),
+  QUALITY_GATE_JUDGE_MODEL: z.string().default('gemini-2.5-flash'),
+
+  LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error']).default('info'),
+});
+```
+
+### 7.2 Vertex-Naming-Konsolidierung (H2)
+
+**Heute** (`deploy/hetzner/docker-compose.yml` Z.155-156):
+```yaml
+VERTEX_REGION: ${VERTEX_AI_REGION:-europe-west4}
+VERTEX_PROJECT_ID: ${VERTEX_AI_PROJECT_ID:-}
+```
+
+**Aenderung:** Umbenennen auf kanonisches Schema (siehe mcp-approval2-Block Z.122):
+```yaml
+VERTEX_AI_REGION: ${VERTEX_AI_REGION:-europe-west4}
+VERTEX_AI_PROJECT_ID: ${VERTEX_AI_PROJECT_ID:-}
+```
+
+`translateBootEnv()` in `apps/knowledge/src/index.ts` akzeptiert BC-Alias `VERTEX_REGION` → `VERTEX_AI_REGION` waehrend einer 1-Sprint-Uebergangszeit, dann hart entfernen. Gleiches Pattern fuer `VERTEX_PROJECT_ID` → `VERTEX_AI_PROJECT_ID` und `BACKUP_MASTER_KEY` → `KNOWLEDGE_BACKUP_MASTER_KEY_BASE64`.
+
+**Risiko ohne Umbenennung:** zod-default `europe-west4` greift, aber das ist Glueck. Bei einem Doppler-Override (z.B. fuer US-Test-Region) silently die falsche Region — kein Vertrag.
+
+### 7.3 Service-Token-Rotation (M2)
+
+`MCP_APPROVAL_INTERNAL_TOKEN` ist shared zwischen mcp-approval2 und mcp-knowledge2. Cadence: **90 Tage** (analog CF-Access in CLAUDE.md). Rotation-Steps:
+1. Doppler: neuen Token generieren (`openssl rand -hex 32`).
+2. Beide Container restarten in einer Maintenance-Window (5 min Downtime).
+3. Falls die Aktion in `/v1/internal/erase-user` mitten in einer Rotation laeuft — sie schlaegt fehl (no-token), Operator-Retry nach Restart.
+
+Cadence-Reminder im selben Doppler-Lifecycle wie CF-Access-Service-Token (User-Profile-Cron).
+
+---
+
+## 8. Auth-Pfad
+
+### 8.1 RS256-JWT von mcp-approval2 + JWKS-Preflight (M3)
+
+- JWKS-Endpoint: `http://mcp-approval2:8787/.well-known/jwks.json` (internal-network) bzw. `https://mcp2.ai-toolhub.org/.well-known/jwks.json` (extern).
+- mcp-knowledge2 zieht JWKS via `jose.createRemoteJWKSet(new URL(JWKS_URL))` — cached + retried bei einzelnen Requests automatisch.
+- Pro Request: `Authorization: Bearer <jwt>`, validation, `sub` = `userId` (UUID).
+
+**Boot-Preflight `waitForApprovalJwks()`:**
+
+```typescript
+async function waitForApprovalJwks(env: Env): Promise<void> {
+  const url = env.JWKS_URL;
+  const budgetMs = 30_000;
+  const deadline = Date.now() + budgetMs;
+  let attempt = 0;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(url, { method: 'GET' });
+      if (res.ok) {
+        const json = await res.json() as { keys?: unknown[] };
+        if (Array.isArray(json.keys) && json.keys.length > 0) {
+          log.info({ url, attempt }, 'jwks reachable');
+          return;
+        }
+      }
+    } catch (err) {
+      log.debug({ url, attempt, err: errorMessage(err) }, 'jwks not ready');
+    }
+    attempt += 1;
+    await sleep(2000);
+  }
+  throw new Error(`waitForApprovalJwks: ${url} not reachable within ${budgetMs}ms`);
+}
+```
+
+Aufruf-Reihenfolge in `apps/knowledge/src/index.ts:main()`:
+
+```typescript
+const env = translateBootEnv(process.env);
+const config = ConfigSchema.parse(env);
+await waitForDb(config);
+await waitForVault(config);
+await waitForApprovalJwks(config);  // NEU
+const app = createApp({config, ...adapters});
+app.listen(config.PORT);
+```
+
+`waitForDb()` + `waitForVault()` Pattern 1:1 aus `apps/server/src/index.ts:214` und folgenden Zeilen — wir kopieren die Helper.
+
+### 8.2 Bearer-Service-Token fuer Internal-Routes
+
+`/v1/internal/erase-user` (D-10): statischer `MCP_APPROVAL_INTERNAL_TOKEN` als Bearer, NICHT user-JWT. `apps/knowledge/src/auth/bearer.ts`:
+
 ```typescript
 export function checkServiceBearer(req: Request, env: Env): boolean {
   const auth = req.headers.get('authorization');
@@ -315,105 +486,88 @@ export function checkServiceBearer(req: Request, env: Env): boolean {
 }
 ```
 
-Smoke-Tests + CI-Health-Checks gegen `/health` brauchen keinen Token (200 ohne Auth).
+Smoke + Health-Check brauchen keinen Token.
 
-### 7.3 Kein Cookie-Pfad
+### 8.3 Kein Cookie-Pfad
 
-mcp-knowledge2 ist headless. Kein Browser-Surface, keine PWA, kein OAuth-Redirect — alle Aufrufe kommen von mcp-approval2 (User-JWT) oder von einem GH-Action-Smoke (Service-Token). Kein Set-Cookie, keine CSRF-Schicht.
+mcp-knowledge2 ist headless. Aufrufe von mcp-approval2 (JWT) oder GH-Action-Smoke (Service-Token). Kein Set-Cookie, keine CSRF-Schicht.
 
 ---
 
-## 8. Tool-Surface (Mapping CF Worker → v2)
+## 9. Tool-Surface (Mapping CF Worker → v2)
 
-### 8.1 Bestand heute (`/workspaces/mcp-knowledge/src/tools/`)
+### 9.1 Bestand + v2-Behandlung
 
 | Familie | # Tools | v2-Behandlung |
 |---|---|---|
-| `core.ts` | 12 | direkt mappable auf REST + MCP-Adapter |
-| `docs/*` | 8 | trivial Port |
-| `skills/*` | 15 | trivial Port |
+| `core.ts` | 12 | direkt auf REST + MCP-Adapter |
+| `docs/*` | 8 | trivial Port — `embed: true` → `aiAdapter.embed()` (Dim-Wechsel 1024→768) |
+| `skills/*` | 15 | trivial Port; `attach_resource` nutzt native `/v1/refs` (§4.2) |
 | `memorize/*` | 6 | trivial Port; embed_helper auf AiAdapter |
-| `apps/*` | 17 | trivial Port (state via objects-API) |
-| `objects/*` | 1 (`bulk_delete`) | trivial |
-| `search.ts` | 1 | rewrite auf pgvector RRF |
+| `apps/*` | 17 | trivial Port — Rename `'app_state'` → `'app'` (§4.1) |
+| `objects/*` | 1 (`bulk_delete`) | trivial; refcount via DB-Trigger statt application |
+| `search.ts` | 1 | rewrite auf pgvector RRF + multi-kind (§4.3) |
 | `quality/*` | 4 | AiAdapter ersetzt AI-Gateway-Slug |
 
-Insgesamt ~64 Tools — Surface bleibt 1:1, **kein Tool-Cut** in v2.
+Insgesamt ~64 Tools — Surface bleibt 1:1, **kein Tool-Cut**. Schema-Aenderungen:
+- `docs.put.embed=true` Dimension 768
+- `search` akzeptiert `kinds: ObjectKind[]` (D-9 endlich resolved)
+- `skills.attach_resource` returnt jetzt eine `ref_id` (vorher mutated meta)
 
-### 8.2 Was Anpassung wegen Adapter-Wechsel braucht
+### 9.2 MCP-Adapter Reuse
 
-| Tool | Aenderung |
+`mcp-knowledge/src/routes/mcp.ts` + `tools/registry.ts` sind plain-TS, kein CF-spezifischer-API-Call. 1:1 portieren in `apps/knowledge/src/routes/mcp.ts`.
+
+---
+
+## 10. Migration-Path
+
+### 10.1 CF-Production unberuehrt
+
+`/workspaces/mcp-knowledge` (Production `knowledge.ai-toolhub.org`) bleibt aktiv bis mcp-approval Sunset. Daten in R2/D1 sind 1-Monats-Archiv.
+
+### 10.2 Cross-Service-Contract-Updates
+
+Aus dem v2-Modell ergeben sich neue Drift-Entries fuer `docs/CROSS-SERVICE-CONTRACT-RESOLUTION.md`:
+
+| Drift | Aenderung |
 |---|---|
-| `objects.put` (alle Varianten) | `body` ist heute `Uint8Array | string`; im v2-Wire ist `body_b64` (base64) — bereits aligned via http-client (D-2 done in mcp-approval2). |
-| `docs.put` mit Vectorize-Embed | `embed: true` triggert heute `env.AI.run(@cf/baai/bge-m3)`. v2: `aiAdapter.embed({texts: [maskedSummary]})`. Dimension Schema-Change 1024→768. |
-| `memorize.add` | gleich (server-side embed-Pfad) |
-| `search` | Komplett rewrite auf RRF-Pattern aus §6.1. Tool-Schema bleibt identisch. |
-| `quality.run_backfill` | AI-Gateway-Slug-URL entfaellt; direkter Vertex-Call via AiAdapter. AI-Gateway-Cost-Tracking wandert ggf. spaeter in `audit_log`-Sink. |
-| `uploads.init` + PUT-flow | heute HMAC-signed-URL gegen R2-public-presigned-PUT. v2: same Pattern aber `s3.createPresignedPost()` (AWS-SDK) — kein Custom-HMAC mehr noetig. |
+| D-9 | resolved — server-side multi-kind ist live |
+| D-13 (NEU) | `KnowledgeAdapter.createRef/deleteRef/listRefs` — Adapter-Erweiterung |
+| D-14 (NEU) | `KnowledgeAdapter.createTag/deleteTag/listTags` — Adapter-Erweiterung |
+| D-15 (NEU) | `attachDocToSkill` migrates from `meta.resource_ids` → `createRef(role='skill_resource')`; 1-Sprint-Read-Fallback fuer evtl. v1-Daten |
 
-### 8.3 MCP-Adapter (tools/list, tools/call): Reuse
+mcp-approval2's `KnowledgeService` wird in einem Folge-PR nach v2-Live umgebaut — `services/knowledge.ts:150-273` werden trivial-Adapter-Calls.
 
-`src/routes/mcp.ts` aus dem CF-Worker laeuft trivial in Node (kein CF-spezifischer-API-Call). 1:1 portieren in `apps/knowledge/src/routes/mcp.ts`. `tools/registry` (`/workspaces/mcp-knowledge/src/tools/registry.ts`) ist plain-TS, Side-Effect-imports kosten nichts. Initialize + protocolVersion + JSON-RPC error codes bleiben.
+### 10.3 v2 startet leer
 
----
-
-## 9. Migration-Path
-
-### 9.1 Daten in CF-Production bleiben unberuehrt
-
-`/workspaces/mcp-knowledge` (Production `knowledge.ai-toolhub.org`) ist heute aktiv im mcp-approval-Stack auf Cloudflare. Bei mcp-approval2-Cutover wird die alte mcp-approval-Instanz sunset; sobald das passiert, hat `knowledge.ai-toolhub.org` keine schreibenden Clients mehr. Die Daten bleiben in R2/D1 als 1-Monats-Archiv und werden danach gepurgt (Sunset-Schedule outside-of-scope dieses Plans).
-
-### 9.2 mcp-approval2 ↔ mcp-knowledge2 API-Surface (heute schon definiert)
-
-Aus `packages/adapters/src/knowledge/`:
-
-| API-Call | mcp-approval2-Surface | mcp-knowledge2-Endpoint |
-|---|---|---|
-| `createObject` | `services/knowledge.ts` | `POST /v1/objects` |
-| `getObject` | `services/knowledge.ts` | `GET /v1/objects/:id?expand=body` |
-| `listObjects` | `services/knowledge.ts` | `GET /v1/objects?kind=&subtype=&limit=&cursor=` |
-| `updateObject` | `services/knowledge.ts` | `PATCH /v1/objects/:id` |
-| `deleteObject` | `services/knowledge.ts` | `DELETE /v1/objects/:id` |
-| `createShare` | `services/knowledge.ts` | `POST /v1/objects/:id/shares` |
-| `listShares` | `services/knowledge.ts` | `GET /v1/objects/:id/shares` |
-| `revokeShare` | `services/knowledge.ts` | `DELETE /v1/shares/:id` |
-| `search` | `services/knowledge.ts` | `POST /v1/search` |
-| `eraseUser` (Internal) | `services/gdpr.ts` | `POST /v1/internal/erase-user` (Service-Token) |
-
-v2 MUSS diese 10 Endpoints (plus MCP-Adapter + Health) liefern. Aktueller HttpKnowledgeAdapter sendet snake_case body-Felder + erwartet camelCase response — server-side handler in v2 muessen das spiegeln (D-1..D-12 alle resolved in mcp-approval2/docs/CROSS-SERVICE-CONTRACT-RESOLUTION.md — der Vertrag ist die Baseline).
-
-### 9.3 v2 startet leer
-
-Pilot auf Hetzner ist ein Greenfield: leere `objects`-Tabelle, leerer S3-Bucket, leerer pgvector-Index. Kein Daten-Import von CF Workers noetig — alle relevanten Daten gehoeren dem User axelroggnotfall@gmail.com und werden bei Bedarf manuell re-created (Skills/Docs sind klein, Apps sind State, Memos sind regenerierbar). Falls doch Bedarf entsteht: ein-shot `dump-from-cf.ts`-Skript wird in Phase-X gebaut, bleibt aber out-of-scope dieses Plans.
+Pilot auf Hetzner ist Greenfield: leere `objects`-Tabelle, leerer S3-Bucket, leerer pgvector-Index, leeres refs/tags. Keine Datenmigration. Falls Bedarf: einmaliger `dump-from-cf.ts`-Skript in Phase-X.
 
 ---
 
-## 10. Build + Deploy
+## 11. Build + Deploy
 
-### 10.1 Dockerfile (`apps/knowledge/Dockerfile`)
+### 11.1 Dockerfile (`apps/knowledge/Dockerfile`)
 
-Pattern 1:1 wie `/workspaces/mcp-approval2/deploy/fly/Dockerfile.server`:
-- `deps` Stage: workspace-aware `npm ci`, includes `apps/knowledge/package.json` neben den existierenden 4 manifests.
-- `build` Stage: `npm run build -w @mcp-approval2/core && ... -w @mcp-approval2/adapters && ... -w @mcp-approval2/knowledge`.
-- `prod-deps`: re-install `--omit=dev`.
-- `runtime` Stage: copy `apps/knowledge/dist`, `apps/knowledge/migrations`, `apps/knowledge/scripts`, `apps/knowledge/package.json`. WORKDIR `/app/apps/knowledge`. CMD `node --enable-source-maps dist/index.js`.
-- HEALTHCHECK `wget -q --spider http://localhost:8788/health || exit 1`.
+Pattern 1:1 wie `deploy/fly/Dockerfile.server`: 4-Stage Build, runtime mit `apps/knowledge/dist` + migrations + scripts. HEALTHCHECK `wget /health`.
 
-Image-Tag wahlweise:
-- `ghcr.io/axel-rogg/mcp-knowledge2:latest` (behalten — compose referenziert das schon)
-- ODER `ghcr.io/axel-rogg/mcp-approval2-knowledge:latest` (semantisch sauberer)
+Image-Tag: `ghcr.io/axel-rogg/mcp-knowledge2:latest` (Q1: behalten — compose-Refactor unnoetig).
 
-Entscheidung User-Frage (siehe §11) — Default-Vorschlag: behalten, weil compose-Refactor zusaetzlicher Diff ist und der Tag-Name nicht load-bearing.
+### 11.2 Migrations
 
-### 10.2 Migrations
+`apps/knowledge/scripts/migrate.ts` 1:1 wie `apps/server/scripts/migrate.ts`. Dediziertes `mcp-knowledge2-migrate` compose-service mit `restart: "no"` der einmal laeuft.
 
-`apps/knowledge/scripts/migrate.ts` 1:1 nach Pattern `apps/server/scripts/migrate.ts`. Drizzle-folder ist `apps/knowledge/migrations/`. Aufruf: `npx tsx scripts/migrate.ts` im Container, vor dem Hono-Start. Compose-File-Trick: wir machen das via `setup.sh`-on-first-boot ODER via `dockerize -wait` mit conditional `init`-step. Vorschlag: ein dediziertes `mcp-knowledge2-migrate` compose-service mit `restart: "no"` der das einmal laufen laesst und exited.
+### 11.3 Compose-Service-Wiring
 
-### 10.3 Compose-Service-Wiring
+Aenderungen an `deploy/hetzner/docker-compose.yml` Z.143-173:
+- `environment`: Vertex-Vars umbenennen `VERTEX_REGION` → `VERTEX_AI_REGION`, `VERTEX_PROJECT_ID` → `VERTEX_AI_PROJECT_ID`, `BACKUP_MASTER_KEY` → `KNOWLEDGE_BACKUP_MASTER_KEY_BASE64` (H2).
+- Neu hinzufuegen: `S3_*` (5 Vars), `VAULT_ADDR`, `VAULT_TOKEN`, `VAULT_TRANSIT_KEY`, `GOOGLE_APPLICATION_CREDENTIALS`, `ORIGIN`.
+- `volumes`: mount `vertex-sa.json:ro` shared.
+- `depends_on`: postgres (healthy) + openbao (started) + mcp-approval2 (started) — mcp-approval2 `waitForApprovalJwks()` interner Boot-Preflight gleicht den weichen `service_started` aus.
 
-Aenderungen an `deploy/hetzner/docker-compose.yml` Zeile 143-173 — neuer environment-Block mit den §4.2 zod-Schema-Namen, alle Pflicht-Vars + Defaults wo sinnvoll. `volumes` mount `vertex-sa.json:ro` (shared). `depends_on`: postgres (healthy) + openbao (started) + mcp-approval2 (started). HEALTHCHECK `wget http://localhost:8788/health`. Watchtower-Label setzen. `postgres-init.sql` erweitern um `CREATE DATABASE knowledge2;` + `CREATE EXTENSION vector;` in beiden DBs.
+**postgres-init.sql:** schon angepasst (Bestand: `CREATE DATABASE knowledge2;` Z.11 + `CREATE EXTENSION vector;` Z.19+24 in beiden DBs). **Bullet aus v1-Plan §10.3 gestrichen** (M1).
 
-### 10.4 Doppler-Placeholder-Liste
+### 11.4 Doppler-Placeholder
 
 Anzuhaengen in `terraform/modules/doppler-setup/main.tf` (alle mit `ignore_changes = [value]`):
 
@@ -421,132 +575,153 @@ Anzuhaengen in `terraform/modules/doppler-setup/main.tf` (alle mit `ignore_chang
 S3_ENDPOINT             (Default: https://fsn1.your-objectstorage.com)
 S3_REGION               (Default: fsn1)
 S3_BUCKET               (Default: mcp-knowledge2-eu)
-S3_ACCESS_KEY_ID        (User traegt manuell ein)
-S3_SECRET_ACCESS_KEY    (User traegt manuell ein)
+S3_ACCESS_KEY_ID        (User manuell)
+S3_SECRET_ACCESS_KEY    (User manuell)
 S3_FORCE_PATH_STYLE     (Default: true)
 KNOWLEDGE_TAG           (Default: latest)
 ```
 
-`KNOWLEDGE_BACKUP_MASTER_KEY_BASE64`, `VAULT_TOKEN`, `VERTEX_AI_*`, `MCP_APPROVAL_INTERNAL_TOKEN`, `POSTGRES_PASSWORD` sind alle schon vorhanden.
+`KNOWLEDGE_BACKUP_MASTER_KEY_BASE64`, `VAULT_TOKEN`, `VERTEX_AI_*`, `MCP_APPROVAL_INTERNAL_TOKEN`, `POSTGRES_PASSWORD` schon vorhanden.
 
-### 10.5 Caddyfile
+### 11.5 Caddyfile
 
-Add new vhost in `deploy/hetzner/Caddyfile.tpl`:
 ```
 {$DOMAIN_KNOWLEDGE} {
   reverse_proxy mcp-knowledge2:8788
 }
 ```
 
-Doppler-Var `DOMAIN_KNOWLEDGE` (Default `knowledge2.ai-toolhub.org`) existiert bereits. Cloudflare-DNS-Record terraformed in `terraform/modules/cloudflare-dns/`.
+Doppler-Var `DOMAIN_KNOWLEDGE` (Default `knowledge2.ai-toolhub.org`) existiert.
 
 ---
 
-## 11. Risiken + Offene Fragen
+## 12. Risiken + Offene Fragen
 
-### 11.1 Risiken
+### 12.1 Risiken
 
 | Risiko | Wahrscheinlichkeit | Mitigation |
 |---|---|---|
-| pgvector hnsw-Index ist viel groesser als geplant (Pilot 100 GB+ blow-up bei vielen embeds) | niedrig (Pilot Single-User, ~1k objects realistisch) | Index-Tuning `m=8, ef_construction=32`; falls weiter problematisch: IVFFlat statt HNSW |
-| Vertex `text-embedding-005` Daily-Quota fuer Free-Tier hit (Pilot mehrere User) | mittel | Quota-Hook in `aiAdapter.embed()`, retry-with-backoff; fallback auf cached embed bei Quota-Exhaust |
-| OpenBao Transit-Engine Boot-Race mit mcp-knowledge2 (Compose `depends_on: service_started` reicht nicht, openbao braucht erst manuelle init) | hoch | Boot-Preflight `waitForVault()` analog `waitForDb()` aus `apps/server/src/index.ts`, mit 60s-Budget |
-| JWKS-Pull schlaegt fehl wenn mcp-approval2 noch nicht ready ist | mittel | `jose.createRemoteJWKSet` cached + retried automatisch; falls 503 beim ersten Request: client-side retry mit 5s-delay |
-| Hetzner Object Storage Latenz schlechter als R2 (multi-region-Edge fehlt) | mittel | wir sind eh single-region (fsn1) + Hetzner-VM ist auch in fsn1. p95 sollte <50ms sein. Falls problematisch: CDN-Layer via Cloudflare vor S3-Bucket (lesen-only). |
-| `idempotency_keys`-PG-Tabelle wird hot (jede mutation schreibt) | niedrig | Index auf `(key)` + scheduled cleanup-job (`pg-boss` hourly delete-where-expired). Heutiges CF-KV ist ohnehin nicht atomic mit der eigentlichen Mutation — PG ist semantisch sauberer. |
-| Cross-Service-Contract-Drift bei Schema-Aenderungen in mcp-knowledge2 | mittel | Vitest-Suite `apps/knowledge/tests/contract.test.ts` snapshots der OpenAPI-Shape. CI bricht bei unintended-diff. |
-| Migration der CF Worker-AI 1024-dim Vectors waere Datenverlust (kein Re-embed-Tool) | niedrig (Pilot leer) | nicht migrieren; v2 startet leer. Falls doch noetig: einmaliger `re-embed.ts`-Skript der alle objects neu durch Vertex jagt. |
-| Adapter-Coupling (Verlockung `import` quer-rein im Monorepo) | hoch | ESLint `no-restricted-paths`: `apps/server/**` darf nicht aus `apps/knowledge/**` importieren und vice versa. Kommunikation MUSS HTTP-Adapter. |
+| pgvector hnsw-Index blow-up bei vielen embeds | niedrig (Pilot ~1k objects) | Index-Tuning `m=8`; IVFFlat als Fallback |
+| Vertex Free-Tier-Quota hit | mittel | Quota-Hook + retry-backoff; cached embed bei Quota-Exhaust |
+| OpenBao Boot-Race | hoch | `waitForVault()` 60s-Budget |
+| **JWKS-Pull-Race bei Cold-Boot** (M3) | mittel | **`waitForApprovalJwks()`-Preflight, §8.1** |
+| Hetzner Object Storage Latenz schlechter als R2 | mittel | single-region (fsn1, gleicher VM-Standort), p95 <50ms erwartet |
+| `idempotency_keys`-PG-Tabelle hot | niedrig | Index auf `(key)` + hourly cleanup |
+| Cross-Service-Contract-Drift bei Schema-Aenderungen | mittel | `apps/knowledge/tests/contract.test.ts` snapshots OpenAPI |
+| Migration der CF Worker-AI 1024-dim Vectors | niedrig (Pilot leer) | nicht migrieren; v2 startet leer |
+| Adapter-Coupling (Direct-Import quer-rein) | hoch | ESLint `no-restricted-paths`; optional `dependency-cruiser`-Check |
+| **refs/tags-Migration in mcp-approval2 verzoegert** (C2-Follow-Up) | mittel | `meta.resource_ids` als read-fallback fuer 1 Sprint, dann hart entfernen |
 
-### 11.2 Offene Fragen — User-Entscheidung erforderlich
+### 12.2 Offene Fragen — User-Entscheidung
 
-**Q1: Image-Tag-Naming.** Behalten wir `ghcr.io/axel-rogg/mcp-knowledge2` (heute schon im compose) oder umbenennen auf `ghcr.io/axel-rogg/mcp-approval2-knowledge` (semantisch sauberer im Monorepo-Kontext)?
-**Default-Vorschlag:** behalten.
-
-**Q2: Crypto-Reuse mit `@mcp-approval2/core`?** Der CF-Worker hat eigene Crypto-Module in `src/crypto/`. mcp-approval2/core hat ebenfalls Crypto-Primitives. Wir koennen die der mcp-approval2/core 1:1 reusen ODER bewusst fork-en damit die Service-Boundary auch Crypto-Boundary ist.
-**Default-Vorschlag:** Reuse von `@mcp-approval2/core/crypto`. Die AAD-Convention ist semantisch identisch (`<recordType>|<id>|<kind>:<subtype>`).
-
-**Q3: Embedding-Dimension 768 oder 1024?** Vertex `text-embedding-005` ist 768. Optionale Vertex `text-multilingual-embedding-002` ist auch 768. Wenn wir spaeter bge-m3 ueber `@xenova/transformers` als zweiten Adapter wollen (1024-dim) waere `vector(1536)`-Spalte oversize-Investment.
-**Default-Vorschlag:** `vector(768)`. Wechsel ist Schema-Migration ohne Data-Loss-Risiko (Pilot leer).
-
-**Q4: Idempotency-Layer in PG oder Redis?** PG ist einfach (kein neuer Container). Redis ist schneller (TTL native). Single-User-Pilot — PG reicht.
-**Default-Vorschlag:** PG.
-
-**Q5: Cron-Engine?** `node-cron` im selben Hono-Prozess (einfach, kein Service-Container) ODER `pg-boss` (separater Worker-Container, robust gegen App-Restarts).
-**Default-Vorschlag:** Phase 1 `node-cron` in-process, Phase 3 Migration auf `pg-boss` wenn Job-Vielfalt waechst.
-
-**Q6: Uploads-Pre-Signed-Layer.** Hetzner Object Storage unterstuetzt presigned-PUT (S3v4). Kein Custom-HMAC-Layer mehr noetig wie im CF-Worker. Default-Vorschlag: Drop des HMAC-Pfads, Vorab-Sign mit `@aws-sdk/s3-request-presigner`.
-
-**Q7: Sharing-Layer.** Aktueller CF-Worker hat KEINE Shares-Tabelle (single-user). v2 muss Shares fuer Multi-User-Story bauen — Decision dazu in mcp-approval2 PLAN-architecture-v1 §2.1 schon getroffen. Schema folgt aus dem Knowledge-Adapter-Interface (CreateShareArgs etc.).
-**Status:** keine offene Frage, schon entschieden. Erwaehnt fuer Tracking.
-
-**Q8: TF-State-Backend.** Bleibt R2 (Doppler `R2_ENDPOINT`)? Oder Migration auf Hetzner Object Storage (gleicher Bucket-Provider wie App)?
-**Default-Vorschlag:** TF-State bei R2 belassen — CLAUDE.md §"Infrastructure-Policy" sagt explizit "TF-State darf bei R2 bleiben". Keine Aenderung.
+| Q | Frage | Default-Vorschlag |
+|---|---|---|
+| Q1 | Image-Tag-Naming | behalten (`ghcr.io/axel-rogg/mcp-knowledge2`) |
+| Q2 | Crypto-Reuse mit `@mcp-approval2/core`? | **Reuse + lokales AAD-Modul** (§6, gewaehlt B) |
+| Q3 | Embedding-Dim 768 oder 1024? | **768** (Vertex `text-embedding-005`) |
+| Q4 | Idempotency PG oder Redis? | **PG** (kein zusaetzlicher Container) |
+| Q5 | Cron-Engine? | **`node-cron` Phase 1**, `pg-boss` Phase 3 wenn Job-Vielfalt waechst |
+| Q6 | Uploads HMAC oder presigned-PUT? | **`@aws-sdk/s3-request-presigner`** (Drop Custom-HMAC) |
+| Q7 | Sharing-Layer | schon entschieden (PLAN-architecture-v1 §2.1) |
+| Q8 | TF-State-Backend bei R2 belassen? | **ja** (CLAUDE.md Infrastructure-Policy explizit) |
+| Q9 | KEK-Ref-Form Multi-User-Future | **Pilot global `knowledge2`, Cutover-Pfad §5.3** |
+| Q10 | refs/tags native vs. meta-only | **native (§4.2 Option A)** |
 
 ---
 
-## 12. Implementation-Sequenz
+## 13. Implementation-Sequenz
 
-**Schaetzung Vollzeit-Stunden:** Single-Engineer (Axel), 6-7 Wochen Wall-Time bei 30h/Woche fokussiert + Cross-Repo-Sync gegen mcp-approval2.
+**Schaetzung Vollzeit-Stunden:** Single-Engineer (Axel), 6-7 Wochen Wall-Time bei 30h/Woche fokussiert. Mit den Klarstellungen aus v2: +4-6h fuer native refs/tags (§4.2), +2h fuer waitForApprovalJwks + Preflight-Test (§8.1), +1h fuer Vertex-Env-Rename (§7.2), +2h fuer lokales AAD-Modul + Snapshot-Test (§6). Netto-Mehraufwand ~10h gegenueber v1-Plan.
 
 ### Phase 0 — Setup (4-6 h)
-- `apps/knowledge/`-Skeleton im Monorepo: package.json, tsconfig.json (extends `tsconfig.base.json`), vitest.config.ts, biome.json-include
-- `npm install -w @mcp-approval2/knowledge` ergaenzt Workspace
+- `apps/knowledge/`-Skeleton, package.json, tsconfig, vitest, biome.json
+- `npm install -w @mcp-approval2/knowledge`
 - ESLint `no-restricted-paths` zwischen `apps/server/**` und `apps/knowledge/**`
-- Smoke `npm run typecheck` muss durchlaufen mit leerem `src/index.ts`-Stub
+- Smoke `npm run typecheck` mit leerem `src/index.ts`-Stub
+- Review-Brief abgelegt in `docs/reviews/` (Audit-Trail)
 
-### Phase 1 — DB + Migrations + Adapter-Wiring (10-14 h)
-- Drizzle-Schema fuer objects + object_refs + object_tags + object_revisions + uploads + idempotency_keys + audit_log
+### Phase 1 — DB + Migrations + Adapter-Wiring (12-16 h)
+- Drizzle-Schema: objects + object_refs + object_tags + object_revisions + uploads + idempotency_keys + audit_log
 - `migrations/0001_objects.sql` (Postgres-Variant inkl. pgvector + tsvector)
-- `scripts/migrate.ts` + `scripts/health-check.ts` 1:1 wie apps/server
-- `src/lib/config.ts` (zod) + `src/lib/db.ts` (createDbAdapter)
-- `src/app-factory.ts` mit `createApp({config, db, blob, kek, ai})`-Signature
-- `src/index.ts` mit `translateBootEnv()` + `waitForDb()` + `waitForVault()` Pattern
-- Compose-Postgres-Init erweitern auf `CREATE DATABASE knowledge2;` + `CREATE EXTENSION vector;`
+- `migrations/0002_refs_tags.sql` (§4.2 — native Routes-Backing)
+- `migrations/0003_uploads_idem.sql`
+- `scripts/migrate.ts` + `scripts/health-check.ts`
+- `src/lib/config.ts` (zod) + `src/lib/db.ts` (createDbAdapter) + `src/lib/aad.ts` (§6)
+- `src/app-factory.ts` mit `createApp({config, db, blob, kek, ai})`
+- `src/index.ts` mit `translateBootEnv()` + `waitForDb()` + `waitForVault()` + `waitForApprovalJwks()` (§8.1)
+- Compose-Update Vertex-Vars-Rename + S3-Vars + VAULT-Vars
 
 ### Phase 2 — Auth + Health (4-6 h)
-- `src/auth/jwks.ts` + `src/auth/jwt.ts` (port aus mcp-knowledge/src/auth/jwt.ts + jose.createRemoteJWKSet)
-- `src/auth/bearer.ts` (service-token check, timingSafeEqual)
+- `src/auth/jwks.ts` (port + `jose.createRemoteJWKSet`)
+- `src/auth/jwt.ts` + `src/auth/bearer.ts` (timingSafeEqual)
 - `src/routes/health.ts` (GET /health, /version, /.well-known/health)
-- Vitest fuer JWT-Validation gegen Stub-JWKS
+- Port `jwt-signing.ts`-Stub-Generator fuer Test-Fixtures (M5)
+- Vitest: JWT-Validation gegen Stub-JWKS + `waitForApprovalJwks`-retry-loop-test
 
 ### Phase 3 — Objects-API + REST-Routes (16-20 h)
-- Port `src/objects/api.ts` (CRUD + refs + tags + revisions) — D1→Drizzle, R2→BlobAdapter, eingebauter `KekProvider.wrap`/`unwrap`-Aufruf bei Encrypt/Decrypt
-- Port `src/uploads/api.ts` — Hetzner-S3-presigned-PUT statt CF-HMAC
-- REST-Handler `src/routes/objects.ts`, `src/routes/shares.ts`, `src/routes/uploads.ts`, `src/routes/internal.ts`
-- Idempotency-Middleware (PG-backed) — port aus `src/middleware/idempotency.ts`
-- Vitest-Suite: createObject, getObject(expand=body), updateObject (CAS), deleteObject, refs, tags, share-CRUD, eraseUser (Service-Token)
-- Contract-Test gegen das `HttpKnowledgeAdapter` aus `packages/adapters` (in-process spinup von beiden)
+- Port `src/objects/api.ts` (CRUD + revisions) — D1→Drizzle, R2→BlobAdapter, KekProvider-Wrapper
+- Native `src/refs/api.ts` + `src/tags/api.ts` (§4.2)
+- Port `src/uploads/api.ts` — Hetzner-S3-presigned-PUT (`@aws-sdk/s3-request-presigner`)
+- REST-Handler: `src/routes/{objects,refs,tags,shares,uploads,internal}.ts`
+- Idempotency-Middleware (PG-backed)
+- Vitest-Suite: CRUD + refs + tags + share-CRUD + eraseUser (Service-Token) + Bulk-Delete + CAS-Conflict
+- Contract-Test gegen `HttpKnowledgeAdapter` (in-process spinup beider Services)
 
 ### Phase 4 — Search + Embeddings (8-12 h)
 - `src/embed/vertex.ts` — wrapper um `aiAdapter.embed()` mit PII-mask + 8k-char-Limit
-- `src/search/hybrid.ts` — RRF-Fusion-Query
-- `src/routes/search.ts`
-- Vitest: hybrid-search relevance-smoke (kleines Sample mit ground-truth)
+- `src/search/hybrid.ts` — RRF-Fusion-Query, multi-kind (§4.3)
+- `src/routes/search.ts` — zod-Schema `kinds: ObjectKind[]`
+- Vitest: hybrid-search relevance-smoke + multi-kind smoke
 
 ### Phase 5 — MCP-Adapter + Tool-Surface (16-20 h)
-- Port `src/mcp/registry.ts` + `src/routes/mcp.ts` + Side-Effect-Imports
-- Pro Tool-Familie ein Subagent-Slice: `mcp/tools/{docs,skills,memorize,apps,objects,search,quality}` (60+ Tools total)
-- `apps/blocks/*` (22 blocks) trivial port — reine Schema-Definitions
+- Port `src/mcp/registry.ts` + `src/routes/mcp.ts`
+- Per-Familie Tool-Slices: docs, skills, memorize, apps, objects, search, quality (60+ Tools)
+- Rename `'app_state'` → `'app'` in 17 apps-Tools (§4.1)
+- `apps/blocks/*` (22 blocks) trivial port
 - Vitest: tools/list (count + shape), tools/call smoke (1 per Familie)
 
 ### Phase 6 — Quality-Gate + Apps-State + Pilot-Smoke (6-10 h)
-- Quality-Gate-Hook: `apps/knowledge/src/quality/{judge,rubric}.ts`
-- Apps-State-Layer (`apps/api.ts`, types_registry, legacy_to_layout)
-- Composable-Apps-Tests aus dem CF-Repo portieren
-- Pilot-Smoke-Skript `scripts/pilot-smoke-knowledge.sh` (Pattern aus `scripts/pilot-smoke.sh`)
+- Quality-Gate: `apps/knowledge/src/quality/{judge,rubric}.ts`
+- Apps-State-Layer (api.ts, types_registry, legacy_to_layout)
+- Composable-Apps-Tests aus CF-Repo portieren
+- Pilot-Smoke `scripts/pilot-smoke-knowledge.sh`
 - Cron in-process (node-cron) fuer uploads-sweep + uploads-purge + weekly-backup
 
 ### Phase 7 — Deploy + Hetzner-Cutover (8-12 h)
-- Dockerfile `apps/knowledge/Dockerfile` + GHCR-build-action
+- Dockerfile + GHCR-build-action
 - Compose-Update + Caddyfile-vhost
-- Doppler-Placeholders (S3_*-Vars)
+- Doppler-Placeholders
 - Terraform: Hetzner-Object-Storage-Bucket + Cloudflare-DNS fuer `knowledge2.ai-toolhub.org`
-- Initial-Deploy: VM SSH, `docker compose pull && up -d`, migrate-job once, smoke
-- Watchtower automatisch picked up das ghcr.io-Image (label `com.centurylinklabs.watchtower.enable: "true"` schon im compose)
+- Initial-Deploy + smoke; Watchtower picked up label
+- Review-Brief Phase 7 → `docs/reviews/`
 
-**Phase 0-6: ~64-88 h Dev. Phase 7: 8-12 h.** Realistisch 5-6 Wochen bei 30h/Woche fokussiert. Bei parallelen Subagent-Slices in Phase 3+5 deutlich schneller.
+**Phase 0-6: ~70-100h Dev. Phase 7: 8-12h.** Realistisch 5-6 Wochen bei 30h/Woche.
 
 ---
 
-**Ende des Plans. Begleitend zu pflegen:** `docs/CROSS-SERVICE-CONTRACT.md` (existiert in mcp-approval2 partiell) — bei Schema-Aenderungen im v2 simultaner Sync mit dem `KnowledgeAdapter`-Interface in `packages/adapters/src/knowledge/types.ts`.
+## 14. Review-Response-Log
+
+| Finding | Entscheidung | Begruendung | Geaenderte Sektion(en) |
+|---|---|---|---|
+| **C1 ObjectKind-Mismatch** | v2 nimmt `'app'` (mcp-approval2-Wire) | `packages/adapters/src/knowledge/types.ts:21` definiert Wire mit `'app'`, PWA-Proxy + Service kennen nur das. v1-DB wird leer (Greenfield) → Rename ist Plain-Text-Find-Replace, kein Migration-Cost. | §3 Port-Inventur, §4.1 (komplett neu), §9.1 |
+| **C2 refs+tags-Modell** | Option A: native Tabellen + HTTP-Routes | Heutiger `meta.resource_ids`-Workaround ist O(n)-Scan + race-prone, native gibt atomic-attach + Sub-Doc-Annotation gratis. 4-6h Mehraufwand fuer ~120 LOC Reduction in mcp-approval2 nach Cutover. | §3 Port-Inventur, §4.2 (komplett neu), §9.1, §10.2 (D-13/14/15) |
+| **H1 AAD-RecordTypes-Drift** | Option B: knowledge2-lokales AAD-Modul | core/aad.ts kennt nur 5 RecordTypes; v1 nutzt 4 spezielle (`objects`, `objects-desc`, `objects-produced-for`, `objects-quality`). Lokales Modul vermeidet Cross-Service-Test-Bruch + service-boundary Crypto-konsistent. | §6 (komplett neu), §3 Package-Struktur |
+| **H2 Vertex-Region-Drift** | Kanonisches `VERTEX_AI_*`-Naming durchziehen | Compose Z.155-156 nutzt heute `VERTEX_REGION`/`VERTEX_PROJECT_ID`; mcp-approval2 nutzt `VERTEX_AI_*`. zod-default greift heute aus Glueck, kein Vertrag. BC-Alias 1 Sprint, dann hart entfernen. | §7.1, §7.2 (neu), §11.3 |
+| **H3 KEK-Ref-Form Multi-User-Future** | Pilot global `knowledge2`, dokumentierter Migrations-Pfad zu `knowledge2-user-<userId>` | Single-tenant ok, Service-Boundary ist Trust-Linie. Re-Wrap-Loop ist 4-6h Phase 3+ ohne Datenverlust. | §5.3 (neu), §12.2 Q9 |
+| **H4 D-9 Multi-Kind-Search** | Server-side `kinds: ObjectKind[]` zod-akzeptiert | Greenfield-Recht; HttpKnowledgeAdapter sendet bereits forward-compat. RRF per-kind, dann fusion. | §4.3 (neu), §9.1 |
+| **H5 pgvector-Konsistenz-Modell** | Explizit dokumentiert: strong-consistent, kein D1-Mirror, +5-15ms Insert-Latenz | v1 hatte D1-Mirror wegen Vectorize-Eventual-Consistency; pgvector ist synchron. Konsistenz-Bonus muss in v2-Doku stehen sonst denkt ein Subagent man muss beides parallel halten. Cross-link zu `feedback_vectorize_eventual_consistency`. | §5.1 (neu) |
+| **M1 postgres-init.sql** | Bullet gestrichen | Verifiziert: `deploy/hetzner/postgres-init.sql:11+19+24` createt schon DB + Extension. | §11.3 (Verweis "schon erledigt"), Phase 1 ohne Bullet |
+| **M3 JWKS-Pull-Race** | `waitForApprovalJwks()`-Preflight analog `waitForDb()` | `createRemoteJWKSet` retried pro Request, aber erster Cold-Boot-Request kommt mit 503. 30s-Budget + 2s-Backoff aligned mit `waitForDb`. | §8.1 (neu), §12.1 Risiko, Phase 2 Bullet |
+
+**Nicht-adressiert (Low-Severity, Reviewer-LOW + nicht-blocking):**
+- L1 `KNOWLEDGE_TAG` default `latest` — nit, compose-Bestand. Keine Aenderung.
+- L2 Estimate-Cross-Reference auf v1-Phasen-Bursts — Bullet im Sequenz-Header (§13).
+- L3 ESLint vs `dependency-cruiser` — ESLint einfacher, beibehalten.
+- L4 Vertex-DPA-Pruefung — Operations-Task, dem User vor Phase 7 zu confirmen. Nicht im Plan-Scope.
+- M2 Token-Rotation-Cadence — §7.3 ergaenzt.
+- M4 docs/reviews/-Dir — Phase 0 + Phase 7 Bullets in §13.
+- M5 jwt-signing-Stub-Generator — Phase 2 Bullet in §13.
+
+---
+
+**Ende des Plans v2.** Begleitend zu pflegen: `docs/CROSS-SERVICE-CONTRACT-RESOLUTION.md` (D-13/14/15 nachreichen sobald native refs/tags-Routes live).
