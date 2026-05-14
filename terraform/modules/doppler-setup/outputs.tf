@@ -8,11 +8,6 @@ output "config_privat" {
   description = "Slug des Privat-Config (= Environment-Slug)."
 }
 
-output "config_business" {
-  value       = doppler_environment.business.slug
-  description = "Slug des Business-Config (GCP, later)."
-}
-
 output "config_dev" {
   value       = doppler_environment.dev.slug
   description = "Slug des Dev-Config."
@@ -36,6 +31,6 @@ output "doppler_dashboard_url" {
 }
 
 output "placeholder_count" {
-  value       = 30
+  value       = 31
   description = "Anzahl der angelegten Secret-Placeholders (User muss Werte in Doppler-UI eintragen)."
 }

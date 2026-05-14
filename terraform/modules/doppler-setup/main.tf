@@ -34,14 +34,11 @@ resource "doppler_environment" "dev" {
 resource "doppler_environment" "privat" {
   project = doppler_project.mcp_approval2.name
   slug    = "privat"
-  name    = "Privat (Hetzner)"
+  name    = "Privat Hetzner"
 }
 
-resource "doppler_environment" "business" {
-  project = doppler_project.mcp_approval2.name
-  slug    = "business"
-  name    = "Business (GCP - later)"
-}
+# business-Environment entfernt — Credentials werden NICHT in Doppler gespeichert
+# (User-Decision 2026-05-14). Wenn GCP-Phase startet: separater Workflow.
 
 # ---------------------------------------------------------------------------
 # Secret-Placeholders im "privat"-Config
@@ -392,6 +389,21 @@ resource "doppler_secret" "placeholder_allowed_origins" {
   project = doppler_project.mcp_approval2.name
   config  = doppler_environment.privat.slug
   name    = "ALLOWED_ORIGINS"
+  value   = ""
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+# ALLOWED_EMAILS: Whitelist von Google-OAuth-Login-Berechtigten.
+# Server lehnt OAuth-Callbacks von nicht-gelisteten Emails ab (defense-in-depth
+# zur Google-OAuth-Test-Users-Liste in der GCP-Console).
+# Format: CSV (axelrogg@gmail.com,user2@gmail.com)
+resource "doppler_secret" "placeholder_allowed_emails" {
+  project = doppler_project.mcp_approval2.name
+  config  = doppler_environment.privat.slug
+  name    = "ALLOWED_EMAILS"
   value   = ""
 
   lifecycle {

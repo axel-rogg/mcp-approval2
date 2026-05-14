@@ -2,18 +2,21 @@
 
 variable "hcloud_token" {
   type        = string
-  description = "Hetzner Cloud API token (project-scoped). Source from password manager."
+  default     = ""
+  description = "Hetzner Cloud API token. Optional bei Doppler-only apply — wird später via Doppler."
   sensitive   = true
 }
 
 variable "operator_ssh_public_key" {
   type        = string
-  description = "Operator SSH public key (OpenSSH single-line, e.g. 'ssh-ed25519 AAAA... operator@laptop')."
+  default     = ""
+  description = "Operator SSH public key. Optional bei Doppler-only apply."
 }
 
 variable "cloudflare_zone_id" {
   type        = string
-  description = "Cloudflare zone ID for ai-toolhub.org (32-char hex). Look up with: curl -s 'https://api.cloudflare.com/client/v4/zones?name=ai-toolhub.org' -H \"Authorization: Bearer $CLOUDFLARE_API_TOKEN\" | jq -r '.result[0].id'"
+  default     = ""
+  description = "Cloudflare zone ID. Optional bei Doppler-only apply."
 }
 
 # --- Tunables with sensible defaults ----------------------------------------
@@ -72,31 +75,36 @@ variable "domain_app" {
 variable "cloudflare_api_token" {
   type        = string
   sensitive   = true
-  description = "Cloudflare API token (used by github-repo module to seed CLOUDFLARE_API_TOKEN secret for GH workflows)."
+  default     = ""
+  description = "Cloudflare API token. Optional now — kommt via Doppler-Sync nach Setup."
 }
 
 variable "r2_access_key_id" {
   type        = string
   sensitive   = true
-  description = "R2 S3-compatible access key ID, surfaced to GH workflows."
+  default     = ""
+  description = "R2 access key. Optional now — kommt via Doppler-Sync."
 }
 
 variable "r2_secret_access_key" {
   type        = string
   sensitive   = true
-  description = "R2 S3-compatible secret access key, surfaced to GH workflows."
+  default     = ""
+  description = "R2 secret key. Optional now — kommt via Doppler-Sync."
 }
 
 variable "hetzner_deploy_ssh_private_key" {
   type        = string
   sensitive   = true
-  description = "Separate SSH private key for GH-Actions auto-deploy (NOT the operator key — see runbook-github-terraform.md)."
+  default     = ""
+  description = "GH-Actions deploy-SSH-key. Optional now — kommt via Doppler-Sync."
 }
 
 variable "mcp_approval_internal_token" {
   type        = string
   sensitive   = true
-  description = "Internal service-token shared with the VM .env. Generate via: openssl rand -hex 32"
+  default     = ""
+  description = "Internal service-token. Optional now — kommt via Doppler-Sync."
 }
 
 variable "ghcr_token" {

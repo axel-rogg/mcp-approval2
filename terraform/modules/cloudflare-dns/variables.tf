@@ -15,8 +15,7 @@ variable "target_ipv4" {
 
 variable "target_ipv6" {
   type        = string
-  default     = ""
-  description = "Optional public IPv6. Empty string disables AAAA records."
+  description = "Public IPv6 for AAAA records. Hetzner servers always have IPv6 enabled by default."
 }
 
 variable "domain_mcp" {

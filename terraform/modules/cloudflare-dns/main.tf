@@ -75,7 +75,6 @@ resource "cloudflare_dns_record" "mcp" {
 }
 
 resource "cloudflare_dns_record" "mcp_v6" {
-  count      = var.target_ipv6 != "" ? 1 : 0
   depends_on = [terraform_data.validate_domains]
 
   zone_id = var.zone_id
@@ -102,7 +101,6 @@ resource "cloudflare_dns_record" "knowledge" {
 }
 
 resource "cloudflare_dns_record" "knowledge_v6" {
-  count      = var.target_ipv6 != "" ? 1 : 0
   depends_on = [terraform_data.validate_domains]
 
   zone_id = var.zone_id
@@ -129,7 +127,6 @@ resource "cloudflare_dns_record" "app" {
 }
 
 resource "cloudflare_dns_record" "app_v6" {
-  count      = var.target_ipv6 != "" ? 1 : 0
   depends_on = [terraform_data.validate_domains]
 
   zone_id = var.zone_id
