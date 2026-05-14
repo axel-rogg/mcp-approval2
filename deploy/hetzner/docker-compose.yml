@@ -85,11 +85,21 @@ services:
       # HETZNER_FQDN_V4 fuer Coop-Bypass. Server parsed das in
       # apps/server/src/lib/config.ts. Siehe runbook-coop-bypass.md.
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
-      # ── JWT RS256 (signing) ─────────────────────────────────
+      # ── JWT RS256 (RS-signed Knowledge-Bridge + JWKS) ───────
       JWT_RS256_PRIVATE_KEY_PEM: ${JWT_RS256_PRIVATE_KEY_PEM}
       JWT_RS256_PUBLIC_KEY_PEM: ${JWT_RS256_PUBLIC_KEY_PEM}
       JWT_KID: ${JWT_KID}
       JWT_ISSUER: mcp-approval2
+      # ── JWT HS256 (Sessions, OAuth-access-tokens, /internal/credentials) ──
+      # 32-byte hex random. Required by zod schema (config.ts:22). Used by
+      # auth/session/issuer.ts, mcp/oauth/token.ts, routes/internal/credentials.ts.
+      JWT_SECRET: ${JWT_SECRET}
+      # ── KEK / Credential-Encryption (LocalKekProvider fallback) ───────────
+      # Until the OpenBao boot-path is wired through @mcp-approval2/adapters
+      # (see index.ts:69-77), MASTER_KEY_BASE64 is the credential KEK source.
+      # 32 raw bytes, base64-encoded. Required for /v1/credentials/*, GDPR
+      # routes, and /internal/v1/dek/*.
+      MASTER_KEY_BASE64: ${MASTER_KEY_BASE64}
       # ── Internal Service Token (Sub-MCP ↔ Approval) ─────────
       MCP_APPROVAL_INTERNAL_TOKEN: ${MCP_APPROVAL_INTERNAL_TOKEN}
       # ── KC2 (intra-network) ─────────────────────────────────

@@ -71,6 +71,18 @@ echo "  ✓ JWT_KID"
 doppler secrets set "MCP_APPROVAL_INTERNAL_TOKEN=$(openssl rand -hex 32)" -p "$PROJECT" -c "$CONFIG" --silent
 echo "  ✓ MCP_APPROVAL_INTERNAL_TOKEN"
 
+# JWT_SECRET: HS256-Schluessel fuer Sessions + OAuth-access-tokens.
+# config.ts:22 verlangt min 32 chars. 32-byte hex = 64 chars.
+doppler secrets set "JWT_SECRET=$(openssl rand -hex 32)" -p "$PROJECT" -c "$CONFIG" --silent
+echo "  ✓ JWT_SECRET"
+
+# MASTER_KEY_BASE64: KEK fuer Credential-Encrypt (LocalKekProvider).
+# 32 raw bytes -> base64. Pflicht solang der OpenBao-Pfad nicht durchverdrahtet
+# ist (index.ts:69-77 erwartet entweder MASTER_KEY_BASE64 oder den noch nicht
+# exportierten StaticTokenAuth-Pfad).
+doppler secrets set "MASTER_KEY_BASE64=$(openssl rand 32 | base64 | tr -d '\n')" -p "$PROJECT" -c "$CONFIG" --silent
+echo "  ✓ MASTER_KEY_BASE64"
+
 doppler secrets set "POSTGRES_PASSWORD=$(openssl rand -hex 24)" -p "$PROJECT" -c "$CONFIG" --silent
 echo "  ✓ POSTGRES_PASSWORD"
 

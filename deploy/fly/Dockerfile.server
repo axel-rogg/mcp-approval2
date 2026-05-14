@@ -38,11 +38,14 @@ COPY tsconfig.base.json ./
 COPY packages/core    packages/core
 COPY packages/adapters packages/adapters
 COPY apps/server      apps/server
+COPY apps/web         apps/web
 
-# Build core+adapters first (server depends on them), then the server itself.
+# Build core+adapters first (server depends on them), then the server itself,
+# finally the PWA (vite → apps/web/dist).
 RUN npm run build -w @mcp-approval2/core \
   && npm run build -w @mcp-approval2/adapters \
-  && npm run build -w @mcp-approval2/server
+  && npm run build -w @mcp-approval2/server \
+  && npm run build -w @mcp-approval2/web
 
 # ─── prod-deps ───────────────────────────────────────────────────────────
 # Re-install with --omit=dev so the runtime layer has no tsc/vitest/tsx.
@@ -79,6 +82,12 @@ COPY --from=build --chown=app:app /app/apps/server/package.json apps/server/
 # Migration SQL + bootstrap scripts — needed for `db:migrate` step.
 COPY --from=build --chown=app:app /app/apps/server/migrations apps/server/migrations
 COPY --from=build --chown=app:app /app/apps/server/scripts    apps/server/scripts
+
+# PWA static bundle — served by Hono via serveStatic catch-all (see
+# apps/server/src/app-factory.ts). Caddy proxies ${DOMAIN_APP} to :8787,
+# Hono renders the index.html on every non-API route.
+COPY --from=build --chown=app:app /app/apps/web/dist          apps/web/dist
+COPY --from=build --chown=app:app /app/apps/web/package.json  apps/web/
 
 # Root manifests so npm-workspace symlinks resolve at runtime.
 COPY --chown=app:app package.json ./

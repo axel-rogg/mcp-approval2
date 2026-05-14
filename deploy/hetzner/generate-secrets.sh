@@ -48,6 +48,19 @@ VAULT_TOKEN=set-after-bao-operator-init
 MCP_APPROVAL_INTERNAL_TOKEN=$(openssl rand -hex 32)
 
 # ============================================================================
+# JWT HS256 secret (Sessions, OAuth-access-tokens, /internal/credentials)
+# ============================================================================
+# 32-byte hex (= 64 chars). Required by zod schema (config.ts:22).
+JWT_SECRET=$(openssl rand -hex 32)
+
+# ============================================================================
+# KEK / Credential-Encryption (LocalKekProvider) — 32 bytes, base64
+# ============================================================================
+# Source for `/v1/credentials/*` + GDPR routes + `/internal/v1/dek/*`. Until
+# the OpenBao boot-path is wired (index.ts:69-77), this is the only KEK source.
+MASTER_KEY_BASE64=$(openssl rand 32 | base64 | tr -d '\n')
+
+# ============================================================================
 # mcp-knowledge2 backup master key (base64, 32 bytes)
 # ============================================================================
 KNOWLEDGE_BACKUP_MASTER_KEY_BASE64=$(openssl rand 32 | base64 | tr -d '\n')

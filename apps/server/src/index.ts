@@ -27,11 +27,51 @@ export { createApp } from './app-factory.js';
 export type { CreateAppDeps } from './app-factory.js';
 
 /**
+ * Mappt die Compose-Namen aus deploy/hetzner/docker-compose.yml auf die
+ * zod-Schema-Namen in lib/config.ts. Der CF-Adapter (`cf/app-factory-cf.ts`)
+ * macht dasselbe mit anderen Quellnamen — der Node-Pfad hatte den Shim bisher
+ * nicht, was den Boot crashte (App-Audit 2026-05-14, CRITICAL #1).
+ *
+ * Pflicht-Alias-Quellen:
+ *   - BASE_URL              -> ORIGIN, RP_ORIGIN, (Default fuer GOOGLE_REDIRECT_URI)
+ *   - WEBAUTHN_RP_ID        -> RP_ID
+ *   - GOOGLE_OAUTH_CLIENT_* -> GOOGLE_CLIENT_*
+ *
+ * Aliasing wird nur angewendet wenn der Schema-Name NICHT bereits gesetzt ist,
+ * damit lokale Tests + Dev-Setups (die schon den Schema-Namen nutzen) nicht
+ * gestoert werden.
+ */
+function translateBootEnv(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+): Record<string, string | undefined> {
+  const merged: Record<string, string | undefined> = { ...env };
+  const aliases: Array<[string, string]> = [
+    ['ORIGIN', 'BASE_URL'],
+    ['RP_ORIGIN', 'BASE_URL'],
+    ['RP_ID', 'WEBAUTHN_RP_ID'],
+    ['GOOGLE_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_ID'],
+    ['GOOGLE_CLIENT_SECRET', 'GOOGLE_OAUTH_CLIENT_SECRET'],
+  ];
+  for (const [schemaName, composeName] of aliases) {
+    if (!merged[schemaName] && merged[composeName]) {
+      merged[schemaName] = merged[composeName];
+    }
+  }
+  // GOOGLE_REDIRECT_URI ist im Schema Pflicht (url), wird aber nirgendwo in
+  // compose gesetzt. Konvention: `${BASE_URL}/auth/google/callback`.
+  if (!merged['GOOGLE_REDIRECT_URI'] && merged['BASE_URL']) {
+    merged['GOOGLE_REDIRECT_URI'] =
+      `${merged['BASE_URL'].replace(/\/$/, '')}/auth/google/callback`;
+  }
+  return merged;
+}
+
+/**
  * Baut den geteilten `{config, db}`-Container. Tests koennen einen Stub-Db
  * via `createApp({config, db})` direkt einsetzen, ohne `loadConfig` zu fahren.
  */
 export async function createServerContext(env: NodeJS.ProcessEnv): Promise<ServerContext> {
-  const config: AppConfig = loadConfig(env);
+  const config: AppConfig = loadConfig(translateBootEnv(env));
   const db = await createDbAdapter(config);
   return { config, db };
 }

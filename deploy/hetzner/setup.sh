@@ -85,15 +85,15 @@ bash vault-init.sh || {
 }
 
 # ── Step 7: migrations ────────────────────────────────────────────────
-# These can fail if the container image doesn't ship `scripts/migrate.js` yet.
-# We warn but don't abort — the operator can re-run manually after fixing.
+# Run via `npx tsx` against the .ts source files shipped in scripts/ — tsc
+# does not emit them (tsconfig excludes scripts/). Failure is fatal: an
+# empty schema means the next request crashes silently. Run `docker compose
+# logs mcp-approval2` if this aborts.
 echo "→ Running approval2 migrations..."
-docker compose exec -T mcp-approval2 node scripts/migrate.js || \
-  echo "WARN: mcp-approval2 migration script not found or failed."
+docker compose exec -T mcp-approval2 npx tsx scripts/migrate.ts
 
 echo "→ Running knowledge2 migrations..."
-docker compose exec -T mcp-knowledge2 node scripts/migrate.js || \
-  echo "WARN: mcp-knowledge2 migration script not found or failed."
+docker compose exec -T mcp-knowledge2 npx tsx scripts/migrate.ts
 
 # ── Step 8: healthcheck ───────────────────────────────────────────────
 echo "→ Running healthcheck..."

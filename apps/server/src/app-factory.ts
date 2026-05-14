@@ -26,7 +26,11 @@
  *   - Keine Migration-Runs.
  */
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Hono } from 'hono';
+import { serveStatic } from '@hono/node-server/serve-static';
 import type { MiddlewareHandler } from 'hono';
 import type { BlobAdapter, KekProvider } from '@mcp-approval2/adapters';
 import type { AppBindings, ServerContext } from './lib/context.js';
@@ -504,7 +508,43 @@ export async function createApp(
     );
   }
 
+  // ─── Static PWA catch-all (MUST be last) ─────────────────────────────
+  // Caddy proxies ${DOMAIN_APP} (app2.ai-toolhub.org) to :8787. We serve the
+  // built PWA from apps/web/dist as a SPA — any non-API path falls through to
+  // index.html so the client-side router takes over. API routes registered
+  // above match first (Hono trie-routes /v1/*, /mcp/*, /internal/*, /auth/*).
+  //
+  // Test isolation: skip in NODE_ENV=test — the test-suite asserts that
+  // unmounted routes return 404, which the static catch-all would mask.
+  if (server.config.NODE_ENV !== 'test') {
+    mountPwaIfBuilt(app);
+  }
+
   return app;
+}
+
+function mountPwaIfBuilt(app: Hono<AppBindings>): void {
+  // Dockerfile.server copies the bundle to /app/apps/web/dist; the server
+  // process WORKDIR is /app/apps/server, so the relative path is `../web/dist`.
+  // For ts-node / dev (apps/server/src/), resolve via import.meta.url.
+  const here = fileURLToPath(import.meta.url);
+  const candidates = [
+    resolvePath(here, '../../../web/dist'), // dist build (apps/server/dist/app-factory.js)
+    resolvePath(here, '../../../../web/dist'), // src build (apps/server/src/app-factory.ts)
+    resolvePath(process.cwd(), '../web/dist'),
+    resolvePath(process.cwd(), 'apps/web/dist'),
+  ];
+  const root = candidates.find((p) => existsSync(p));
+  if (!root) {
+    // eslint-disable-next-line no-console
+    console.warn('[mcp-approval2] apps/web/dist not found — PWA catch-all skipped');
+    return;
+  }
+  // Serve assets first (cache-busted file names get long max-age headers from
+  // Caddy). SPA fallback: any unknown path returns index.html so the client
+  // router can resolve it.
+  app.use('/*', serveStatic({ root }));
+  app.get('*', serveStatic({ path: 'index.html', root }));
 }
 
 // ---------------------------------------------------------------------------

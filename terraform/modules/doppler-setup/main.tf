@@ -282,6 +282,28 @@ resource "doppler_secret" "placeholder_vault_token" {
   }
 }
 
+resource "doppler_secret" "placeholder_jwt_secret" {
+  project = doppler_project.mcp_approval2.name
+  config  = doppler_environment.privat.slug
+  name    = "JWT_SECRET"
+  value   = ""
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+resource "doppler_secret" "placeholder_master_key_b64" {
+  project = doppler_project.mcp_approval2.name
+  config  = doppler_environment.privat.slug
+  name    = "MASTER_KEY_BASE64"
+  value   = ""
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
 resource "doppler_secret" "placeholder_jwt_private_pem" {
   project = doppler_project.mcp_approval2.name
   config  = doppler_environment.privat.slug

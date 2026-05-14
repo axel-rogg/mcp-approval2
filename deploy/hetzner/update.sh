@@ -31,13 +31,13 @@ echo "→ Recreating containers..."
 docker compose up -d
 
 # ── Step 5: run any pending migrations ───────────────────────────────
+# `npx tsx scripts/migrate.ts` — tsx now ships in production-deps. Fail-fast:
+# migration errors abort the update so a broken schema doesn't go live.
 echo "→ Running approval2 migrations..."
-docker compose exec -T mcp-approval2 node scripts/migrate.js || \
-  echo "WARN: mcp-approval2 migration script not found or failed."
+docker compose exec -T mcp-approval2 npx tsx scripts/migrate.ts
 
 echo "→ Running knowledge2 migrations..."
-docker compose exec -T mcp-knowledge2 node scripts/migrate.js || \
-  echo "WARN: mcp-knowledge2 migration script not found or failed."
+docker compose exec -T mcp-knowledge2 npx tsx scripts/migrate.ts
 
 # ── Step 6: reload caddy (zero-downtime config reload) ───────────────
 echo "→ Reloading Caddy..."
