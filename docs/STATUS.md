@@ -1,13 +1,81 @@
-# Status: mcp-approval2 Greenfield-Build (2026-05-14, post-Pre-Deploy-Audit)
+# Status: mcp-approval2 Greenfield-Build (2026-05-14, Pilot deployed + powered off)
 
-> Snapshot nach Burst 1+2+3+4+5 + Pre-Deploy-Audit. **Pilot-Production
-> code-side komplett**, Doppler-Single-Source-of-Truth verkabelt,
-> Terraform-Plan clean (19 to add). Bereit fuer Erst-`terraform apply` auf
-> Hetzner CX21. Plan-Ref:
-> [docs/plans/active/PLAN-architecture-v1.md](plans/active/PLAN-architecture-v1.md).
+> Snapshot nach Burst 1+2+3+4+5 + Pre-Deploy-Audit + **Erst-Deploy auf
+> Hetzner**. Pilot-Production hat einmal live gelaufen (3/3 Smoke-Tests
+> gruen, https-Certs ausgestellt), Stack wurde nach Verifikation
+> heruntergefahren + VM ist `off`. Bereit fuer naechste Session
+> (Restart-Recipe in [runbooks/runbook-vm-start-stop.md](runbooks/runbook-vm-start-stop.md)).
+> Plan-Ref: [docs/plans/active/PLAN-architecture-v1.md](plans/active/PLAN-architecture-v1.md).
 > Diese Datei ist die Single-Source-of-Truth fuer "wo stehen wir + was fehlt
 > bis Pilot-Production". Bei Aenderungen: Datum oben bumpen + entsprechende
 > Sektion editieren.
+
+## Deploy-Status 2026-05-14
+
+**Aktuell:** Stack down, VM powered off (Hetzner berechnet ~50% = ~15 Cent/Tag).
+
+| Komponente | Status | Anmerkung |
+|---|---|---|
+| Terraform-State (R2-Backend EU) | ✅ applied | 19+4 Ressourcen, prevent_destroy auf VM+Volume |
+| Hetzner-VM `privat-mcp` | ⏸ powered-off | id=130957874, ipv4=178.105.120.198, Type cpx22 (4GB RAM) |
+| Cloudflare-DNS (mcp2/knowledge2/app2) | ✅ live | A + AAAA Records |
+| Doppler-Config `privat` | ✅ 32/35 gefuellt | 3 leer: VAULT_TOKEN (gesetzt nach Power-On), VERTEX_* (optional) |
+| GitHub-Repo Settings + Branch-Protection | ✅ applied | inkl. DOPPLER_TOKEN_GHA + hetzner-production env |
+| OpenBao (Vault) | ✅ initialisiert + unsealed | data persistent in Docker-Volume `hetzner_vault-data`, sealed nach Power-On bis manuell unseal |
+| Postgres + pgvector | ✅ healthy | pgdata in `hetzner_pgdata` |
+| mcp-approval2 (App) | ✅ lief healthy + `credentials=on knowledge=on` | Image lokal gebaut weil GHCR-Pull auth-blocked, ghcr.io/axel-rogg/mcp-approval2:latest tag in Docker daemon |
+| Caddy (TLS) | ✅ Let's Encrypt Certs issued | 3 Vhosts: mcp2/app2/coop-bypass |
+| mcp-knowledge2 | ❌ entfernt | Image-Architektur passt nicht (BLOB_*/VERTEX_PROJECT). Greenfield-v2 in Plan-Phase, siehe `plans/PLAN-mcp-knowledge2-v2-architecture.md` |
+| watchtower (auto-update) | ❌ entfernt | Docker-API-Version-Mismatch (Daemon vs Client), nicht-blocking |
+
+**Smoke (live verifiziert vor Shutdown):**
+- `https://mcp2.ai-toolhub.org/health` → 200 ✓
+- `https://app2.ai-toolhub.org/` → 200 (PWA) ✓
+- `https://static.198.120.105.178.clients.your-server.de/health` → 200 (Coop-Bypass) ✓
+
+**Live-Fixes waehrend Erst-Deploy** (alle committed):
+- cloud-init `docker-compose-plugin` failed → Docker official apt repo (`5d279f7` und ad-hoc)
+- OpenBao `disable_mlock` deprecated → entfernt (`5d279f7`)
+- vault-init: bao default-HTTPS gegen TLS-disabled-Listener → `BAO_ADDR=http://...` (`a9adf7e`)
+- vault-init: `/vault/data` root-owned, bao lief als uid 100 → chown vor init (`c20a8be`)
+- Container-Boot: `Cannot find /app/.../adapters/src/index.ts` → conditional exports source/default in packages-package.json + vitest source-condition (`c20a8be`)
+- Hetzner cx21+cpx21 EOL in fsn1 → cpx22 (`26c512d`)
+- Caddyfile bind-mount erzeugte directory → render-config.sh + rmdir vorher (VM-side fix)
+
+## Knowledge2 v2 — Architektur-Plan 2026-05-14
+
+mcp-knowledge2 wurde aus dem aktiven Stack entfernt: das pre-built Image
+erwartete CF-Workers-erbliche Env-Vars (`DATABASE_ADMIN_URL`, `SERVICE_TOKEN`,
+`BLOB_*`, `VERTEX_PROJECT`) — passt nicht zur portable Hetzner+GCP-Zielarchitektur.
+
+Greenfield-Rewrite-Plan: [docs/plans/PLAN-mcp-knowledge2-v2-architecture.md](plans/PLAN-mcp-knowledge2-v2-architecture.md).
+Review-Pass: [docs/reviews/REVIEW-mcp-knowledge2-v2-architecture.md](reviews/REVIEW-mcp-knowledge2-v2-architecture.md).
+
+**Major-Decisions (User-approved 2026-05-14):**
+- Monorepo-Integration als `apps/knowledge/` (shared `@mcp-approval2/adapters`)
+- Hetzner Object Storage (S3-API, `fsn1.your-objectstorage.com`) statt CF R2
+- Vertex AI `text-multilingual-embedding-002` (768-dim) — multilingual fuer DE-Content, nicht das urspruenglich vorgeschlagene `text-embedding-005` (English-only)
+- D1→Postgres+pgvector, Vectorize→pgvector, KV→PG, MASTER_KEY→OpenBao Transit, FTS5→tsvector+GIN
+- ObjectKind `'app'` (match mcp-approval2-Wire `types.ts:21`); v1's `'app_state'` ist Find-Replace im Port
+- Native `object_refs` + `object_tags` Tabellen + 6 HTTP-Routes (loest `meta.resource_ids`-Workaround in mcp-approval2 in Folge-PR)
+- Lokales AAD-Modul `apps/knowledge/src/lib/aad.ts` (4 RecordTypes wie v1), Crypto-Helper aus `@mcp-approval2/core` reused
+- `waitForApprovalJwks()`-Preflight in Bootsequenz
+
+**Status:** Plan v2 ready, **Phase 0 noch nicht gestartet** (User-Pause). 7-Phasen-Implementation, ~80-110h Dev geschaetzt.
+
+## Security-Follow-Ups (Pflicht vor Production)
+
+Diese Token sind **im aktuellen Session-Transcript** exponiert und muessen
+rotiert werden bevor das System produktiv genutzt wird:
+
+| Token | Wo | Rotation |
+|---|---|---|
+| Vault Root-Token `s.DGRR2JbFZneufIjHEQZJFZ1r` | `/opt/mcp-approval2/.vault-init-output.json` (VM, chmod 600) + Doppler `VAULT_TOKEN` | `bao token create -policy=root` → neuer Token, alter via `bao token revoke` |
+| 3 Vault Unseal-Keys | gleiches File | `bao operator rekey -init -key-shares=3 -key-threshold=2`, neue Keys offline, alte vernichten |
+| Doppler Personal-Token (`dp.pt....`) | `.dev.vars` lokal | Dashboard → Profile → Tokens → revoke + new |
+
+Vault-Daten (in `hetzner_vault-data` Volume) bleiben durch Rotation
+unberuehrt — nur Auth-Material wechselt.
 
 ## Pre-Deploy-Audit 2026-05-14
 
