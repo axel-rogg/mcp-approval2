@@ -37,7 +37,7 @@ fi
 
 # Detect if Vault is already initialized. `bao status` exits non-zero when
 # Vault is sealed OR uninitialized; we parse the output instead.
-STATUS=$(docker exec "$VAULT_CONTAINER" bao status -format=json 2>/dev/null || true)
+STATUS=$(docker exec -e BAO_ADDR=http://127.0.0.1:8200 "$VAULT_CONTAINER" bao status -format=json 2>/dev/null || true)
 INITIALIZED=$(echo "$STATUS" | jq -r '.initialized // false' 2>/dev/null || echo "false")
 SEALED=$(echo "$STATUS" | jq -r '.sealed // true' 2>/dev/null || echo "true")
 
@@ -54,7 +54,7 @@ fi
 
 # ─── Step 1: operator init ────────────────────────────────────────────
 echo "→ Initializing Vault (3 unseal keys, threshold 2)..."
-INIT_OUT=$(docker exec "$VAULT_CONTAINER" bao operator init \
+INIT_OUT=$(docker exec -e BAO_ADDR=http://127.0.0.1:8200 "$VAULT_CONTAINER" bao operator init \
   -format=json -key-shares=3 -key-threshold=2)
 
 ROOT_TOKEN=$(echo "$INIT_OUT" | jq -r '.root_token')
@@ -70,18 +70,18 @@ echo "  → BACK THIS FILE UP OFFLINE NOW. Losing it = losing all encrypted data
 
 # ─── Step 2: unseal ───────────────────────────────────────────────────
 echo "→ Unsealing Vault..."
-docker exec "$VAULT_CONTAINER" bao operator unseal "$KEY1" >/dev/null
-docker exec "$VAULT_CONTAINER" bao operator unseal "$KEY2" >/dev/null
+docker exec -e BAO_ADDR=http://127.0.0.1:8200 "$VAULT_CONTAINER" bao operator unseal "$KEY1" >/dev/null
+docker exec -e BAO_ADDR=http://127.0.0.1:8200 "$VAULT_CONTAINER" bao operator unseal "$KEY2" >/dev/null
 
 # ─── Step 3: enable transit engine ────────────────────────────────────
 echo "→ Enabling transit secrets engine..."
-docker exec -e BAO_TOKEN="$ROOT_TOKEN" "$VAULT_CONTAINER" \
+docker exec -e BAO_ADDR=http://127.0.0.1:8200 -e BAO_TOKEN="$ROOT_TOKEN" "$VAULT_CONTAINER" \
   bao secrets enable -path=transit transit || \
   echo "  (transit already enabled, continuing)"
 
 # ─── Step 4: AppRole auth + mcp-approval2 policy ──────────────────────
 echo "→ Writing policy 'mcp-approval2'..."
-docker exec -i -e BAO_TOKEN="$ROOT_TOKEN" "$VAULT_CONTAINER" \
+docker exec -i -e BAO_ADDR=http://127.0.0.1:8200 -e BAO_TOKEN="$ROOT_TOKEN" "$VAULT_CONTAINER" \
   bao policy write mcp-approval2 - <<'POLICY'
 # mcp-approval2 needs full transit access (encrypt/decrypt DEKs).
 path "transit/*" {
@@ -98,22 +98,22 @@ path "auth/token/renew-self" {
 POLICY
 
 echo "→ Enabling AppRole auth method..."
-docker exec -e BAO_TOKEN="$ROOT_TOKEN" "$VAULT_CONTAINER" \
+docker exec -e BAO_ADDR=http://127.0.0.1:8200 -e BAO_TOKEN="$ROOT_TOKEN" "$VAULT_CONTAINER" \
   bao auth enable approle 2>/dev/null || \
   echo "  (approle already enabled, continuing)"
 
 echo "→ Creating AppRole 'mcp-approval2'..."
-docker exec -e BAO_TOKEN="$ROOT_TOKEN" "$VAULT_CONTAINER" \
+docker exec -e BAO_ADDR=http://127.0.0.1:8200 -e BAO_TOKEN="$ROOT_TOKEN" "$VAULT_CONTAINER" \
   bao write auth/approle/role/mcp-approval2 \
     token_policies=mcp-approval2 \
     token_ttl=1h \
     token_max_ttl=4h
 
-ROLE_ID=$(docker exec -e BAO_TOKEN="$ROOT_TOKEN" "$VAULT_CONTAINER" \
+ROLE_ID=$(docker exec -e BAO_ADDR=http://127.0.0.1:8200 -e BAO_TOKEN="$ROOT_TOKEN" "$VAULT_CONTAINER" \
   bao read -format=json auth/approle/role/mcp-approval2/role-id | \
   jq -r '.data.role_id')
 
-SECRET_ID=$(docker exec -e BAO_TOKEN="$ROOT_TOKEN" "$VAULT_CONTAINER" \
+SECRET_ID=$(docker exec -e BAO_ADDR=http://127.0.0.1:8200 -e BAO_TOKEN="$ROOT_TOKEN" "$VAULT_CONTAINER" \
   bao write -format=json -f auth/approle/role/mcp-approval2/secret-id | \
   jq -r '.data.secret_id')
 
