@@ -1,9 +1,11 @@
 # =============================================================================
 # GitHub-repository management for axel-rogg/mcp-approval2.
 #
-# The repo is managed declaratively: settings, branch-protection,
-# `hetzner-production` environment, and all Actions secrets are converged
-# every `terraform apply`.
+# Post-Doppler-migration (2026-05-14):
+#   - Doppler is the Single-Source-of-Truth for ALL workflow secrets.
+#   - The github-repo module only pushes the Doppler bootstrap token
+#     (DOPPLER_TOKEN_GHA + DOPPLER_TOKEN env-mirror); the rest comes via the
+#     Doppler -> GitHub-Actions sync. See terraform/modules/github-repo/README.md.
 #
 # Provider auth: the GitHub provider reads $GITHUB_TOKEN from the environment.
 # Set before running terraform:
@@ -11,7 +13,7 @@
 # =============================================================================
 
 provider "github" {
-  # Reads GITHUB_TOKEN + GITHUB_OWNER from env automatically.
+  # Reads GITHUB_TOKEN from env automatically.
   # Setting `owner` explicitly avoids needing GITHUB_OWNER:
   owner = "axel-rogg"
 }
@@ -25,22 +27,9 @@ module "github" {
   repository_visibility       = "public"
   create_business_environment = false
 
-  # Repository-level secrets
-  cloudflare_api_token    = var.cloudflare_api_token
-  cloudflare_zone_id      = var.cloudflare_zone_id
-  hcloud_token            = var.hcloud_token
-  r2_access_key_id        = var.r2_access_key_id
-  r2_secret_access_key    = var.r2_secret_access_key
-  operator_ssh_public_key = var.operator_ssh_public_key
-
-  # Hetzner-production environment secrets
-  hetzner_deploy_ssh_private_key = var.hetzner_deploy_ssh_private_key
-  hetzner_vm_host                = module.vm.vm_ipv4
-  domain_mcp                     = var.domain_mcp
-  domain_knowledge               = var.domain_knowledge
-  domain_app                     = var.domain_app
-  mcp_approval_internal_token    = var.mcp_approval_internal_token
-  ghcr_token                     = var.ghcr_token
+  # Sole sensitive input: the Doppler service-token. Comes from the
+  # doppler-setup module (sibling output `github_actions_service_token`).
+  doppler_gha_service_token = module.doppler.github_actions_service_token
 }
 
 # --------------------------------------------------------------------------
@@ -49,7 +38,7 @@ module "github" {
 
 output "github_managed_secrets" {
   value       = module.github.managed_secrets
-  description = "Names of GitHub Actions secrets managed by Terraform (values not exposed)."
+  description = "GH-Actions secret NAMES pushed DIRECTLY by Terraform (only the Doppler bootstrap pair). Everything else syncs in via Doppler."
 }
 
 output "github_environment_hetzner_prod" {

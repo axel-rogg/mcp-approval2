@@ -62,6 +62,13 @@ runcmd:
   - systemctl start docker
   - usermod -aG docker deploy
 
+  # ── Doppler CLI (Single-Source-of-Truth for secrets) ────────────────
+  # Installed for everyone (root + deploy) via the /usr/local/bin install
+  # path baked into the upstream install.sh. The deploy user later uses
+  # `scripts/doppler-vm-sync.sh` to pull secrets into the .env file.
+  # See: docs/runbooks/runbook-doppler.md
+  - curl -Ls --tlsv1.2 --proto '=https' --retry 3 https://cli.doppler.com/install.sh | sh
+
   # ── Firewall ────────────────────────────────────────────────────────
   - ufw default deny incoming
   - ufw default allow outgoing
@@ -99,8 +106,16 @@ final_message: |
 
   Next steps (as user 'deploy'):
     ssh deploy@<VM_IP>
+
+    # 1) Drop the Doppler service-token (one-time):
+    #      terraform output -raw doppler_vm_token         # on operator host
+    #    Then on the VM:
+    #      echo 'dp.st.privat.xxx' > /opt/mcp-approval2/.doppler-token
+    #      chmod 600 /opt/mcp-approval2/.doppler-token
+
+    # 2) Run setup — it will fetch the .env from Doppler automatically:
     cd /opt/mcp-approval2/deploy/hetzner
-    bash generate-secrets.sh > .env
-    nano .env                 # set GOOGLE_OAUTH_* + DOMAIN_*
     bash setup.sh
+
+  Full runbook: docs/runbooks/runbook-doppler.md (Phase 6)
   ─────────────────────────────────────────────────────────────────

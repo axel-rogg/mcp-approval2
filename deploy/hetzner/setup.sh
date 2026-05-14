@@ -17,12 +17,30 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-# ── Step 1: sanity checks ─────────────────────────────────────────────
-if [[ ! -f .env ]]; then
-  echo "ERROR: .env missing." >&2
-  echo "       Run: bash generate-secrets.sh > .env" >&2
-  echo "       Then fill in GOOGLE_OAUTH_* and DOMAIN_* before re-running." >&2
-  exit 1
+# ── Step 1: sanity checks + Doppler-driven .env materialisation ──────
+#
+# Preferred path: if /opt/mcp-approval2/.doppler-token exists, pull the .env
+# fresh from Doppler (Single-Source-of-Truth). Otherwise fall back to an
+# existing local .env so emergency operators can still ship without Doppler.
+#
+# REPO_ROOT is two levels up from this script (deploy/hetzner/setup.sh).
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+DOPPLER_TOKEN_FILE="${DOPPLER_TOKEN_FILE:-/opt/mcp-approval2/.doppler-token}"
+
+if [[ -f "$DOPPLER_TOKEN_FILE" ]]; then
+  echo "→ Doppler token-file present — syncing .env from Doppler ..."
+  bash "$REPO_ROOT/scripts/doppler-vm-sync.sh"
+else
+  echo "WARN: $DOPPLER_TOKEN_FILE missing — Doppler-sync skipped."
+  echo "      To enable: terraform output -raw doppler_vm_token"
+  echo "                 echo '<token>' > $DOPPLER_TOKEN_FILE && chmod 600 $DOPPLER_TOKEN_FILE"
+  echo "                 then re-run bash setup.sh"
+  if [[ ! -f .env ]]; then
+    echo "ERROR: no .env present and no Doppler-token either — aborting." >&2
+    echo "       See docs/runbooks/runbook-doppler.md (Phase 6) for setup." >&2
+    exit 1
+  fi
+  echo "      Falling back to existing local .env."
 fi
 
 mkdir -p secrets

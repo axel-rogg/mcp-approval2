@@ -1,113 +1,56 @@
 # =============================================================================
 # Actions secrets and variables.
 #
-# Secrets are written as plaintext to the API but stored encrypted at GitHub.
-# They will, however, appear in the Terraform state file in plaintext — see
-# README.md for the state-encryption requirement.
+# Post-Doppler-migration (2026-05-14):
+#   - Doppler is the Single-Source-of-Truth for ALL workflow secrets.
+#   - The Doppler->GitHub-Actions sync (activated manually in the Doppler UI,
+#     see README.md "Doppler-Integration") pushes every secret of the
+#     `privat`-config into the matching GitHub environment automatically.
+#   - The ONLY secret Terraform still pushes directly is DOPPLER_TOKEN_GHA —
+#     the service-token GH-Actions needs to authenticate against Doppler in
+#     the first place. This is a chicken-and-egg: the auth token cannot
+#     itself be fetched from Doppler at workflow start.
 #
-# Convention: repository-level secrets are shared across all workflows.
-# Environment-level secrets are gated by environment protection rules (e.g.
-# branch-pattern, required reviewers).
+# All previously-managed direct secrets (CLOUDFLARE_API_TOKEN, HCLOUD_TOKEN,
+# R2_*, OPERATOR_SSH_PUBLIC_KEY, HETZNER_SSH_PRIVATE_KEY, HETZNER_VM_HOST,
+# HETZNER_DOMAIN_*, MCP_APPROVAL_INTERNAL_TOKEN, GHCR_TOKEN) are now sourced
+# via the Doppler sync. Do NOT add them back here.
+#
+# State-sensitivity note: the DOPPLER_TOKEN_GHA value still lands in the
+# Terraform state file in plaintext — the R2/EU backend therefore MUST stay
+# encrypted at rest. See README.md.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# Repository-level secrets (visible to every workflow run).
+# Bootstrap secret #1 — repo-level: Doppler service-token for GitHub Actions.
+# Exposed to every workflow as $DOPPLER_TOKEN_GHA; workflows use
+#   `doppler secrets download --token "$DOPPLER_TOKEN_GHA" ...`
+# to pull the full secret-set at job start.
 # -----------------------------------------------------------------------------
-
-resource "github_actions_secret" "cloudflare_api_token" {
+resource "github_actions_secret" "doppler_token_gha" {
   repository      = github_repository.settings.name
-  secret_name     = "CLOUDFLARE_API_TOKEN"
-  plaintext_value = var.cloudflare_api_token
-}
-
-resource "github_actions_secret" "cloudflare_zone_id" {
-  repository      = github_repository.settings.name
-  secret_name     = "CLOUDFLARE_ZONE_ID"
-  plaintext_value = var.cloudflare_zone_id
-}
-
-resource "github_actions_secret" "hcloud_token" {
-  repository      = github_repository.settings.name
-  secret_name     = "HCLOUD_TOKEN"
-  plaintext_value = var.hcloud_token
-}
-
-resource "github_actions_secret" "r2_access_key_id" {
-  repository      = github_repository.settings.name
-  secret_name     = "R2_ACCESS_KEY_ID"
-  plaintext_value = var.r2_access_key_id
-}
-
-resource "github_actions_secret" "r2_secret_access_key" {
-  repository      = github_repository.settings.name
-  secret_name     = "R2_SECRET_ACCESS_KEY"
-  plaintext_value = var.r2_secret_access_key
-}
-
-resource "github_actions_secret" "operator_ssh_public_key" {
-  repository      = github_repository.settings.name
-  secret_name     = "OPERATOR_SSH_PUBLIC_KEY"
-  plaintext_value = var.operator_ssh_public_key
+  secret_name     = "DOPPLER_TOKEN_GHA"
+  plaintext_value = var.doppler_gha_service_token
 }
 
 # -----------------------------------------------------------------------------
-# Environment 'hetzner-production' secrets.
+# Bootstrap secret #2 — environment-level mirror: same token under the
+# conventional `DOPPLER_TOKEN` name in the `hetzner-production` environment.
+# Some workflows / actions look for `DOPPLER_TOKEN` by default; the duplicate
+# scoping keeps both call-styles supported.
 # -----------------------------------------------------------------------------
-
-resource "github_actions_environment_secret" "hetzner_ssh_key" {
+resource "github_actions_environment_secret" "doppler_token_env" {
   repository      = github_repository.settings.name
   environment     = github_repository_environment.hetzner_prod.environment
-  secret_name     = "HETZNER_SSH_PRIVATE_KEY"
-  plaintext_value = var.hetzner_deploy_ssh_private_key
-}
-
-resource "github_actions_environment_secret" "hetzner_vm_host" {
-  repository      = github_repository.settings.name
-  environment     = github_repository_environment.hetzner_prod.environment
-  secret_name     = "HETZNER_VM_HOST"
-  plaintext_value = var.hetzner_vm_host
-}
-
-resource "github_actions_environment_secret" "domain_mcp" {
-  repository      = github_repository.settings.name
-  environment     = github_repository_environment.hetzner_prod.environment
-  secret_name     = "HETZNER_DOMAIN_MCP"
-  plaintext_value = var.domain_mcp
-}
-
-resource "github_actions_environment_secret" "domain_knowledge" {
-  repository      = github_repository.settings.name
-  environment     = github_repository_environment.hetzner_prod.environment
-  secret_name     = "HETZNER_DOMAIN_KNOWLEDGE"
-  plaintext_value = var.domain_knowledge
-}
-
-resource "github_actions_environment_secret" "domain_app" {
-  repository      = github_repository.settings.name
-  environment     = github_repository_environment.hetzner_prod.environment
-  secret_name     = "HETZNER_DOMAIN_APP"
-  plaintext_value = var.domain_app
-}
-
-resource "github_actions_environment_secret" "mcp_approval_internal_token" {
-  repository      = github_repository.settings.name
-  environment     = github_repository_environment.hetzner_prod.environment
-  secret_name     = "MCP_APPROVAL_INTERNAL_TOKEN"
-  plaintext_value = var.mcp_approval_internal_token
-}
-
-resource "github_actions_environment_secret" "ghcr_token" {
-  count           = var.ghcr_token != "" ? 1 : 0
-  repository      = github_repository.settings.name
-  environment     = github_repository_environment.hetzner_prod.environment
-  secret_name     = "GHCR_TOKEN"
-  plaintext_value = var.ghcr_token
+  secret_name     = "DOPPLER_TOKEN"
+  plaintext_value = var.doppler_gha_service_token
 }
 
 # -----------------------------------------------------------------------------
 # Repository-level Actions variables (non-sensitive, visible in workflow logs).
+# Kept (not migrated to Doppler) because it's plain config, not a secret —
+# Doppler-Sync would also push it but Terraform-managed keeps it deterministic.
 # -----------------------------------------------------------------------------
-
 resource "github_actions_variable" "default_env" {
   repository    = github_repository.settings.name
   variable_name = "DEFAULT_ENVIRONMENT"

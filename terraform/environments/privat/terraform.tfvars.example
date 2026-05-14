@@ -3,6 +3,39 @@
 # terraform.tfvars is gitignored. NEVER commit values.
 # ===========================================================================
 #
+# ====================================================================
+# DOPPLER-INTEGRATION (NEU — Single-Source-of-Truth fuer Secrets)
+# ====================================================================
+#
+# Voraussetzungen vor `terraform apply`:
+#   1. Doppler-Account angelegt (https://doppler.com)
+#   2. Personal-Token generiert
+#      (Doppler-UI -> Profile -> Personal Tokens -> Generate)
+#      Scopes: workplace:admin
+#   3. Token in /workspaces/mcp-approval2/.dev.vars eintragen:
+#      DOPPLER_TOKEN=dp.pt.xxxxxxxxx
+#   4. Vor jedem terraform-Run sourcen:
+#      set -a && source ../../../.dev.vars && set +a
+#
+# Terraform legt nach `terraform apply -target=module.doppler` an:
+#   - Doppler-Project "mcp-approval2"
+#   - 3 Environments / Configs: dev, privat, business
+#   - 30 Secret-Placeholders im "privat"-Config (Werte = leer)
+#   - 2 read-only Service-Tokens:
+#       * hetzner-vm-readonly       (-> Output: doppler_vm_token)
+#       * github-actions-readonly   (-> Output: doppler_gha_token)
+#
+# Nach Apply:
+#   - `terraform output doppler_dashboard` -> Doppler-UI oeffnen
+#   - Alle 30 Placeholders manuell mit echten Werten fuellen
+#   - GitHub-Integration in Doppler-UI manuell aktivieren
+#     (Integrations -> GitHub -> Connect Repository) — kein TF-Resource
+#   - Service-Token auf VM deployen (siehe outputs.doppler_vm_token)
+#   - Service-Token als GH-Repo-Secret setzen (DOPPLER_TOKEN_GHA)
+#
+# Modul-Doku: ../../modules/doppler-setup/README.md
+# ====================================================================
+#
 # ─────────────────────────────────────────────────────────────────────────
 # CLOUDFLARE-CREDENTIALS (WIEDERVERWENDET aus mcp-approval/terraform/)
 # ─────────────────────────────────────────────────────────────────────────

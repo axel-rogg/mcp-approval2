@@ -18,6 +18,10 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
+    doppler = {
+      source  = "DopplerHQ/doppler"
+      version = "~> 1.13"
+    }
   }
 }
 
@@ -27,3 +31,4 @@ terraform {
 #   HCLOUD_TOKEN
 #   CLOUDFLARE_API_TOKEN
 #   GOOGLE_APPLICATION_CREDENTIALS (path to service-account JSON, business workspace only)
+#   DOPPLER_TOKEN                  (Personal-Token with workplace:admin scope)

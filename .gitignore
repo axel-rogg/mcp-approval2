@@ -45,3 +45,7 @@ deploy/hetzner/Caddyfile
 deploy/hetzner/cloud-init.yaml
 deploy/hetzner/backups/
 deploy/hetzner/docker-compose.override.yml
+
+# Secrets (lokal-only, NIE committen!)
+.dev.vars
+

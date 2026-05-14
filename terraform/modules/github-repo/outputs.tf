@@ -29,23 +29,9 @@ output "environment_gcp_business" {
 }
 
 output "managed_secrets" {
-  # `nonsensitive()` strips the sensitivity propagation from var.ghcr_token —
-  # we only branch on whether the string is empty, not on its content, so it's
-  # safe to expose. The output itself contains secret NAMES, never values.
-  value = compact([
-    "CLOUDFLARE_API_TOKEN",
-    "CLOUDFLARE_ZONE_ID",
-    "HCLOUD_TOKEN",
-    "R2_ACCESS_KEY_ID",
-    "R2_SECRET_ACCESS_KEY",
-    "OPERATOR_SSH_PUBLIC_KEY",
-    "HETZNER_SSH_PRIVATE_KEY",
-    "HETZNER_VM_HOST",
-    "HETZNER_DOMAIN_MCP",
-    "HETZNER_DOMAIN_KNOWLEDGE",
-    "HETZNER_DOMAIN_APP",
-    "MCP_APPROVAL_INTERNAL_TOKEN",
-    nonsensitive(var.ghcr_token) != "" ? "GHCR_TOKEN" : "",
-  ])
-  description = "List of GitHub Actions secret NAMES managed by this module (values are never exported)."
+  value = [
+    "DOPPLER_TOKEN_GHA",           # repo-level — bootstrap token for workflows
+    "DOPPLER_TOKEN (environment)", # hetzner-production env-scoped mirror
+  ]
+  description = "GitHub Actions secret NAMES managed DIRECTLY by Terraform. Everything else (CLOUDFLARE_API_TOKEN, HCLOUD_TOKEN, R2_*, HETZNER_*, ...) is pushed automatically by the Doppler->GitHub-Actions sync (see README.md)."
 }
