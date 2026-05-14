@@ -4,24 +4,84 @@
   "private": true,
   "description": "Portable runtime adapters (Db / Blob / Kek / Ai) for mcp-approval2.",
   "type": "module",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./db": "./src/db/interface.ts",
-    "./db/postgres": "./src/db/postgres.ts",
-    "./db/sqlite": "./src/db/sqlite.ts",
-    "./blob": "./src/blob/interface.ts",
-    "./blob/s3": "./src/blob/s3.ts",
-    "./blob/local-fs": "./src/blob/local-fs.ts",
-    "./kek": "./src/kek/interface.ts",
-    "./kek/local": "./src/kek/local.ts",
-    "./kek/openbao": "./src/kek/openbao.ts",
-    "./ai": "./src/ai/interface.ts",
-    "./ai/vertex": "./src/ai/vertex.ts",
-    "./knowledge": "./src/knowledge/index.ts",
-    "./knowledge/http-client": "./src/knowledge/http-client.ts",
-    "./knowledge/errors": "./src/knowledge/errors.ts"
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./db": {
+      "source": "./src/db/interface.ts",
+      "types": "./dist/db/interface.d.ts",
+      "default": "./dist/db/interface.js"
+    },
+    "./db/postgres": {
+      "source": "./src/db/postgres.ts",
+      "types": "./dist/db/postgres.d.ts",
+      "default": "./dist/db/postgres.js"
+    },
+    "./db/sqlite": {
+      "source": "./src/db/sqlite.ts",
+      "types": "./dist/db/sqlite.d.ts",
+      "default": "./dist/db/sqlite.js"
+    },
+    "./blob": {
+      "source": "./src/blob/interface.ts",
+      "types": "./dist/blob/interface.d.ts",
+      "default": "./dist/blob/interface.js"
+    },
+    "./blob/s3": {
+      "source": "./src/blob/s3.ts",
+      "types": "./dist/blob/s3.d.ts",
+      "default": "./dist/blob/s3.js"
+    },
+    "./blob/local-fs": {
+      "source": "./src/blob/local-fs.ts",
+      "types": "./dist/blob/local-fs.d.ts",
+      "default": "./dist/blob/local-fs.js"
+    },
+    "./kek": {
+      "source": "./src/kek/interface.ts",
+      "types": "./dist/kek/interface.d.ts",
+      "default": "./dist/kek/interface.js"
+    },
+    "./kek/local": {
+      "source": "./src/kek/local.ts",
+      "types": "./dist/kek/local.d.ts",
+      "default": "./dist/kek/local.js"
+    },
+    "./kek/openbao": {
+      "source": "./src/kek/openbao.ts",
+      "types": "./dist/kek/openbao.d.ts",
+      "default": "./dist/kek/openbao.js"
+    },
+    "./ai": {
+      "source": "./src/ai/interface.ts",
+      "types": "./dist/ai/interface.d.ts",
+      "default": "./dist/ai/interface.js"
+    },
+    "./ai/vertex": {
+      "source": "./src/ai/vertex.ts",
+      "types": "./dist/ai/vertex.d.ts",
+      "default": "./dist/ai/vertex.js"
+    },
+    "./knowledge": {
+      "source": "./src/knowledge/index.ts",
+      "types": "./dist/knowledge/index.d.ts",
+      "default": "./dist/knowledge/index.js"
+    },
+    "./knowledge/http-client": {
+      "source": "./src/knowledge/http-client.ts",
+      "types": "./dist/knowledge/http-client.d.ts",
+      "default": "./dist/knowledge/http-client.js"
+    },
+    "./knowledge/errors": {
+      "source": "./src/knowledge/errors.ts",
+      "types": "./dist/knowledge/errors.d.ts",
+      "default": "./dist/knowledge/errors.js"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

@@ -52,6 +52,14 @@ if [[ "$INITIALIZED" == "true" && "$SEALED" == "true" ]]; then
   exit 1
 fi
 
+# OpenBao runs the `bao server` process as user `openbao` (uid 100),
+# but the named docker volume `vault-data` is owned by root after creation.
+# Without this chown, `bao operator init` fails with
+#   "failed to persist keyring: permission denied"
+# inside /vault/data. Idempotent — re-runs are no-ops.
+echo "→ Fixing /vault/data ownership for the openbao user..."
+docker exec "$VAULT_CONTAINER" chown -R openbao:openbao /vault/data
+
 # ─── Step 1: operator init ────────────────────────────────────────────
 echo "→ Initializing Vault (3 unseal keys, threshold 2)..."
 INIT_OUT=$(docker exec -e BAO_ADDR=http://127.0.0.1:8200 "$VAULT_CONTAINER" bao operator init \

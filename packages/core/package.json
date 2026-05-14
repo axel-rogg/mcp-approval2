@@ -4,10 +4,19 @@
   "private": true,
   "description": "Core crypto + shared primitives for mcp-approval2 (AES-GCM, HKDF, AAD-Builder, JWT, PRF-XOR). Web-Crypto-API based, runs on Node 20+ and CF Workers.",
   "type": "module",
-  "main": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./crypto": "./src/crypto/index.ts"
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./crypto": {
+      "source": "./src/crypto/index.ts",
+      "types": "./dist/crypto/index.d.ts",
+      "default": "./dist/crypto/index.js"
+    }
   },
   "engines": {
     "node": ">=20.0.0"
