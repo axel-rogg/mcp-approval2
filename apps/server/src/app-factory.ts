@@ -122,6 +122,10 @@ import {
 } from './services/cost-tracker.js';
 import type { KnowledgeService } from './services/knowledge.js';
 import { emitAudit } from './services/audit.js';
+import {
+  createUserSyncService,
+  type UserSyncService,
+} from './services/user-sync.js';
 
 // Tools
 import {
@@ -181,6 +185,12 @@ export interface CreateAppDeps {
    * `POST /mcp tools/list` ohne Network beantwortet.
    */
   readonly kcWrappersFetchOverride?: typeof fetch;
+  /**
+   * AS-3 (A11): UserSyncService — push approval2-User-State an KC2.
+   * Wenn nicht gesetzt: User-State-Aenderungen werden NICHT in KC2
+   * propagiert (Single-Service-Setup ohne KC).
+   */
+  readonly userSync?: UserSyncService;
   /**
    * Tool-Registry-Override fuer Tests. Default: frische Registry; bei vollem
    * Service-Set wird via `registerCoreTools(...)` befuellt, sonst nur mit den
@@ -330,6 +340,23 @@ export async function createApp(
     app.route('/', knowledgeProxyRoutes(server, { knowledge: deps.knowledge }));
   }
 
+  // AS-3 (A11): UserSyncService — push approval2-User-State an KC2.
+  // Lazy gebaut wenn nicht uebergeben + knowledge da ist.
+  const userSyncService: UserSyncService | undefined =
+    deps.userSync ??
+    (deps.knowledge
+      ? createUserSyncService({ adapter: deps.knowledge.adapter, db: server.db })
+      : undefined);
+  // Wir mounten hier keinen HTTP-Endpunkt fuer userSync — der Service
+  // wird intern aus admin.ts / gdpr.ts / bootstrap.ts aufgerufen.
+  // Stash auf den server-Container damit downstream routes/services
+  // ihn aufrufen koennen (alternativ: explizite Pass-Down — heute haben
+  // wir aber keinen sauberen Pfad fuer "alle bestehenden Routes kriegen
+  // den Service mit". Folge-Refactor.).
+  if (userSyncService) {
+    (server as { userSync?: UserSyncService }).userSync = userSyncService;
+  }
+
   // AS-3 (§1.3): /admin/kc-proxy/* — PWA-Same-Origin-Proxy zu KC2.
   // Nur gemountet wenn beide Felder gesetzt sind (graceful ohne KC-Anbindung).
   if (deps.kcProxy) {
@@ -338,7 +365,10 @@ export async function createApp(
 
   // Admin-Routes (role='admin' check intern in adminOnly-middleware)
   if (server.db) {
-    const adminService = createAdminService({ db: server.db });
+    const adminService = createAdminService({
+      db: server.db,
+      ...(userSyncService ? { userSync: userSyncService } : {}),
+    });
     app.route('/v1/admin', adminRoutes({ admin: adminService }));
   }
 

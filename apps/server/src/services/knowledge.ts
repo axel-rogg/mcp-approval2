@@ -100,12 +100,21 @@ export interface KnowledgeServiceOptions {
 }
 
 export class KnowledgeService {
-  private readonly adapter: KnowledgeAdapter;
+  private readonly _adapter: KnowledgeAdapter;
   private readonly audit: AuditService;
   private readonly requestIdProvider: () => string | undefined;
 
+  /**
+   * AS-3 (A11): Adapter-Exposure fuer den UserSyncService (push-pattern).
+   * Andere Caller sollten weiterhin die Service-Methoden nutzen — die
+   * machen Audit-Logging mit.
+   */
+  get adapter(): KnowledgeAdapter {
+    return this._adapter;
+  }
+
   constructor(opts: KnowledgeServiceOptions) {
-    this.adapter = opts.adapter;
+    this._adapter = opts.adapter;
     this.audit = opts.audit;
     this.requestIdProvider = opts.requestIdProvider ?? (() => undefined);
   }

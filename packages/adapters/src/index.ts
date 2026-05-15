@@ -81,12 +81,17 @@ export type {
   ListSharesArgs,
   ObjectKind,
   ObjectsList,
+  OnBehalfOfFields,
   RevokeShareArgs,
   SearchArgs,
   SearchHit,
   Share,
   ShareScope,
+  SignOboArgs,
+  SyncUserArgs,
+  SyncUserResult,
   UpdateObjectArgs,
+  UserSyncStatus,
 } from './knowledge/index.js';
 export {
   AuthError as KnowledgeAuthError,
