@@ -28,6 +28,15 @@ interface StateCookiePayload {
   readonly state: string;
   readonly nonce: string;
   readonly inviteToken?: string;
+  /**
+   * AS-3 (§1.1): Wenn `/oauth/authorize` einen Browser-Caller ohne Session
+   * sah und auf `/auth/google/start?return=<authz-url>` weitergeleitet hat,
+   * tragen wir die return-URL hier mit, damit der Callback den User nach
+   * Session-Erstellung wieder auf den OAuth-Authorize-Flow zurueckwirft.
+   *
+   * Nur same-origin URLs werden akzeptiert (Open-Redirect-Schutz im Callback).
+   */
+  readonly returnTo?: string;
 }
 
 export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
@@ -38,9 +47,28 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
     const state = randomBytes(24).toString('base64url');
     const nonce = randomBytes(24).toString('base64url');
     const inviteToken = c.req.query('invite');
-    const payload: StateCookiePayload = inviteToken
-      ? { state, nonce, inviteToken }
-      : { state, nonce };
+    // AS-3 (§1.1): nimm `?return=<path>` mit ins State-Cookie. NUR same-
+    // origin Pfade — kein Open-Redirect erlauben (auch keine externen
+    // Hostnames wenn der Caller das durchgeschmuggelt hat).
+    const returnRaw = c.req.query('return');
+    let returnTo: string | undefined;
+    if (returnRaw) {
+      try {
+        // Decode wenn vom Authorize-Endpoint encoded uebergeben.
+        const decoded = decodeURIComponent(returnRaw);
+        if (isSafeReturnPath(decoded, server.config.ORIGIN)) {
+          returnTo = decoded;
+        }
+      } catch {
+        // ignore — kein returnTo
+      }
+    }
+    const payload: StateCookiePayload = {
+      state,
+      nonce,
+      ...(inviteToken ? { inviteToken } : {}),
+      ...(returnTo ? { returnTo } : {}),
+    };
     setCookie(c, STATE_COOKIE, JSON.stringify(payload), {
       httpOnly: true,
       secure: server.config.NODE_ENV === 'production',
@@ -154,6 +182,21 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
       path: '/',
     });
 
+    // AS-3 (§1.1): wenn die Login-Start-Phase eine `returnTo` mitgegeben
+    // hat (z.B. /oauth/authorize-Browser-Flow), redirect dorthin nach
+    // Session-Bake. Wir setzen ein same-origin-Session-Cookie (`session_jwt`)
+    // damit der nachgelagerte Authorize-Endpoint den User wiedererkennt.
+    if (stateCookie.returnTo && isSafeReturnPath(stateCookie.returnTo, server.config.ORIGIN)) {
+      setCookie(c, 'session_jwt', accessToken, {
+        httpOnly: true,
+        secure: server.config.NODE_ENV === 'production',
+        sameSite: 'Lax',
+        maxAge: server.config.SESSION_TTL_SEC,
+        path: '/',
+      });
+      return c.redirect(stateCookie.returnTo, 302);
+    }
+
     return c.json({
       accessToken,
       expiresAt: accessExp,
@@ -163,4 +206,29 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
   });
 
   return app;
+}
+
+/**
+ * Sicherheits-Check fuer `?return=<path>`-Carry-Throughs (AS-3).
+ *
+ * Wir akzeptieren NUR:
+ *   - Absolute URLs deren Origin == config.ORIGIN (same-origin)
+ *   - Pfade die mit `/` beginnen und KEIN Backslash- oder Whitespace-Trick enthalten
+ *
+ * Alles andere (externe Hosts, `javascript:`-URLs, Whitespace-Smuggling) wird
+ * verworfen — kein Open-Redirect.
+ */
+function isSafeReturnPath(candidate: string, origin: string): boolean {
+  if (!candidate || candidate.length > 2048) return false;
+  // Reject Control-Chars + Whitespace-Smuggling.
+  if (/[\s\x00-\x1f\x7f]/.test(candidate)) return false;
+  // Same-origin absolute URL?
+  try {
+    const url = new URL(candidate);
+    const allow = new URL(origin);
+    return url.origin === allow.origin;
+  } catch {
+    // Relative path: muss mit '/' starten, darf nicht protocol-relative sein.
+    return candidate.startsWith('/') && !candidate.startsWith('//');
+  }
 }
