@@ -552,6 +552,27 @@ export async function createApp(
       prfSessions,
       subMcpRegistry: subMcpReg,
       ...(optionalServices.push ? { push: optionalServices.push } : {}),
+      // AS-3 (A9): kc-manifest-refresh erhaelt registry + previous-snapshot
+      // wenn das Boot-Build erfolgreich war. Cache-getter laeuft jedes Mal —
+      // sodass Folge-Refreshs den jeweils aktuellsten Stand sehen.
+      ...(() => {
+        const cached = kcWrappersCache.get(server);
+        if (!cached) return {};
+        return {
+          kcManifest: {
+            registry,
+            previousOpts: cached.opts,
+            previousTools: cached.tools,
+            onUpdated: (entry) => {
+              kcWrappersCache.set(server, {
+                tools: entry.tools,
+                manifest: entry.manifest,
+                opts: cached.opts,
+              });
+            },
+          },
+        };
+      })(),
     };
     app.route(
       '/',
