@@ -12,6 +12,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@types/dompurify": "^3.0.5",
     "drizzle-kit": "^0.31.10",
     "jsdom": "^29.1.1",
     "typescript": "^5.7.0",
@@ -20,6 +21,6 @@
   },
   "dependencies": {
     "dompurify": "^3.4.3",
-    "marked": "^18.0.3"
+    "marked": "^15.0.12"
   }
 }
