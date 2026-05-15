@@ -91,6 +91,13 @@ export interface CfEnv {
   readonly MCP_APPROVAL_INTERNAL_TOKEN?: string;
   /** Optional API key for AI Gateway fallback (Anthropic / OpenAI). */
   readonly AI_GATEWAY_API_KEY?: string;
+  // ─── AS-3 (Proxy-Mode an mcp-knowledge2) ────────────────────────────
+  /** KC2-Base-URL. Optional — wenn ungesetzt: kein KC-Proxy/kc_wrappers. */
+  readonly MCP_KNOWLEDGE_URL?: string;
+  /** S2S-Shared-Bearer fuer KC2-Calls (mit OBO-JWT in `X-On-Behalf-Of`). */
+  readonly MCP_KNOWLEDGE_SERVICE_TOKEN?: string;
+  /** `iss`-Claim in OBO-JWTs an KC2. Default Fallback: ORIGIN. */
+  readonly SELF_OAUTH_ISSUER?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +217,9 @@ function buildConfigFromEnv(env: CfEnv): AppConfig {
     ALLOWED_ORIGINS: [],
     INVITE_TTL_SEC: 24 * 60 * 60,
     RECOVERY_TTL_SEC: 24 * 60 * 60,
+    // AS-3 Multi-Audience-Default fuer Google-IdP-Verify; CF-Path setzt
+    // den Wert sonst nicht. Default-leer = nur eigene GOOGLE_CLIENT_ID.
+    GOOGLE_ALLOWED_AUDIENCES: [],
   };
 
   // Optional RS256 keys — only attach if present, to honor
@@ -228,6 +238,17 @@ function buildConfigFromEnv(env: CfEnv): AppConfig {
   if (env.MCP_APPROVAL_INTERNAL_TOKEN !== undefined) {
     (cfg as { MCP_APPROVAL_INTERNAL_TOKEN?: string }).MCP_APPROVAL_INTERNAL_TOKEN =
       env.MCP_APPROVAL_INTERNAL_TOKEN;
+  }
+  // AS-3: optional KC-Anbindung + Self-Issuer (lib/config.ts schema).
+  if (env.MCP_KNOWLEDGE_URL !== undefined) {
+    (cfg as { MCP_KNOWLEDGE_URL?: string }).MCP_KNOWLEDGE_URL = env.MCP_KNOWLEDGE_URL;
+  }
+  if (env.MCP_KNOWLEDGE_SERVICE_TOKEN !== undefined) {
+    (cfg as { MCP_KNOWLEDGE_SERVICE_TOKEN?: string }).MCP_KNOWLEDGE_SERVICE_TOKEN =
+      env.MCP_KNOWLEDGE_SERVICE_TOKEN;
+  }
+  if (env.SELF_OAUTH_ISSUER !== undefined) {
+    (cfg as { SELF_OAUTH_ISSUER?: string }).SELF_OAUTH_ISSUER = env.SELF_OAUTH_ISSUER;
   }
   return cfg;
 }

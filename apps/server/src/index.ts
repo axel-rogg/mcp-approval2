@@ -86,12 +86,21 @@ interface BootEnv {
   readonly VAULT_ADDR?: string;
   readonly VAULT_TOKEN?: string;
   readonly VAULT_TRANSIT_PATH?: string;
+  /**
+   * KC2-Base-URL. AS-3-kanonischer Name ist `MCP_KNOWLEDGE_URL`; der
+   * Legacy-Name `KNOWLEDGE_URL` wird weiter akzeptiert. Boot-Code waehlt
+   * den ersten gesetzten Wert (MCP_KNOWLEDGE_URL bevorzugt).
+   */
   readonly KNOWLEDGE_URL?: string;
   readonly JWT_PRIVATE_KEY?: string;
   readonly JWT_RS256_PRIVATE_KEY_PEM?: string;
   readonly JWT_RS256_PUBLIC_KEY_PEM?: string;
   readonly JWT_KID?: string;
   readonly MCP_APPROVAL_INTERNAL_TOKEN?: string;
+  /** AS-3: shared S2S Bearer fuer KC2-Calls (alongside OBO-JWT). */
+  readonly MCP_KNOWLEDGE_SERVICE_TOKEN?: string;
+  /** AS-3: `iss`-Claim in OBO-JWTs an KC2. Default Fallback: config.ORIGIN. */
+  readonly SELF_OAUTH_ISSUER?: string;
 }
 
 async function buildOptionalDeps(
@@ -181,7 +190,9 @@ function pickBootEnv(env: NodeJS.ProcessEnv): BootEnv {
   if (env['VAULT_ADDR']) out.VAULT_ADDR = env['VAULT_ADDR'];
   if (env['VAULT_TOKEN']) out.VAULT_TOKEN = env['VAULT_TOKEN'];
   if (env['VAULT_TRANSIT_PATH']) out.VAULT_TRANSIT_PATH = env['VAULT_TRANSIT_PATH'];
-  if (env['KNOWLEDGE_URL']) out.KNOWLEDGE_URL = env['KNOWLEDGE_URL'];
+  // AS-3-naming bevorzugt; Legacy-Fallback.
+  const kcUrl = env['MCP_KNOWLEDGE_URL'] ?? env['KNOWLEDGE_URL'];
+  if (kcUrl) out.KNOWLEDGE_URL = kcUrl;
   if (env['JWT_PRIVATE_KEY']) out.JWT_PRIVATE_KEY = env['JWT_PRIVATE_KEY'];
   if (env['JWT_RS256_PRIVATE_KEY_PEM']) {
     out.JWT_RS256_PRIVATE_KEY_PEM = env['JWT_RS256_PRIVATE_KEY_PEM'];
@@ -193,6 +204,10 @@ function pickBootEnv(env: NodeJS.ProcessEnv): BootEnv {
   if (env['MCP_APPROVAL_INTERNAL_TOKEN']) {
     out.MCP_APPROVAL_INTERNAL_TOKEN = env['MCP_APPROVAL_INTERNAL_TOKEN'];
   }
+  if (env['MCP_KNOWLEDGE_SERVICE_TOKEN']) {
+    out.MCP_KNOWLEDGE_SERVICE_TOKEN = env['MCP_KNOWLEDGE_SERVICE_TOKEN'];
+  }
+  if (env['SELF_OAUTH_ISSUER']) out.SELF_OAUTH_ISSUER = env['SELF_OAUTH_ISSUER'];
   return out;
 }
 

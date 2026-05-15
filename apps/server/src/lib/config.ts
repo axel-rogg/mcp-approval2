@@ -71,6 +71,44 @@ const ConfigSchema = z.object({
   // Invite / Recovery
   INVITE_TTL_SEC: z.coerce.number().int().positive().default(24 * 60 * 60),
   RECOVERY_TTL_SEC: z.coerce.number().int().positive().default(24 * 60 * 60),
+
+  // ─────────────────────────────────────────────────────────────────────
+  // AS-3: mcp-knowledge2 Proxy-Mode Anbindung
+  // ─────────────────────────────────────────────────────────────────────
+  // Plan-Ref: PLAN-as3-autonomous.md §1.7
+  //
+  // approval2 → KC2 ueber OBO-JWT (X-On-Behalf-Of) + statischer SERVICE_TOKEN
+  // (Authorization: Bearer). Beide muessen gesetzt sein, damit der KC-Pfad
+  // (kc-proxy, kc_wrappers) gemounted wird. Sonst laeuft approval2 ohne
+  // KC-Anbindung (Native-Tools + Sub-MCP-Gateways verfuegbar).
+  //
+  // SELF_OAUTH_ISSUER ist der `iss`-Claim in den OBO-JWTs die wir an KC2
+  // senden. KC2 verifiziert via JWKS-Lookup auf <SELF_OAUTH_ISSUER>/.well-known/jwks.json.
+  // Default fallback: config.ORIGIN.
+  MCP_KNOWLEDGE_URL: z.string().url().optional(),
+  MCP_KNOWLEDGE_SERVICE_TOKEN: z.string().min(32).optional(),
+  SELF_OAUTH_ISSUER: z.string().url().optional(),
+
+  // ─────────────────────────────────────────────────────────────────────
+  // AS-3: Google OIDC (Authoritative IdP)
+  // ─────────────────────────────────────────────────────────────────────
+  // Die existierenden GOOGLE_CLIENT_ID / _SECRET / _REDIRECT_URI sind die
+  // PWA-Front-Door-OAuth-App.
+  //
+  // GOOGLE_ALLOWED_AUDIENCES: optional Komma-Liste zusaetzlicher Google-
+  // Audiences die approval2 fuer inbound `verifyIdToken` akzeptiert (z.B.
+  // KC2's eigener GOOGLE_CLIENT_ID, fuer den Fall dass eine PWA aus KC2's
+  // Domain an approval2 ein Google-ID-Token weiterreicht). Default: nur
+  // GOOGLE_CLIENT_ID.
+  GOOGLE_ALLOWED_AUDIENCES: z
+    .string()
+    .default('')
+    .transform((s) =>
+      s
+        .split(',')
+        .map((o) => o.trim())
+        .filter(Boolean),
+    ),
 });
 
 export type AppConfig = z.infer<typeof ConfigSchema>;
