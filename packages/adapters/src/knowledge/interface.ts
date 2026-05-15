@@ -36,7 +36,23 @@ import type {
   ShareScope,
 } from './types.js';
 
-export interface GetObjectArgs {
+/**
+ * AS-3 (§1.2): User-Identity-Trio fuer OBO-Calls.
+ *
+ * Alle user-facing Operationen koennen optional `userEmail` +
+ * `approvalId` mitgeben. Im OBO-Pfad (adapter-side serviceToken
+ * konfiguriert) wandert das in den signed OBO-JWT als `on_behalf_of`
+ * resp. `approval_id`-Claim. Im Legacy-Pfad (kein serviceToken) werden
+ * die Felder ignoriert.
+ */
+export interface OnBehalfOfFields {
+  /** Google-email; in OBO-JWT als `on_behalf_of` mitgesendet. */
+  readonly userEmail?: string;
+  /** Optional approval_id bei state-changing Tools nach Approve. */
+  readonly approvalId?: string;
+}
+
+export interface GetObjectArgs extends OnBehalfOfFields {
   readonly id: string;
   readonly userId: string;
   /**
@@ -46,7 +62,7 @@ export interface GetObjectArgs {
   readonly expandBody?: boolean;
 }
 
-export interface ListObjectsArgs {
+export interface ListObjectsArgs extends OnBehalfOfFields {
   readonly userId: string;
   readonly kind?: ObjectKind;
   readonly subtype?: string;
@@ -58,7 +74,7 @@ export interface ListObjectsArgs {
   readonly cursor?: number | null;
 }
 
-export interface UpdateObjectArgs {
+export interface UpdateObjectArgs extends OnBehalfOfFields {
   readonly id: string;
   readonly userId: string;
   readonly patch: {
@@ -76,7 +92,7 @@ export interface UpdateObjectArgs {
   };
 }
 
-export interface SearchArgs {
+export interface SearchArgs extends OnBehalfOfFields {
   readonly userId: string;
   readonly query: string;
   /**
@@ -91,7 +107,7 @@ export interface SearchArgs {
   readonly limit?: number;
 }
 
-export interface CreateShareArgs {
+export interface CreateShareArgs extends OnBehalfOfFields {
   readonly resourceId: string;
   /**
    * D-6: server leitet resourceKind aus dem Object-Row ab. Wir behalten das
@@ -104,12 +120,12 @@ export interface CreateShareArgs {
   readonly expiresAt?: number;
 }
 
-export interface ListSharesArgs {
+export interface ListSharesArgs extends OnBehalfOfFields {
   readonly resourceId: string;
   readonly userId: string;
 }
 
-export interface RevokeShareArgs {
+export interface RevokeShareArgs extends OnBehalfOfFields {
   readonly shareId: string;
   readonly userId: string;
 }
@@ -117,6 +133,32 @@ export interface RevokeShareArgs {
 export interface EraseUserArgs {
   readonly userId: string;
   readonly confirmationToken: string;
+}
+
+/**
+ * AS-3 (§2.2 + A11): Push-Sync von approval2-User-State an KC2.
+ *
+ * Wird bei User-Create/Suspend/Erase aufgerufen. KC2 wiederholt die
+ * users-Row in seiner eigenen users-Tabelle (citext-email-mapping).
+ *
+ * Authentifizierung: SERVICE_TOKEN (`Authorization: Bearer <token>`),
+ * NICHT user-JWT — das ist ein Admin-/System-Call.
+ */
+export type UserSyncStatus = 'active' | 'invited' | 'suspended' | 'deleted';
+
+export interface SyncUserArgs {
+  readonly userId: string;
+  readonly email: string;
+  readonly displayName: string;
+  readonly status: UserSyncStatus;
+  readonly externalId?: string;
+}
+
+export interface SyncUserResult {
+  /** 'created' wenn KC2 die Row neu angelegt hat, 'updated' wenn Patch. */
+  readonly status: 'created' | 'updated' | 'unchanged';
+  /** KC2-side user-id (kann von approval2-id divergieren). */
+  readonly kcUserId: string;
 }
 
 /**
@@ -148,7 +190,12 @@ export interface KnowledgeAdapter {
   getObject(args: GetObjectArgs): Promise<KnowledgeObject>;
   listObjects(args: ListObjectsArgs): Promise<ObjectsList>;
   updateObject(args: UpdateObjectArgs): Promise<KnowledgeObject>;
-  deleteObject(args: { id: string; userId: string }): Promise<void>;
+  deleteObject(args: {
+    id: string;
+    userId: string;
+    userEmail?: string;
+    approvalId?: string;
+  }): Promise<void>;
 
   // ---------- Sharing ----------
   createShare(args: CreateShareArgs): Promise<Share>;
@@ -160,4 +207,10 @@ export interface KnowledgeAdapter {
 
   // ---------- Internal (admin only) ----------
   eraseUser(args: EraseUserArgs): Promise<EraseUserResult>;
+  /**
+   * AS-3: Push-Sync User-State an KC2. Wird vom UserService bei
+   * Create/Suspend/Erase aufgerufen. Caller-Pflicht: SERVICE_TOKEN muss
+   * konfiguriert sein.
+   */
+  syncUser(args: SyncUserArgs): Promise<SyncUserResult>;
 }

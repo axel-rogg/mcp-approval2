@@ -62,6 +62,17 @@ export interface KnowledgeObject {
 
 export interface CreateObjectArgs {
   readonly userId: string;
+  /**
+   * AS-3 (§1.2): optional `on_behalf_of`-Email fuer den OBO-JWT. Wird im
+   * Legacy-Pfad ignoriert. Siehe `OnBehalfOfFields` in interface.ts.
+   */
+  readonly userEmail?: string;
+  /**
+   * AS-3 (§1.5): bei state-changing Calls nach Approve, von der
+   * Approval-Resolve-Pipeline gesetzt. Wandert in den OBO-JWT als
+   * `approval_id`-Claim → KC2-Audit `via_proxy=true, approval_id=<…>`.
+   */
+  readonly approvalId?: string;
   readonly kind: ObjectKind;
   readonly subtype?: string;
   readonly title?: string;

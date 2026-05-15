@@ -25,9 +25,18 @@ import {
 
 const USER_ID = '00000000-0000-0000-0000-000000000001';
 
-function makeSigner(token = 'jwt-token-xyz'): JwtSigner & { mock: ReturnType<typeof vi.fn> } {
-  const mock = vi.fn().mockResolvedValue(token);
-  return { sign: mock, mock };
+function makeSigner(
+  token = 'jwt-token-xyz',
+  oboToken = 'obo-jwt-token-xyz',
+): JwtSigner & {
+  signMock: ReturnType<typeof vi.fn>;
+  oboMock: ReturnType<typeof vi.fn>;
+  /** Legacy alias to keep older test expectations stable. */
+  mock: ReturnType<typeof vi.fn>;
+} {
+  const signMock = vi.fn().mockResolvedValue(token);
+  const oboMock = vi.fn().mockResolvedValue(oboToken);
+  return { sign: signMock, signOBO: oboMock, signMock, oboMock, mock: signMock };
 }
 
 function makeJsonResponse(status: number, body: unknown, init?: { requestId?: string }): Response {
@@ -650,6 +659,204 @@ describe('HttpKnowledgeAdapter — search (D-9)', () => {
     const body = JSON.parse(init?.body as string) as Record<string, unknown>;
     expect(body).toEqual({ query: 'foo' });
     expect(body['kind']).toBeUndefined();
+  });
+});
+
+// =============================================================================
+// AS-3 Tests — OBO-Pfad
+// =============================================================================
+
+describe('HttpKnowledgeAdapter — AS-3 OBO pattern', () => {
+  it('uses serviceToken + X-On-Behalf-Of header when serviceToken configured', async () => {
+    const signer = makeSigner('legacy-jwt', 'obo-jwt-xyz');
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, defaultObjectView()),
+    );
+    const adapter = makeAdapter({
+      fetchImpl: fetchMock,
+      signer,
+      serviceToken: 'svc-token-abc',
+    });
+    await adapter.getObject({
+      id: 'o1',
+      userId: USER_ID,
+      userEmail: 'axel@example.org',
+    });
+
+    // OBO-Pfad: signer.signOBO wurde gerufen, signer.sign NICHT.
+    expect(signer.oboMock).toHaveBeenCalledTimes(1);
+    expect(signer.signMock).not.toHaveBeenCalled();
+    expect(signer.oboMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sub: USER_ID,
+        aud: 'mcp-knowledge2',
+        on_behalf_of: 'axel@example.org',
+        ttlSec: 120,
+        request_id: 'req-test-1',
+      }),
+    );
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const headers = init?.headers as Record<string, string>;
+    expect(headers['authorization']).toBe('Bearer svc-token-abc');
+    expect(headers['x-on-behalf-of']).toBe('obo-jwt-xyz');
+    expect(headers['x-request-id']).toBe('req-test-1');
+  });
+
+  it('falls back to userId as on_behalf_of when userEmail not provided', async () => {
+    const signer = makeSigner();
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, defaultObjectView()),
+    );
+    const adapter = makeAdapter({
+      fetchImpl: fetchMock,
+      signer,
+      serviceToken: 'svc-token',
+    });
+    await adapter.getObject({ id: 'o1', userId: USER_ID });
+    expect(signer.oboMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        on_behalf_of: USER_ID, // fallback when userEmail missing
+      }),
+    );
+  });
+
+  it('forwards approval_id to OBO-JWT when provided (write-tools)', async () => {
+    const signer = makeSigner();
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, defaultObjectView()),
+    );
+    const adapter = makeAdapter({
+      fetchImpl: fetchMock,
+      signer,
+      serviceToken: 'svc-token',
+    });
+    await adapter.updateObject({
+      id: 'o1',
+      userId: USER_ID,
+      userEmail: 'axel@example.org',
+      approvalId: 'appr-uuid-42',
+      patch: { title: 'new' },
+    });
+    expect(signer.oboMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sub: USER_ID,
+        aud: 'mcp-knowledge2',
+        on_behalf_of: 'axel@example.org',
+        approval_id: 'appr-uuid-42',
+      }),
+    );
+  });
+
+  it('omits approval_id from OBO when read-only call', async () => {
+    const signer = makeSigner();
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, defaultObjectView()),
+    );
+    const adapter = makeAdapter({
+      fetchImpl: fetchMock,
+      signer,
+      serviceToken: 'svc-token',
+    });
+    await adapter.getObject({ id: 'o1', userId: USER_ID, userEmail: 'a@b.de' });
+    const oboArgs = signer.oboMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(oboArgs['approval_id']).toBeUndefined();
+  });
+
+  it('LEGACY-Pfad: ohne serviceToken nutzt weiterhin signer.sign + Bearer-JWT', async () => {
+    const signer = makeSigner('legacy-bearer', 'unused-obo');
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, defaultObjectView()),
+    );
+    const adapter = makeAdapter({
+      fetchImpl: fetchMock,
+      signer,
+      // KEIN serviceToken → Legacy-Pfad.
+    });
+    await adapter.getObject({ id: 'o1', userId: USER_ID });
+    expect(signer.signMock).toHaveBeenCalledTimes(1);
+    expect(signer.oboMock).not.toHaveBeenCalled();
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const headers = init?.headers as Record<string, string>;
+    expect(headers['authorization']).toBe('Bearer legacy-bearer');
+    expect(headers['x-on-behalf-of']).toBeUndefined();
+  });
+});
+
+describe('HttpKnowledgeAdapter — syncUser (AS-3 §2.2 / A11)', () => {
+  it('POSTs to /v1/internal/users/sync with service-token (NOT JWT)', async () => {
+    const signer = makeSigner();
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, { status: 'created', kc_user_id: 'kc-user-1' }),
+    );
+    const adapter = makeAdapter({
+      fetchImpl: fetchMock,
+      signer,
+      serviceToken: 'svc-token-abc',
+    });
+    const res = await adapter.syncUser({
+      userId: USER_ID,
+      email: 'axel@example.org',
+      displayName: 'Axel R.',
+      status: 'active',
+      externalId: 'google-sub-123',
+    });
+
+    // syncUser ist ein Admin-Call → kein signer-Call.
+    expect(signer.signMock).not.toHaveBeenCalled();
+    expect(signer.oboMock).not.toHaveBeenCalled();
+
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    expect(String(url)).toBe('https://knowledge.example.org/v1/internal/users/sync');
+    expect(init?.method).toBe('POST');
+    const headers = init?.headers as Record<string, string>;
+    expect(headers['authorization']).toBe('Bearer svc-token-abc');
+    expect(headers['x-on-behalf-of']).toBeUndefined();
+
+    const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+    expect(body).toEqual({
+      user_id: USER_ID,
+      email: 'axel@example.org',
+      display_name: 'Axel R.',
+      status: 'active',
+      external_id: 'google-sub-123',
+    });
+
+    expect(res).toEqual({ status: 'created', kcUserId: 'kc-user-1' });
+  });
+
+  it('omits external_id from body when not provided', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, { status: 'updated', kc_user_id: 'kc-user-2' }),
+    );
+    const adapter = makeAdapter({ fetchImpl: fetchMock, serviceToken: 'tok' });
+    await adapter.syncUser({
+      userId: USER_ID,
+      email: 'b@c.de',
+      displayName: 'Test',
+      status: 'suspended',
+    });
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+    expect(body['external_id']).toBeUndefined();
+    expect(body['status']).toBe('suspended');
+  });
+
+  it('throws ServiceError if serviceToken not configured', async () => {
+    const fetchMock = vi.fn<FetchLike>();
+    const adapter = makeAdapter({ fetchImpl: fetchMock });
+    await expect(
+      adapter.syncUser({
+        userId: USER_ID,
+        email: 'x@y.de',
+        displayName: 'X',
+        status: 'active',
+      }),
+    ).rejects.toMatchObject({
+      name: 'ServiceError',
+      message: expect.stringContaining('serviceToken not configured') as unknown as string,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

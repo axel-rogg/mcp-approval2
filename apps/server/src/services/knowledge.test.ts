@@ -111,6 +111,10 @@ function makeAdapterStub(): { adapter: KnowledgeAdapter; calls: Record<string, u
         deletedRows: 42,
       };
     },
+    async syncUser(args) {
+      record('syncUser', [args]);
+      return { status: 'created', kcUserId: 'kc-user-1' };
+    },
   };
   return { adapter, calls };
 }

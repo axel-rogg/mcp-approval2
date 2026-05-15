@@ -24,9 +24,13 @@ export type {
   KnowledgeAdapter,
   ListObjectsArgs,
   ListSharesArgs,
+  OnBehalfOfFields,
   RevokeShareArgs,
   SearchArgs,
+  SyncUserArgs,
+  SyncUserResult,
   UpdateObjectArgs,
+  UserSyncStatus,
 } from './interface.js';
 
 export {

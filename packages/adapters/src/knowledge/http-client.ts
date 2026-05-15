@@ -32,6 +32,8 @@ import type {
   ListSharesArgs,
   RevokeShareArgs,
   SearchArgs,
+  SyncUserArgs,
+  SyncUserResult,
   UpdateObjectArgs,
 } from './interface.js';
 import type {
@@ -120,6 +122,20 @@ interface AuthedFetchArgs {
   readonly scope?: string;
   readonly requestId?: string;
   readonly query?: Record<string, string | number | undefined>;
+  /**
+   * AS-3 (§1.2): wenn der Caller eine User-Email kennt (z.B. aus dem
+   * Session-Principal), wandert sie in den OBO-JWT als
+   * `on_behalf_of`-Claim. Pflicht im OBO-Pfad — wenn nicht gesetzt,
+   * faellt der Adapter zurueck auf Legacy-JWT-Bearer (kein on-behalf-of
+   * mitsenden).
+   */
+  readonly userEmail?: string;
+  /**
+   * AS-3 (§1.5 + §1.6): bei state-changing Tool-Calls nach Approval-
+   * Approve traegt der Approval-Handler die `approval_id` mit, damit KC2
+   * den Audit-Trail `via_proxy=true, approval_id=<…>` sieht.
+   */
+  readonly approvalId?: string;
 }
 
 interface ServiceFetchArgs {
@@ -154,14 +170,45 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
   // ---------------------------------------------------------------------------
 
   private async authedFetch<T>(args: AuthedFetchArgs): Promise<T> {
+    const reqId = args.requestId ?? this.requestIdFactory();
+    const url = this.buildUrl(args.path, args.query);
+
+    // AS-3 (§1.2): wenn `serviceToken` konfiguriert ist → OBO-Pfad. Sonst
+    // legacy Per-Call-JWT-Bearer.
+    if (this.serviceToken) {
+      const oboArgs: {
+        sub: string;
+        aud: string;
+        on_behalf_of: string;
+        ttlSec: number;
+        approval_id?: string;
+        request_id?: string;
+      } = {
+        sub: args.userId,
+        aud: 'mcp-knowledge2',
+        on_behalf_of: args.userEmail ?? args.userId,
+        ttlSec: 120, // §2.1 default
+        request_id: reqId,
+      };
+      if (args.approvalId !== undefined) oboArgs.approval_id = args.approvalId;
+      const obo = await this.jwtSigner.signOBO(oboArgs);
+      return this.doFetch<T>({
+        method: args.method,
+        url,
+        token: this.serviceToken,
+        body: args.body,
+        reqId,
+        oboToken: obo,
+      });
+    }
+
+    // Legacy-Pfad: Per-Call-Bearer-JWT.
     const signArgs: { sub: string; ttlSec: number; scope?: string } = {
       sub: args.userId,
       ttlSec: this.jwtTtlSec,
     };
     if (args.scope !== undefined) signArgs.scope = args.scope;
     const token = await this.jwtSigner.sign(signArgs);
-    const reqId = args.requestId ?? this.requestIdFactory();
-    const url = this.buildUrl(args.path, args.query);
     return this.doFetch<T>({ method: args.method, url, token, body: args.body, reqId });
   }
 
@@ -189,12 +236,17 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
     readonly token: string;
     readonly body?: unknown;
     readonly reqId: string;
+    /** AS-3: OBO-JWT als `X-On-Behalf-Of`-Header, parallel zum Service-Bearer. */
+    readonly oboToken?: string;
   }): Promise<T> {
     const headers: Record<string, string> = {
       authorization: `Bearer ${opts.token}`,
       'x-request-id': opts.reqId,
       accept: 'application/json',
     };
+    if (opts.oboToken !== undefined) {
+      headers['x-on-behalf-of'] = opts.oboToken;
+    }
     let bodyInit: BodyInit | undefined;
     if (opts.body !== undefined) {
       headers['content-type'] = 'application/json';
@@ -281,6 +333,8 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
       userId: args.userId,
       body,
       scope: `${args.kind}:write`,
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
     });
   }
 
@@ -295,6 +349,8 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
       userId: args.userId,
       query,
       scope: 'objects:read',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
     });
     return normaliseObjectView(raw);
   }
@@ -315,6 +371,8 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
       userId: args.userId,
       query,
       scope: 'objects:read',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
     });
     return {
       items: raw.items.map(normaliseObjectView),
@@ -343,16 +401,25 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
       userId: args.userId,
       body,
       scope: 'objects:write',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
     });
     return normaliseObjectView(raw);
   }
 
-  async deleteObject(args: { id: string; userId: string }): Promise<void> {
+  async deleteObject(args: {
+    id: string;
+    userId: string;
+    userEmail?: string;
+    approvalId?: string;
+  }): Promise<void> {
     await this.authedFetch<void>({
       method: 'DELETE',
       path: `/v1/objects/${encodeURIComponent(args.id)}`,
       userId: args.userId,
       scope: 'objects:write',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
     });
   }
 
@@ -374,6 +441,8 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
       userId: args.userId,
       body,
       scope: 'shares:write',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
     });
   }
 
@@ -384,6 +453,8 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
       path: `/v1/objects/${encodeURIComponent(args.resourceId)}/shares`,
       userId: args.userId,
       scope: 'shares:read',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
     });
     return res.items;
   }
@@ -394,6 +465,8 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
       path: `/v1/shares/${encodeURIComponent(args.shareId)}`,
       userId: args.userId,
       scope: 'shares:write',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
     });
   }
 
@@ -421,6 +494,8 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
       userId: args.userId,
       body,
       scope: 'search:read',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
     });
     return res.items;
   }
@@ -428,6 +503,39 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
   // ---------------------------------------------------------------------------
   // Internal (admin) — D-10: Service-Token, NICHT User-JWT.
   // ---------------------------------------------------------------------------
+
+  /**
+   * AS-3 (§2.2 + A11): Push-Sync User-State an KC2.
+   *
+   * Wire-Shape: `POST /v1/internal/users/sync`
+   *   Body (snake_case):
+   *     `{user_id, email, display_name, status, external_id?}`
+   *   Response: `{status: 'created'|'updated'|'unchanged', kc_user_id}`
+   *
+   * Auth: Service-Token im Bearer-Header. KEIN OBO-JWT — das ist ein
+   * Admin-Call.
+   */
+  async syncUser(args: SyncUserArgs): Promise<SyncUserResult> {
+    const body: Record<string, unknown> = {
+      user_id: args.userId,
+      email: args.email,
+      display_name: args.displayName,
+      status: args.status,
+    };
+    if (args.externalId !== undefined) body['external_id'] = args.externalId;
+    const raw = await this.serviceFetch<{
+      status: 'created' | 'updated' | 'unchanged';
+      kc_user_id: string;
+    }>({
+      method: 'POST',
+      path: '/v1/internal/users/sync',
+      body,
+    });
+    return {
+      status: raw.status,
+      kcUserId: raw.kc_user_id,
+    };
+  }
 
   async eraseUser(args: EraseUserArgs): Promise<EraseUserResult> {
     const raw = await this.serviceFetch<{
