@@ -4,9 +4,11 @@
 > Multi-User von Tag 0 (5-15 User pro Pilot-Instance), Postgres + OpenBao, EU-Region, DSGVO-tauglich.
 > Schwester-Repo: [mcp-knowledge2](https://github.com/axel-rogg/mcp-knowledge2) (Storage + Search).
 >
-> **Status 2026-05-15:** AS-3-Code-Complete auf Branch `feat/as3-cutover`
-> (14 Commits, 645 Tests grün). Cutover-Day pending — Runbook im Schwester-Repo:
+> **Status 2026-05-15:** AS-3-Code-Complete + **Generic-Object-Model implementiert** auf Branch `feat/as3-cutover`
+> (15 Commits, 473 Tests grün). Cutover-Day pending — Runbook im Schwester-Repo:
 > [knowledge2/docs/runbooks/runbook-as3-cutover.md](https://github.com/axel-rogg/mcp-knowledge2/blob/main/docs/runbooks/runbook-as3-cutover.md).
+>
+> **Generic-Object-Model (ADR-0004 in knowledge2, 2026-05-15)**: KC2-API spricht nicht mehr `kind` sondern free-form `subtype: string`. Adapter (`packages/adapters/src/knowledge/`) + Apps-Subsystem + Service+Tool-Layer + PWA komplett umgestellt. Apps nutzen Subtype-Namespacing `app:<typ>` (z.B. `app:composable`, `app:shopping-list`). Siehe Brief im Schwester-Repo: [knowledge2/GENERIC-DATA-MODEL.md](https://github.com/axel-rogg/mcp-knowledge2/blob/feat/as3-cutover/GENERIC-DATA-MODEL.md) + lokal [docs/plans/active/PLAN-wrapper-conventions.md](docs/plans/active/PLAN-wrapper-conventions.md).
 
 ## Architektur (Stand 2026-05-15)
 
@@ -43,6 +45,7 @@ Status-Banner oben in jedem PLAN-File.
 | [PLAN-architecture-v0.md](docs/plans/active/PLAN-architecture-v0.md) | Vorgänger | Subagent-Recherche, Pattern-Options |
 | [PLAN-hetzner-deployment.md](docs/plans/active/PLAN-hetzner-deployment.md) | ⚠️ Spec | Multi-Instance auf Hetzner + GCP |
 | **[PLAN-as3-autonomous.md](docs/plans/active/PLAN-as3-autonomous.md)** | ✅ **CODE-COMPLETE 2026-05-15** | AS-3-Migration: approval2 als Proxy vor autonomem KC2. A1-A12 + T3 auf `feat/as3-cutover`. |
+| **[PLAN-wrapper-conventions.md](docs/plans/active/PLAN-wrapper-conventions.md)** | ✅ **Live 2026-05-15** | Subtype-Konventionen (file/skill_manifest/app:*/memo/list/note/…), Body-Formate, Drift-Prevention. Kanonische Quelle nach ADR-0004 (Brief in knowledge2). |
 | Master-Cutover-Plan (cross-repo) | ✅ TIER 0-3 CODE-COMPLETE | [knowledge2/docs/plans/active/PLAN-as3-bigbang.md](https://github.com/axel-rogg/mcp-knowledge2/blob/main/docs/plans/active/PLAN-as3-bigbang.md) — Tier 4 (Cutover-Window) pending |
 | Operator-Runbook | ✅ Live | [knowledge2/docs/runbooks/runbook-as3-cutover.md](https://github.com/axel-rogg/mcp-knowledge2/blob/main/docs/runbooks/runbook-as3-cutover.md) — Step-by-Step T-7 bis T+7d |
 
@@ -50,7 +53,8 @@ Status-Banner oben in jedem PLAN-File.
 
 **Welcher Branch?** Pre-Cutover ist `main` der V1-Stand und `feat/as3-cutover` der AS-3-Stand. Code-Änderungen die AS-3 anfassen: auf dem Branch. Reine Doc-Änderungen: nach `main`.
 
-- **KnowledgeAdapter-Code** (`packages/adapters/src/knowledge/`): auf `feat/as3-cutover` von Bearer-JWT auf OBO + `SERVICE_TOKEN` umgestellt. Neue Methode: `signOBO()` im `JwtSigner`-Interface. `syncUser()` ist neu für UserSync-Push.
+- **KnowledgeAdapter-Code** (`packages/adapters/src/knowledge/`): auf `feat/as3-cutover` von Bearer-JWT auf OBO + `SERVICE_TOKEN` umgestellt. Neue Methode: `signOBO()` im `JwtSigner`-Interface. `syncUser()` ist neu für UserSync-Push. **ADR-0004 (2026-05-15)**: `ObjectKind` raus. Adapter exportiert `KnowledgeObject.subtype?: string | null`, `CreateObjectArgs.subtype?: string`, `SearchArgs.subtypes?: ReadonlyArray<string>`. Keine `kind`-Werte in Body/Query mehr. Scope ist `objects:read/write` (kind-agnostisch). Wire-Format-Drift gegen KC2 wird durch `tests/contract/manifest-roundtrip.test.ts` + `kc-tools-call.test.ts` fixiert.
+- **Apps-Subsystem** (`apps/server/src/apps/api.ts`): **Subtype-Namespacing** `app:<typ>` (z.B. `app:composable`). Helpers `appSubtype()`/`appTypeFromSubtype()`/`isAppObject()` kapseln die Konvention. Read-Guards via `isAppObject(obj)` (intern `obj.subtype?.startsWith('app:')`). Cross-Object-Filter via exakt-Match `subtype: 'app:<typ>'` oder client-side `app:`-Prefix-Match.
 - **OAuth-Facade** (`apps/server/src/mcp/oauth/`): auf `feat/as3-cutover` erweitert um Google-IdP-Redirect-Flow in `authorize.ts`, Token mit `idp=google` + `idp_sub` Claims. Inbound-ID-Token-Verify via `verifyIdToken()` in `apps/server/src/auth/idp/google.ts`.
 - **kc-proxy-Route** (`apps/server/src/routes/kc-proxy.ts`): NEU auf `feat/as3-cutover`. PWA → `/admin/kc-proxy/*` → builds OBO from session-user → forwards to KC2.
 - **kc_wrappers Auto-Generator** (`apps/server/src/tools/kc_wrappers/`): NEU auf `feat/as3-cutover`. Beim Boot via `tools/list` von KC2, refresh per `*/5 * * * *` cron. Tools fehlen graceful wenn `MCP_KNOWLEDGE_URL` ungesetzt.
