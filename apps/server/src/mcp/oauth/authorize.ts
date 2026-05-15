@@ -134,15 +134,31 @@ export function authorizeRoutes(server: ServerContext): Hono<AppBindings> {
 
     const user = await resolveCurrentUser(c, server);
     if (!user) {
-      // MCP-Spec erlaubt 401 + Hint, der Client soll dann Browser-Flow starten.
-      // Wir geben eine konkrete URL als Hint zurueck.
+      // AS-3 (§1.1): Browser-Flow startet Google-IdP transparent. Wir
+      // unterscheiden zwischen:
+      //   - Browser/HTML-User-Agent (Accept enthaelt `text/html`): direkter
+      //     302-Redirect zu /auth/google/start mit Return-URL → User klickt
+      //     genau einmal "weiter mit Google", landet automatisch wieder hier.
+      //   - Non-Browser-Caller (Claude.ai-MCP-Client): JSON-Hint mit
+      //     `login_required` + `login_url`. Client orchestriert das selbst.
+      //
+      // Beide Pfade fuehren letztlich zu /auth/google/callback. Phase-A5
+      // sorgt dafuer dass der callback die OAuth-Authorize-URL via
+      // `?return=` als 302 fortsetzt (siehe routes/auth/google.ts).
       const base = server.config.ORIGIN.replace(/\/$/, '');
       const returnTo = encodeURIComponent(c.req.url);
+      const loginUrl = `${base}/auth/google/start?return=${returnTo}`;
+
+      const accept = c.req.header('accept') ?? '';
+      const isBrowser = accept.includes('text/html');
+      if (isBrowser) {
+        return c.redirect(loginUrl, 302);
+      }
       return c.json(
         {
           error: 'login_required',
           error_description: 'user is not authenticated; redirect to login first',
-          login_url: `${base}/auth/google/start?return=${returnTo}`,
+          login_url: loginUrl,
         },
         401,
         { 'cache-control': 'no-store' },

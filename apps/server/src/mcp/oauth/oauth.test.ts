@@ -836,7 +836,7 @@ describe('OAuth Authorization-Server', () => {
     expect(body.error).toBe('invalid_redirect_uri');
   });
 
-  it('Authorize: returns 401 with login_url when no session', async () => {
+  it('Authorize: returns 401 with login_url when no session (JSON-Client)', async () => {
     const regRes = await app.request('/oauth/register', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -858,6 +858,35 @@ describe('OAuth Authorization-Server', () => {
     const body = (await res.json()) as { error: string; login_url: string };
     expect(body.error).toBe('login_required');
     expect(body.login_url).toContain('/auth/google/start');
+  });
+
+  it('AS-3 Authorize: redirects 302 to /auth/google/start when browser (Accept: text/html)', async () => {
+    const regRes = await app.request('/oauth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: ['https://c/cb'], token_endpoint_auth_method: 'none' }),
+    });
+    const reg = (await regRes.json()) as ClientRegistrationResponse;
+    const { challenge } = pkcePair();
+    const authzUrl =
+      '/oauth/authorize?' +
+      new URLSearchParams({
+        response_type: 'code',
+        client_id: reg.client_id,
+        redirect_uri: 'https://c/cb',
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+      }).toString();
+    const res = await app.request(authzUrl, {
+      headers: { accept: 'text/html,application/xhtml+xml' },
+    });
+    expect(res.status).toBe(302);
+    const loc = res.headers.get('location') ?? '';
+    expect(loc).toContain('/auth/google/start?return=');
+    // return=<encoded original /oauth/authorize URL>
+    const returnParam = new URL(loc, 'https://mcp.example.test').searchParams.get('return');
+    expect(returnParam).toBeTruthy();
+    expect(returnParam).toContain('/oauth/authorize');
   });
 
   it('buildDiscoveryMetadata trims trailing slash from origin', () => {
