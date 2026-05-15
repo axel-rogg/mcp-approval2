@@ -1,9 +1,17 @@
 name: Smoke gegen Hetzner Production
 
+# CRON DISABLED 2026-05-15 — VM wurde am 2026-05-14 destroyed
+# (siehe docs/runbooks/runbook-vm-destroy-recreate.md). Der schedule-
+# Trigger feuerte am 2026-05-14 07:18 UTC noch einmal trotz powered-off-VM
+# und schlug fehl, GitHub auto-disabled den Workflow danach. Damit der
+# Workflow auf einem zukuenftigen Push nicht versehentlich re-enabled wird
+# (Auto-Disable haengt am workflow-id-State, nicht am File): schedule-Block
+# komplett auskommentiert. Re-Enable nach VM-Re-Provisioning: Block
+# einkommentieren + commit + push.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 6 * * *'   # daily 06:00 UTC
+  # schedule:
+  #   - cron: '0 6 * * *'   # daily 06:00 UTC
 
 permissions:
   contents: read
