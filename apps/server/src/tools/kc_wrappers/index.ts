@@ -115,7 +115,20 @@ function buildOneWrapper(
     }
   }
 
-  const displayTemplate = annotations.displayTemplate;
+  // Display-Template-Resolution (cross-service contract):
+  // KC2-Manifest publishes `annotations.wysiwys.display_template` (snake_case,
+  // nested — per knowledge2/PLAN-as3-autonomous.md §1.4). approval2's
+  // ToolAnnotations.displayTemplate is the flat camelCase consumer. Bridge
+  // both shapes here so the contract test
+  // `tests/contract/manifest-roundtrip.test.ts` stays green.
+  const annotationsAny = annotations as ToolAnnotations & {
+    wysiwys?: { display_template?: string };
+    display_template?: string;
+  };
+  const displayTemplate =
+    annotationsAny.displayTemplate ??
+    annotationsAny.wysiwys?.display_template ??
+    annotationsAny.display_template;
 
   // Input-Schema-Adapter: Manifest liefert JsonSchema, unser Tool-Type
   // erwartet `z.ZodType`. Wir verwenden ein passthrough-Schema, das
