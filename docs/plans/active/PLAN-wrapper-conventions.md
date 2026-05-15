@@ -191,7 +191,10 @@ Wenn Wrapper-A `subtype='list'` mit Markdown-Checkbox erwartet und Wrapper-B `su
 
 ## Folge-Tickets
 
-- **Tool-Wrapper-Implementations** (`lists.*`, `notes.*`, `bookmarks.*`, `recipes.*`) — heute existiert nur `memorize.*` + `docs.*` + `skills.*` + `apps.*`. Neue Wrapper folgen den Specs hier.
-- **PWA-Renderer pro Subtype** — list-Checkbox-UI, note-Markdown-Render, memo-View-List, skill-Manifest-View. Heute generisch via `obj.subtype`-Badge.
-- **`subtype_prefix=` Query-Param in KC2** für effiziente `app:`-Familie-Filter und `memo:work`-Scope-Filter (heute client-side, kostet Performance bei großen Datasets).
-- **Konsolidierung der 3 Zod-Schemas** auf einen Adapter-Package-Export (siehe Drift-Prevention §3).
+- ✅ **Tool-Wrapper-Implementations** (`lists.*`, `notes.*`, `bookmarks.*`, `recipes.*`) — **erledigt 2026-05-15** (Commit `25aed39`). 20 neue Tools + 44 Tests in `apps/server/src/tools/{lists,notes,bookmarks,recipes}-tools.ts`. Konstanten in `tools/types.ts`.
+- ✅ **PWA-Renderer pro Subtype** — **erledigt 2026-05-15** (Commit `a65d461` + code.ts wiring). 7 Renderer unter `apps/web/src/renderers/`. marked + DOMPurify XSS-safe.
+- ✅ **`subtype_prefix=` Query-Param in KC2** — **erledigt 2026-05-15** (Commit `c3f72df` in knowledge2 + `25aed39` Adapter-Sync). LIKE-Match links-anchored, B-Tree-Index-tauglich.
+- ⏳ **Konsolidierung der 3 Zod-Schemas** — teilweise: `tools/federated-search-tool.ts` importiert jetzt `KnowledgeSubtype` aus `tools/types.ts`. `routes/knowledge-proxy.ts` hat noch eigene Definition (Folge-PR).
+- ⏳ **Lists checkbox-toggle in PWA** — Klick auf checkbox triggert `lists.tick`. Heute disabled-only.
+- ⏳ **Syntax-Highlighting** für Code-Blocks (Highlight.js / Prism).
+- ⏳ **App-Embed** statt App-Link für `app:*`-Subtypes (statt Navigate-Button).

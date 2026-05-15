@@ -13,11 +13,19 @@
 import type { KnowledgeObject } from '../api-storage.js';
 import { renderAppLink } from './app-link.js';
 import { renderBinary } from './binary.js';
+import { renderCode } from './code.js';
 import { renderList } from './list.js';
 import { renderMarkdown } from './markdown.js';
 import { renderMemo } from './memo.js';
 import { renderSkillManifest } from './skill-manifest.js';
 import { decodeBody } from './utils.js';
+
+function readCodeLanguage(obj: KnowledgeObject): string | undefined {
+  const meta = obj.metaJson;
+  if (!meta || typeof meta !== 'object') return undefined;
+  const lang = (meta as Record<string, unknown>)['language'];
+  return typeof lang === 'string' ? lang : undefined;
+}
 
 export function dispatchRenderer(obj: KnowledgeObject): HTMLElement {
   const subtype = obj.subtype ?? '';
@@ -32,6 +40,11 @@ export function dispatchRenderer(obj: KnowledgeObject): HTMLElement {
       if (mime.startsWith('text/markdown')) return renderMarkdown(decodeBody(obj));
       if (mime.startsWith('image/')) return renderBinary(obj);
       if (mime.startsWith('application/octet-stream')) return renderBinary(obj);
+      const lang = readCodeLanguage(obj);
+      if (lang) return renderCode(decodeBody(obj), lang);
+      if (mime.startsWith('application/json') || mime === 'text/x-yaml' || mime.startsWith('application/x-')) {
+        return renderCode(decodeBody(obj));
+      }
       return renderPlainText(decodeBody(obj));
     }
     case 'list':

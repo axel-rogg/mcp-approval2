@@ -54,7 +54,15 @@ Status-Banner oben in jedem PLAN-File.
 **Welcher Branch?** Pre-Cutover ist `main` der V1-Stand und `feat/as3-cutover` der AS-3-Stand. Code-Änderungen die AS-3 anfassen: auf dem Branch. Reine Doc-Änderungen: nach `main`.
 
 - **KnowledgeAdapter-Code** (`packages/adapters/src/knowledge/`): auf `feat/as3-cutover` von Bearer-JWT auf OBO + `SERVICE_TOKEN` umgestellt. Neue Methode: `signOBO()` im `JwtSigner`-Interface. `syncUser()` ist neu für UserSync-Push. **ADR-0004 (2026-05-15)**: `ObjectKind` raus. Adapter exportiert `KnowledgeObject.subtype?: string | null`, `CreateObjectArgs.subtype?: string`, `SearchArgs.subtypes?: ReadonlyArray<string>`. Keine `kind`-Werte in Body/Query mehr. Scope ist `objects:read/write` (kind-agnostisch). Wire-Format-Drift gegen KC2 wird durch `tests/contract/manifest-roundtrip.test.ts` + `kc-tools-call.test.ts` fixiert.
-- **Apps-Subsystem** (`apps/server/src/apps/api.ts`): **Subtype-Namespacing** `app:<typ>` (z.B. `app:composable`). Helpers `appSubtype()`/`appTypeFromSubtype()`/`isAppObject()` kapseln die Konvention. Read-Guards via `isAppObject(obj)` (intern `obj.subtype?.startsWith('app:')`). Cross-Object-Filter via exakt-Match `subtype: 'app:<typ>'` oder client-side `app:`-Prefix-Match.
+- **Apps-Subsystem** (`apps/server/src/apps/api.ts`): **Subtype-Namespacing** `app:<typ>` (z.B. `app:composable`). Helpers `appSubtype()`/`appTypeFromSubtype()`/`isAppObject()` kapseln die Konvention. Read-Guards via `isAppObject(obj)`. **listApps nutzt serverseitig `subtypePrefix='app:'`** (2026-05-15) — kein client-side filter mehr.
+- **Tool-Wrappers** (`apps/server/src/tools/`): 4 neue Familien (2026-05-15, Commit `25aed39`):
+  - `lists.*` (6 Tools) — Markdown-Checkbox, `validateListBody`-Validator, Toggle via Match-String oder Line-Index
+  - `notes.*` (5 Tools) — Free-form Markdown, optional vector-embed
+  - `bookmarks.*` (4 Tools) — URL in `meta.url`, Markdown-Body
+  - `recipes.*` (5 Tools) — Optional YAML-Frontmatter
+  - Konstanten in `tools/types.ts`: `LIST_SUBTYPE`/`NOTE_SUBTYPE`/`BOOKMARK_SUBTYPE`/`RECIPE_SUBTYPE`
+- **PWA Subtype-Renderer** (`apps/web/src/renderers/`): 7 dispatch-Renderer (markdown/list/memo/skill-manifest/app-link/binary/code). marked + DOMPurify XSS-safe. `dispatchRenderer(obj)` per `subtype` + `contentType`. Raw-Toggle als Fallback.
+- **subtype_prefix Cross-Repo** (2026-05-15): KC2 + Adapter unterstützen `subtype_prefix=app:`-Query für effiziente Namespace-Filter. Apps-Subsystem + PWA nutzen es.
 - **OAuth-Facade** (`apps/server/src/mcp/oauth/`): auf `feat/as3-cutover` erweitert um Google-IdP-Redirect-Flow in `authorize.ts`, Token mit `idp=google` + `idp_sub` Claims. Inbound-ID-Token-Verify via `verifyIdToken()` in `apps/server/src/auth/idp/google.ts`.
 - **kc-proxy-Route** (`apps/server/src/routes/kc-proxy.ts`): NEU auf `feat/as3-cutover`. PWA → `/admin/kc-proxy/*` → builds OBO from session-user → forwards to KC2.
 - **kc_wrappers Auto-Generator** (`apps/server/src/tools/kc_wrappers/`): NEU auf `feat/as3-cutover`. Beim Boot via `tools/list` von KC2, refresh per `*/5 * * * *` cron. Tools fehlen graceful wenn `MCP_KNOWLEDGE_URL` ungesetzt.
