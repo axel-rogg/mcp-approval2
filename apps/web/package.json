@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "drizzle-kit": "^0.31.10",
     "typescript": "^5.7.0",
     "vite": "^8.0.13",
     "vitest": "^4.1.6"
