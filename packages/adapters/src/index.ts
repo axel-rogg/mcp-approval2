@@ -79,7 +79,6 @@ export type {
   KnowledgeObject,
   ListObjectsArgs,
   ListSharesArgs,
-  ObjectKind,
   ObjectsList,
   OnBehalfOfFields,
   RevokeShareArgs,

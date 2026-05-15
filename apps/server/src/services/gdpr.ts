@@ -418,27 +418,25 @@ async function* exportUserDataImpl(args: {
   for (const row of auditRows) yield { table: 'audit_log', row };
 
   // 6. objects (mcp-knowledge2) — wenn KnowledgeService verfuegbar.
-  //    Iteriere durch alle vier kinds, paginiert.
+  //    Post-ADR-0004: generic object model. Wir paginieren OHNE subtype-Filter
+  //    (1 Listing-Loop statt 4) — der RLS-Filter sorgt fuer user-Isolation.
   if (knowledge) {
-    for (const kind of ['doc', 'skill', 'app', 'memo'] as const) {
-      let cursor: number | null = null;
-      do {
-        const page: import('@mcp-approval2/adapters').ObjectsList = await (
-          knowledge as KnowledgeService
-        ).listObjects({
-          userId,
-          kind,
-          ...(cursor !== null ? { cursor } : {}),
-        });
-        for (const obj of page.items) {
-          yield {
-            table: 'objects',
-            row: obj as unknown as Record<string, unknown>,
-          };
-        }
-        cursor = page.nextCursor;
-      } while (cursor !== null);
-    }
+    let cursor: number | null = null;
+    do {
+      const page: import('@mcp-approval2/adapters').ObjectsList = await (
+        knowledge as KnowledgeService
+      ).listObjects({
+        userId,
+        ...(cursor !== null ? { cursor } : {}),
+      });
+      for (const obj of page.items) {
+        yield {
+          table: 'objects',
+          row: obj as unknown as Record<string, unknown>,
+        };
+      }
+      cursor = page.nextCursor;
+    } while (cursor !== null);
   }
 }
 

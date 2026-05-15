@@ -40,14 +40,15 @@ const KC2_MANIFEST_FIXTURE = {
     tools: [
       {
         name: 'objects.create',
-        description: 'Create a new object (doc/skill/app/memo). Body is base64-encoded.',
+        description:
+          'Create a new object. `subtype` is a free-form caller-convention string (e.g. "file", "skill_manifest", "memo", "app:composable"). Body is base64-encoded.',
         inputSchema: {
           type: 'object',
           properties: {
-            kind: { type: 'string', enum: ['doc', 'skill', 'app', 'memo'] },
+            subtype: { type: 'string', pattern: '^[a-z][a-z0-9_:-]{0,31}$' },
             body_b64: { type: 'string' },
           },
-          required: ['kind', 'body_b64'],
+          required: ['body_b64'],
         },
         annotations: {
           title: 'Create object',
@@ -55,7 +56,7 @@ const KC2_MANIFEST_FIXTURE = {
           write: true,
           wysiwys: {
             display_template:
-              'Create {{kind}} "{{title}}" ({{#filename}}{{filename}}, {{/filename}}{{body_size_human}})',
+              'Create {{subtype}} "{{title}}" ({{#filename}}{{filename}}, {{/filename}}{{body_size_human}})',
           },
         },
       },
@@ -140,7 +141,7 @@ describe('manifest-roundtrip: fetchKcManifest', () => {
     const a = create?.annotations as {
       wysiwys?: { display_template?: string };
     };
-    expect(a.wysiwys?.display_template).toContain('Create {{kind}}');
+    expect(a.wysiwys?.display_template).toContain('Create {{subtype}}');
   });
 });
 
@@ -275,7 +276,7 @@ describe('manifest-roundtrip: buildKcWrappers displayTemplate bridge', () => {
     });
     const create = tools.find((t) => t.name === 'objects.create');
     expect(create?.displayTemplate).toBeDefined();
-    expect(create?.displayTemplate).toContain('Create {{kind}}');
+    expect(create?.displayTemplate).toContain('Create {{subtype}}');
   });
 
   it('also accepts flat displayTemplate (back-compat with native approval2 tools)', async () => {

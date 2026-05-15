@@ -17,7 +17,6 @@ import type {
   KnowledgeAdapter,
   KnowledgeObject,
   ListObjectsArgs,
-  ObjectKind,
   ObjectsList,
   RevokeShareArgs,
   Share,
@@ -28,6 +27,8 @@ import type {
   EraseUserArgs,
   EraseUserResult,
   ListSharesArgs,
+  SyncUserArgs,
+  SyncUserResult,
 } from '@mcp-approval2/adapters';
 import { KnowledgeService } from '../services/knowledge.js';
 import { createAppsService, AppsServiceError } from './api.js';
@@ -76,7 +77,6 @@ class InMemoryKnowledgeAdapter implements KnowledgeAdapter {
     const obj: KnowledgeObject = {
       id,
       ownerId: args.userId,
-      kind: args.kind,
       subtype: args.subtype ?? null,
       title: args.title ?? null,
       description: args.description ?? null,
@@ -112,7 +112,6 @@ class InMemoryKnowledgeAdapter implements KnowledgeAdapter {
   async listObjects(args: ListObjectsArgs): Promise<ObjectsList> {
     const bucket = this.bucket(args.userId);
     let items: KnowledgeObject[] = [...bucket.values()].map((v) => v.obj);
-    if (args.kind) items = items.filter((o) => o.kind === args.kind);
     if (args.subtype) items = items.filter((o) => o.subtype === args.subtype);
     items.sort((a, b) => b.updatedAt - a.updatedAt);
     const limit = args.limit ?? items.length;
@@ -184,6 +183,9 @@ class InMemoryKnowledgeAdapter implements KnowledgeAdapter {
       },
       deletedRows: 0,
     };
+  }
+  async syncUser(_args: SyncUserArgs): Promise<SyncUserResult> {
+    return { status: 'created', kcUserId: 'kc-stub-1' };
   }
 }
 

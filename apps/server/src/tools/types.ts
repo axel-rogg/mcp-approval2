@@ -37,7 +37,18 @@ export type UserProfileUpdateInput = z.infer<typeof UserProfileUpdateInput>;
 // Knowledge-Tools
 // =============================================================================
 
-const KnowledgeKind = z.enum(['doc', 'skill', 'app', 'memo']);
+/**
+ * Free-form Subtype-Discriminator (post-ADR-0004 Generic Object Model).
+ * Storage akzeptiert beliebige Strings, der Form-Regex (mit `:`-Erlaubnis
+ * fuer `app:`-Namespacing) ist Caller-Convention.
+ */
+export const KnowledgeSubtype = z
+  .string()
+  .min(1)
+  .max(32)
+  .regex(/^[a-z][a-z0-9_:-]*$/, {
+    message: 'subtype must be lowercase alphanumeric with -, _, : separators (starts with a letter)',
+  });
 
 export const KnowledgeDocsCreateInput = z
   .object({
@@ -45,7 +56,7 @@ export const KnowledgeDocsCreateInput = z
     body: z.string().min(1).max(1_000_000),
     description: z.string().max(2000).optional(),
     keywords: z.array(z.string().min(1).max(64)).max(32).optional(),
-    subtype: z.string().min(1).max(64).optional(),
+    subtype: KnowledgeSubtype.optional(),
     visibility: z.enum(['private', 'shared']).optional(),
   })
   .strict();
@@ -78,7 +89,7 @@ export type KnowledgeSkillsListInput = z.infer<typeof KnowledgeSkillsListInput>;
 export const KnowledgeSearchInput = z
   .object({
     query: z.string().min(1).max(1024),
-    kinds: z.array(KnowledgeKind).max(4).optional(),
+    subtypes: z.array(KnowledgeSubtype).max(16).optional(),
     limit: z.number().int().min(1).max(100).optional(),
   })
   .strict();
@@ -276,8 +287,7 @@ export type MemorizeDeleteInput = z.infer<typeof MemorizeDeleteInput>;
 
 export const ObjectsListInput = z
   .object({
-    kind: KnowledgeKind.optional(),
-    subtype: z.string().min(1).max(64).optional(),
+    subtype: KnowledgeSubtype.optional(),
     limit: z.number().int().min(1).max(200).optional(),
     cursor: z.number().int().nonnegative().optional(),
   })

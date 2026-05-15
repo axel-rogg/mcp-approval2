@@ -28,27 +28,34 @@ function makeKnowledgeAdapterStub(hits: ReadonlyArray<SearchHit> = []): Knowledg
   const obj: KnowledgeObject = {
     id: 'obj-1',
     ownerId: USER_ID,
-    kind: 'skill',
-    subtype: null,
+    subtype: 'skill_manifest',
     title: 'My Skill',
     description: 'a skill',
     keywords: [],
-    body: '',
+    triggerHints: null,
+    meta: null,
+    bodySize: 0,
     bodyHash: null,
+    mimeType: null,
+    filename: null,
     visibility: 'private',
+    pinned: false,
+    archived: false,
+    refcount: 0,
+    currentVersion: 1,
     createdAt: 1,
     updatedAt: 1,
-    deletedAt: null,
-  } as KnowledgeObject;
-  const list: ObjectsList = { items: [obj], cursor: null, hasMore: false };
+    lastUsedAt: null,
+  };
+  const list: ObjectsList = { items: [obj], nextCursor: null };
   const share: Share = {
     id: 's',
     resourceId: 'obj-1',
-    resourceKind: 'doc',
     grantedBy: USER_ID,
     grantedTo: 'u',
     scope: 'read',
-    createdAt: 1,
+    grantedAt: 1,
+    expiresAt: null,
     revokedAt: null,
   };
   return {
@@ -76,9 +83,24 @@ function makeKnowledgeAdapterStub(hits: ReadonlyArray<SearchHit> = []): Knowledg
       return hits;
     },
     async eraseUser() {
-      return { deletedRows: 0 };
+      return {
+        status: 'ok',
+        deleted: {
+          objects: 0,
+          shares: 0,
+          idempotency: 0,
+          uploads: 0,
+          auditPseudonymised: 0,
+          blobsDeleted: 0,
+          blobsPending: 0,
+        },
+        deletedRows: 0,
+      };
     },
-  } as KnowledgeAdapter;
+    async syncUser() {
+      return { status: 'created', kcUserId: 'kc-stub-1' };
+    },
+  };
 }
 
 function makeKnowledgeService(hits: ReadonlyArray<SearchHit> = []): KnowledgeService {
@@ -149,8 +171,7 @@ describe('capability-search', () => {
   it('integrates skills from knowledge.search', async () => {
     const skillHit: SearchHit = {
       id: 'sk-1',
-      kind: 'skill',
-      subtype: null,
+      subtype: 'skill_manifest',
       title: 'Writing helper',
       score: 0.9,
       ftsRank: 1,
@@ -178,8 +199,7 @@ describe('federated-search', () => {
   it('returns hits with sub-doc annotation', async () => {
     const docHit: SearchHit = {
       id: 'doc-1',
-      kind: 'doc',
-      subtype: null,
+      subtype: 'file',
       title: 'A doc',
       score: 0.7,
       ftsRank: 1,
@@ -189,22 +209,21 @@ describe('federated-search', () => {
     // docUsages: stub returns empty incoming.
     const original = knowledge.docUsages.bind(knowledge);
     vi.spyOn(knowledge, 'docUsages').mockResolvedValue({
-      incoming: [{ kind: 'skill', id: 'sk-1', title: 'Skill A' }],
+      incoming: [{ subtype: 'skill_manifest', id: 'sk-1', title: 'Skill A' }],
       outgoing: [],
     });
     const svc = createFederatedSearchService({ knowledge });
     const result = await svc.search({ userId: USER_ID, query: 'doc' });
     expect(result.hits).toHaveLength(1);
     const annotated = result.hits[0] as { used_by?: ReadonlyArray<{ id: string }> };
-    expect(annotated.used_by).toEqual([{ kind: 'skill', id: 'sk-1', title: 'Skill A' }]);
+    expect(annotated.used_by).toEqual([{ subtype: 'skill_manifest', id: 'sk-1', title: 'Skill A' }]);
     expect(typeof original).toBe('function');
   });
 
   it('skips sub-doc annotation when include_subdocs=false', async () => {
     const docHit: SearchHit = {
       id: 'doc-1',
-      kind: 'doc',
-      subtype: null,
+      subtype: 'file',
       title: 'A doc',
       score: 0.7,
       ftsRank: null,

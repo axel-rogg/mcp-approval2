@@ -5,8 +5,8 @@
  *
  * UX:
  *   - Header mit Back-Button + Title
- *   - Meta (kind, subtype, size, visibility, created)
- *   - Summary-Section mit Edit-Pencil (nur kind=doc, opens Modal)
+ *   - Meta (subtype, size, visibility, created)
+ *   - Summary-Section mit Edit-Pencil (nur subtype=file, opens Modal)
  *   - Body-Preview (decoded falls utf8, sonst <hex preview>)
  *   - Footer: Force-Delete-Checkbox (refcount>0) + Delete-Button
  *
@@ -118,7 +118,6 @@ export async function renderStorageDetail(
   metaSection.className = 'storage-meta card';
   const dl = document.createElement('dl');
   const metaPairs: ReadonlyArray<[string, string]> = [
-    ['Kind', String(obj.kind)],
     ['Subtype', obj.subtype ?? '-'],
     ['Size', formatBytes(obj.bodySize)],
     ['Visibility', obj.visibility ?? 'private'],
@@ -145,7 +144,7 @@ export async function renderStorageDetail(
 
     const sh = document.createElement('h2');
     sh.textContent = 'Summary';
-    if (obj.kind === 'doc') {
+    if (obj.subtype === 'file') {
       const pencil = document.createElement('button');
       pencil.type = 'button';
       pencil.className = 'edit-pencil';

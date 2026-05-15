@@ -18,8 +18,6 @@
  *     Standard-Reads liefern nur Metadata (bodySize/bodyHash).
  */
 
-export type ObjectKind = 'doc' | 'skill' | 'app' | 'memo';
-
 export type ShareScope = 'read' | 'write';
 
 /**
@@ -34,8 +32,7 @@ export type ShareScope = 'read' | 'write';
 export interface KnowledgeObject {
   readonly id: string;
   readonly ownerId: string;
-  readonly kind: ObjectKind;
-  readonly subtype: string | null;
+  readonly subtype?: string | null;
   readonly title: string | null;
   readonly description: string | null;
   readonly keywords: ReadonlyArray<string> | null;
@@ -73,7 +70,6 @@ export interface CreateObjectArgs {
    * `approval_id`-Claim → KC2-Audit `via_proxy=true, approval_id=<…>`.
    */
   readonly approvalId?: string;
-  readonly kind: ObjectKind;
   readonly subtype?: string;
   readonly title?: string;
   readonly description?: string;
@@ -105,14 +101,14 @@ export interface ObjectsList {
 }
 
 /**
- * ShareView vom Server. Resource-kind wird server-seitig aus der DB-Row
- * abgeleitet (D-6 dropped es aus dem Create-Body, aber Read-Response enthaelt
- * es). `grantedAt` (NICHT `createdAt`) — D-7.
+ * ShareView vom Server. Post-generic-object-model (ADR-0004): kein
+ * `resourceKind` mehr — Caller laesst sich via JOIN auf `objects.subtype`
+ * den Discriminator nachziehen, falls noetig. `grantedAt` (NICHT
+ * `createdAt`) — D-7.
  */
 export interface Share {
   readonly id: string;
   readonly resourceId: string;
-  readonly resourceKind: ObjectKind;
   readonly grantedBy: string;
   readonly grantedTo: string;
   readonly scope: ShareScope;
@@ -122,13 +118,13 @@ export interface Share {
 }
 
 /**
- * SearchHit — D-9 documented: server akzeptiert single `kind`. Score-Felder
- * `ftsRank` + `vectorScore` (camelCase) sind im Hit enthalten.
+ * SearchHit — D-9 documented: server akzeptiert subtype-Filter via
+ * `subtypes`-Array. Score-Felder `ftsRank` + `vectorScore` (camelCase)
+ * sind im Hit enthalten.
  */
 export interface SearchHit {
   readonly id: string;
-  readonly kind: ObjectKind;
-  readonly subtype: string | null;
+  readonly subtype?: string | null;
   readonly title: string | null;
   readonly score: number;
   readonly ftsRank: number | null;

@@ -124,13 +124,14 @@ export class KnowledgeService {
   // ---------------------------------------------------------------------------
 
   async createObject(args: CreateObjectArgs): Promise<KnowledgeObject> {
+    const subtype = args.subtype ?? 'object';
     return this.audited(
-      `knowledge.${args.kind}.created`,
+      `knowledge.${subtype}.created`,
       args.userId,
-      args.kind,
+      subtype,
       undefined,
       () => this.adapter.createObject(args),
-      (result) => ({ resourceId: result.id, details: { kind: result.kind, subtype: result.subtype } }),
+      (result) => ({ resourceId: result.id, details: { subtype: result.subtype } }),
     );
   }
 
@@ -147,7 +148,10 @@ export class KnowledgeService {
       undefined,
       args.id,
       () => this.adapter.getObject(args),
-      (result) => ({ resourceKind: result.kind, details: { kind: result.kind } }),
+      (result) => ({
+        ...(result.subtype ? { resourceKind: result.subtype } : {}),
+        details: { subtype: result.subtype ?? null },
+      }),
     );
   }
 
@@ -155,12 +159,12 @@ export class KnowledgeService {
     return this.audited(
       'knowledge.object.list',
       args.userId,
-      args.kind,
+      args.subtype,
       undefined,
       () => this.adapter.listObjects(args),
       (result) => ({
         details: {
-          kind: args.kind,
+          subtype: args.subtype ?? null,
           count: result.items.length,
           hasMore: result.nextCursor !== null,
         },
@@ -176,7 +180,7 @@ export class KnowledgeService {
       args.id,
       () => this.adapter.updateObject(args),
       (result) => ({
-        resourceKind: result.kind,
+        ...(result.subtype ? { resourceKind: result.subtype } : {}),
         details: { patchedFields: Object.keys(args.patch) },
       }),
     );
@@ -232,7 +236,7 @@ export class KnowledgeService {
     return this.audited(
       'knowledge.skill.attach_resource',
       args.userId,
-      'skill',
+      'skill_manifest',
       args.skillId,
       () =>
         this.adapter.updateObject({
@@ -274,7 +278,7 @@ export class KnowledgeService {
       action: 'knowledge.doc.attach_to',
       actorUserId: args.userId,
       result: 'success',
-      resourceKind: 'doc',
+      resourceKind: 'file',
       resourceId: args.docId,
       details: {
         attached: attached.length,
@@ -295,28 +299,28 @@ export class KnowledgeService {
    * bekommen (TODO). Fuer < 200 skills akzeptabel.
    */
   async docUsages(args: { userId: string; docId: string }): Promise<{
-    incoming: ReadonlyArray<{ kind: 'skill'; id: string; title: string | null }>;
-    outgoing: ReadonlyArray<{ kind: string; id: string }>;
+    incoming: ReadonlyArray<{ subtype: 'skill_manifest'; id: string; title: string | null }>;
+    outgoing: ReadonlyArray<{ subtype: string; id: string }>;
   }> {
     return this.audited(
       'knowledge.doc.usages',
       args.userId,
-      'doc',
+      'file',
       args.docId,
       async () => {
-        const incoming: Array<{ kind: 'skill'; id: string; title: string | null }> = [];
+        const incoming: Array<{ subtype: 'skill_manifest'; id: string; title: string | null }> = [];
         let cursor: number | null = null;
         // Hard limit: max 5 pages * 200 = 1000 skills scanned.
         for (let page = 0; page < 5; page += 1) {
           const listArgs: ListObjectsArgs =
             cursor === null
-              ? { userId: args.userId, kind: 'skill', limit: 200 }
-              : { userId: args.userId, kind: 'skill', limit: 200, cursor };
+              ? { userId: args.userId, subtype: 'skill_manifest', limit: 200 }
+              : { userId: args.userId, subtype: 'skill_manifest', limit: 200, cursor };
           const list = await this.adapter.listObjects(listArgs);
           for (const skill of list.items) {
             const ids = readResourceIds(skill.meta);
             if (ids.includes(args.docId)) {
-              incoming.push({ kind: 'skill', id: skill.id, title: skill.title });
+              incoming.push({ subtype: 'skill_manifest', id: skill.id, title: skill.title });
             }
           }
           if (list.nextCursor === null) break;
@@ -346,7 +350,7 @@ export class KnowledgeService {
     return this.audited(
       'knowledge.skill.read_resource',
       args.userId,
-      'doc',
+      'file',
       args.resourceId,
       () => this.adapter.getObject({ id: args.resourceId, userId: args.userId, expandBody: true }),
       () => ({ details: { skillId: args.skillId } }),
@@ -371,7 +375,7 @@ export class KnowledgeService {
     return this.audited(
       'knowledge.doc.update_summary',
       args.userId,
-      'doc',
+      'file',
       args.docId,
       () => this.adapter.updateObject({ id: args.docId, userId: args.userId, patch }),
       () => ({ details: { summaryLength: args.summary.length, reEmbed: args.reEmbed ?? true } }),
@@ -437,7 +441,7 @@ export class KnowledgeService {
     return this.audited(
       'knowledge.share.created',
       args.userId,
-      args.resourceKind,
+      undefined,
       args.resourceId,
       () => this.adapter.createShare(args),
       (result) => ({
@@ -488,7 +492,7 @@ export class KnowledgeService {
       undefined,
       () => this.adapter.search(args),
       (result) => ({
-        details: { count: result.length, kinds: args.kinds, queryLength: args.query.length },
+        details: { count: result.length, subtypes: args.subtypes, queryLength: args.query.length },
       }),
     );
   }

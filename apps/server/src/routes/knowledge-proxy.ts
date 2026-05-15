@@ -22,7 +22,7 @@
  *   GET    /v1/knowledge/objects/:id              — read
  *   PATCH  /v1/knowledge/objects/:id              — update
  *   DELETE /v1/knowledge/objects/:id              — delete (owner-only, server-enforced)
- *   GET    /v1/knowledge/objects                  — list (?kind=&limit=&cursor=)
+ *   GET    /v1/knowledge/objects                  — list (?subtype=&limit=&cursor=)
  *   POST   /v1/knowledge/objects/:id/shares       — create share
  *   GET    /v1/knowledge/objects/:id/shares       — list shares
  *   DELETE /v1/knowledge/shares/:shareId          — revoke share
@@ -37,11 +37,20 @@ import { HttpError } from '../lib/errors.js';
 import { auth } from '../middleware/auth.js';
 import type { KnowledgeService } from '../services/knowledge.js';
 
-const objectKindSchema = z.enum(['doc', 'skill', 'app', 'memo']);
+/**
+ * Free-form Subtype (post-ADR-0004 Generic Object Model). Caller-Convention,
+ * Storage interpretiert NICHTS. Regex erlaubt `:` fuer `app:`-Prefix-Namespacing.
+ */
+const objectSubtypeSchema = z
+  .string()
+  .min(1)
+  .max(32)
+  .regex(/^[a-z][a-z0-9_:-]*$/, {
+    message: 'subtype must be lowercase alphanumeric with -, _, : separators',
+  });
 
 const createObjectSchema = z.object({
-  kind: objectKindSchema,
-  subtype: z.string().optional(),
+  subtype: objectSubtypeSchema.optional(),
   title: z.string().optional(),
   description: z.string().optional(),
   keywords: z.array(z.string()).optional(),
@@ -79,20 +88,19 @@ function buildUpdatePatch(input: z.infer<typeof updateObjectSchema>): UpdatePatc
 }
 
 const listObjectsQuerySchema = z.object({
-  kind: objectKindSchema.optional(),
+  subtype: objectSubtypeSchema.optional(),
   limit: z.coerce.number().int().positive().max(500).optional(),
   cursor: z.coerce.number().int().nonnegative().optional(),
 });
 
 const createShareSchema = z.object({
-  resourceKind: objectKindSchema,
   grantedTo: z.string().uuid(),
   scope: z.enum(['read', 'write']),
 });
 
 const searchSchema = z.object({
   query: z.string().min(1).max(2000),
-  kinds: z.array(objectKindSchema).optional(),
+  subtypes: z.array(objectSubtypeSchema).optional(),
   limit: z.number().int().positive().max(100).optional(),
 });
 
@@ -117,7 +125,6 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
     const obj = await runProxy(() =>
       deps.knowledge.createObject({
         userId: user.userId,
-        kind: body.kind,
         ...(body.subtype !== undefined ? { subtype: body.subtype } : {}),
         ...(body.title !== undefined ? { title: body.title } : {}),
         ...(body.description !== undefined ? { description: body.description } : {}),
@@ -162,7 +169,7 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
     const list = await runProxy(() =>
       deps.knowledge.listObjects({
         userId: user.userId,
-        ...(q.kind !== undefined ? { kind: q.kind } : {}),
+        ...(q.subtype !== undefined ? { subtype: q.subtype } : {}),
         ...(q.limit !== undefined ? { limit: q.limit } : {}),
         ...(q.cursor !== undefined ? { cursor: q.cursor } : {}),
       }),
@@ -181,7 +188,6 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
       const share = await runProxy(() =>
         deps.knowledge.createShare({
           resourceId: id,
-          resourceKind: body.resourceKind,
           userId: user.userId,
           grantedTo: body.grantedTo,
           scope: body.scope,
@@ -216,7 +222,7 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
       deps.knowledge.search({
         userId: user.userId,
         query: body.query,
-        ...(body.kinds !== undefined ? { kinds: body.kinds } : {}),
+        ...(body.subtypes !== undefined ? { subtypes: body.subtypes } : {}),
         ...(body.limit !== undefined ? { limit: body.limit } : {}),
       }),
     );

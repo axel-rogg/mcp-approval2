@@ -22,20 +22,28 @@
 import type { KnowledgeService } from './knowledge.js';
 import type { SearchHit } from '@mcp-approval2/adapters';
 
-export type KnowledgeKind = 'doc' | 'skill' | 'app' | 'memo';
+/**
+ * Subtype-Discriminator (free-form). Storage akzeptiert beliebige Strings
+ * (post-ADR-0004 generic object model). Canonical mappings:
+ *   - doc/file → subtype='file'
+ *   - skill   → subtype='skill_manifest'
+ *   - app     → subtype='app:<appType>' (z.B. 'app:composable')
+ *   - memo    → subtype='memo'
+ */
+export type KnowledgeSubtype = string;
 
 export interface FederatedSearchArgs {
   readonly userId: string;
   readonly query: string;
-  readonly kinds?: ReadonlyArray<KnowledgeKind>;
+  readonly subtypes?: ReadonlyArray<KnowledgeSubtype>;
   readonly limit?: number;
-  /** Default true — annotate doc-hits with used_by[] from skills. */
+  /** Default true — annotate file-hits with used_by[] from skill manifests. */
   readonly include_subdocs?: boolean;
 }
 
 export interface FederatedSearchHit extends SearchHit {
-  /** Skill-IDs that reference this doc (max 2, oldest first). */
-  used_by?: ReadonlyArray<{ kind: 'skill'; id: string; title: string | null }>;
+  /** Skill-manifest IDs that reference this file (max 2, oldest first). */
+  used_by?: ReadonlyArray<{ subtype: 'skill_manifest'; id: string; title: string | null }>;
   used_by_truncated_count?: number;
 }
 
@@ -63,8 +71,8 @@ export function createFederatedSearchService(
         userId: args.userId,
         query: args.query,
       };
-      if (args.kinds && args.kinds.length > 0) {
-        (searchArgs as { kinds?: ReadonlyArray<KnowledgeKind> }).kinds = args.kinds;
+      if (args.subtypes && args.subtypes.length > 0) {
+        (searchArgs as { subtypes?: ReadonlyArray<KnowledgeSubtype> }).subtypes = args.subtypes;
       }
       if (args.limit !== undefined) {
         (searchArgs as { limit?: number }).limit = args.limit;
@@ -76,10 +84,10 @@ export function createFederatedSearchService(
         return { hits: rawHits as ReadonlyArray<FederatedSearchHit> };
       }
 
-      // Per-doc-Hit: compute used_by. N+1 — acceptable while result-page <= 20.
+      // Per-file-Hit: compute used_by. N+1 — acceptable while result-page <= 20.
       const annotated: FederatedSearchHit[] = [];
       for (const h of rawHits) {
-        if (h.kind !== 'doc') {
+        if (h.subtype !== 'file') {
           annotated.push(h);
           continue;
         }

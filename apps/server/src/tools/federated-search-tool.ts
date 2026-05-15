@@ -10,13 +10,12 @@ import type {
   FederatedSearchResult,
   FederatedSearchService,
 } from '../services/federated-search.js';
-
-const KnowledgeKind = z.enum(['doc', 'skill', 'app', 'memo']);
+import { KnowledgeSubtype } from './types.js';
 
 export const FederatedSearchInput = z
   .object({
     query: z.string().min(1).max(1024),
-    kinds: z.array(KnowledgeKind).min(1).max(4).optional(),
+    subtypes: z.array(KnowledgeSubtype).min(1).max(16).optional(),
     limit: z.number().int().min(1).max(100).optional(),
     include_subdocs: z.boolean().optional(),
   })
@@ -33,7 +32,7 @@ export function makeFederatedSearchTool(
   return {
     name: 'search',
     description:
-      'Federated search across docs, skills, apps and memos (user content). Hybrid FTS + Vector via mcp-knowledge2.',
+      'Federated search across user content (free-form subtype filter: file/skill_manifest/memo/app:*). Hybrid FTS + Vector via mcp-knowledge2.',
     sensitivity: 'read',
     inputSchema: FederatedSearchInput,
     async execute(ctx: ToolContext, input): Promise<FederatedSearchResult> {
@@ -41,8 +40,8 @@ export function makeFederatedSearchTool(
         userId: ctx.userId,
         query: input.query,
       };
-      if (input.kinds !== undefined) {
-        (args as { kinds?: ReadonlyArray<'doc' | 'skill' | 'app' | 'memo'> }).kinds = input.kinds;
+      if (input.subtypes !== undefined) {
+        (args as { subtypes?: ReadonlyArray<string> }).subtypes = input.subtypes;
       }
       if (input.limit !== undefined) {
         (args as { limit?: number }).limit = input.limit;

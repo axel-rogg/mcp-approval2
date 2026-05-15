@@ -53,57 +53,62 @@ function makeStubObject(overrides: Partial<KnowledgeObject> = {}): KnowledgeObje
   return {
     id: 'obj-1',
     ownerId: USER_ID,
-    kind: 'doc',
-    subtype: null,
+    subtype: 'file',
     title: 'Stub',
     description: 'stub doc',
     keywords: [],
-    body: 'body text',
+    triggerHints: null,
+    meta: null,
+    bodySize: 9,
     bodyHash: null,
+    mimeType: null,
+    filename: null,
     visibility: 'private',
+    pinned: false,
+    archived: false,
+    refcount: 0,
+    currentVersion: 1,
     createdAt: 1,
     updatedAt: 1,
-    deletedAt: null,
+    lastUsedAt: null,
     ...overrides,
   };
 }
 
 function makeKnowledgeAdapterStub(): KnowledgeAdapter {
   const obj = makeStubObject();
-  const skill = makeStubObject({ id: 'skill-1', kind: 'skill', title: 'My Skill' });
-  const docList: ObjectsList = { items: [obj], cursor: null, hasMore: false };
-  const skillList: ObjectsList = { items: [skill], cursor: null, hasMore: false };
+  const skill = makeStubObject({ id: 'skill-1', subtype: 'skill_manifest', title: 'My Skill' });
+  const docList: ObjectsList = { items: [obj], nextCursor: null };
+  const skillList: ObjectsList = { items: [skill], nextCursor: null };
   const hits: ReadonlyArray<SearchHit> = [
     {
       id: 'obj-1',
-      kind: 'doc',
-      subtype: null,
+      subtype: 'file',
       title: 'Stub',
-      snippet: 'snip',
       score: 0.42,
-      ownerId: USER_ID,
-      sharedToMe: false,
+      ftsRank: 0.4,
+      vectorScore: 0.3,
     },
   ];
   const share: Share = {
     id: 'share-1',
     resourceId: 'obj-1',
-    resourceKind: 'doc',
     grantedBy: USER_ID,
     grantedTo: 'user-2',
     scope: 'read',
-    createdAt: 1,
+    grantedAt: 1,
+    expiresAt: null,
     revokedAt: null,
   };
   return {
     async createObject(args) {
-      return makeStubObject({ id: 'new-obj', kind: args.kind, title: args.title ?? null });
+      return makeStubObject({ id: 'new-obj', subtype: args.subtype ?? null, title: args.title ?? null });
     },
     async getObject() {
       return obj;
     },
     async listObjects(args) {
-      return args.kind === 'skill' ? skillList : docList;
+      return args.subtype === 'skill_manifest' ? skillList : docList;
     },
     async updateObject() {
       return obj;
@@ -124,7 +129,22 @@ function makeKnowledgeAdapterStub(): KnowledgeAdapter {
       return hits;
     },
     async eraseUser() {
-      return { deletedRows: 0 };
+      return {
+        status: 'ok',
+        deleted: {
+          objects: 0,
+          shares: 0,
+          idempotency: 0,
+          uploads: 0,
+          auditPseudonymised: 0,
+          blobsDeleted: 0,
+          blobsPending: 0,
+        },
+        deletedRows: 0,
+      };
+    },
+    async syncUser() {
+      return { status: 'created', kcUserId: 'kc-stub-1' };
     },
   };
 }
@@ -468,7 +488,7 @@ describe('knowledge tools', () => {
       bypassApproval: true,
     });
     expect(spy).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: USER_ID, kind: 'doc', title: 'T', body: 'B', description: 'D' }),
+      expect.objectContaining({ userId: USER_ID, subtype: 'file', title: 'T', body: 'B', description: 'D' }),
     );
   });
 
@@ -493,7 +513,7 @@ describe('knowledge tools', () => {
       input: {},
       ctx,
     });
-    expect((res.result.content[0] as { text: string }).text).toContain('"hasMore":false');
+    expect((res.result.content[0] as { text: string }).text).toContain('"nextCursor":null');
   });
 
   it('knowledge.skills.list returns skills', async () => {

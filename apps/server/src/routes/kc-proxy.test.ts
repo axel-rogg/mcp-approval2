@@ -164,7 +164,7 @@ describe('kc-proxy — forwarding', () => {
       signer: makeStubSigner(),
     });
     const bearer = await makeBearer(cfg);
-    const body = JSON.stringify({ kind: 'doc', title: 'hello' });
+    const body = JSON.stringify({ subtype: 'file', title: 'hello' });
     const res = await app.request('/admin/kc-proxy/v1/objects', {
       method: 'POST',
       headers: {

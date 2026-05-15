@@ -9,7 +9,6 @@
 export type {
   CreateObjectArgs,
   KnowledgeObject,
-  ObjectKind,
   ObjectsList,
   SearchHit,
   Share,

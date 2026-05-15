@@ -29,7 +29,6 @@
 import type {
   CreateObjectArgs,
   KnowledgeObject,
-  ObjectKind,
   ObjectsList,
   SearchHit,
   Share,
@@ -64,7 +63,6 @@ export interface GetObjectArgs extends OnBehalfOfFields {
 
 export interface ListObjectsArgs extends OnBehalfOfFields {
   readonly userId: string;
-  readonly kind?: ObjectKind;
   readonly subtype?: string;
   readonly limit?: number;
   /**
@@ -96,24 +94,16 @@ export interface SearchArgs extends OnBehalfOfFields {
   readonly userId: string;
   readonly query: string;
   /**
-   * D-9 (joint): Server akzeptiert SINGLE `kind` heute. Multi-kind ist als
-   * Follow-up gequeued. Adapter sendet:
-   *   - wenn kinds.length === 1 → server `kind: ObjectKind`
-   *   - wenn kinds.length > 1   → server `kind: ObjectKind[]` (forward-compatible,
-   *     wird heute server-seitig silently ignoriert / multi-kind-Follow-up)
-   *   - wenn kinds undefined    → kein Filter
+   * Post-ADR-0004: free-form subtype-Filter. Storage akzeptiert
+   * `subtypes: string[]` als Mehrfach-Filter (kind-agnostisch). Leeres
+   * Array oder undefined → kein Filter.
    */
-  readonly kinds?: ReadonlyArray<ObjectKind>;
+  readonly subtypes?: ReadonlyArray<string>;
   readonly limit?: number;
 }
 
 export interface CreateShareArgs extends OnBehalfOfFields {
   readonly resourceId: string;
-  /**
-   * D-6: server leitet resourceKind aus dem Object-Row ab. Wir behalten das
-   * Feld im Caller-Args (fuer Audit-Logging), schicken es aber NICHT mit.
-   */
-  readonly resourceKind: ObjectKind;
   readonly userId: string;
   readonly grantedTo: string;
   readonly scope: ShareScope;

@@ -49,16 +49,17 @@ export function makeKnowledgeDocsCreateTool(
   return {
     name: 'knowledge.docs.create',
     description:
-      'Create a new document (kind=doc) in the knowledge store. Requires approval.',
+      'Create a new document (subtype=file by default) in the knowledge store. Requires approval.',
     sensitivity: 'write',
     displayTemplate:
       'Create new document: {{title}} ({{body.length}} chars)',
     inputSchema: KnowledgeDocsCreateInput,
     async execute(ctx: ToolContext, input): Promise<KnowledgeObject> {
       // exactOptionalPropertyTypes: nur definierte Felder weitergeben.
+      // Default-Subtype 'file' wenn keiner uebergeben — kanonisch fuer docs.
       const args: Parameters<KnowledgeService['createObject']>[0] = {
         userId: ctx.userId,
-        kind: 'doc',
+        subtype: input.subtype ?? 'file',
         title: input.title,
         body: input.body,
       };
@@ -67,9 +68,6 @@ export function makeKnowledgeDocsCreateTool(
       }
       if (input.keywords !== undefined) {
         (args as { keywords?: ReadonlyArray<string> }).keywords = input.keywords;
-      }
-      if (input.subtype !== undefined) {
-        (args as { subtype?: string }).subtype = input.subtype;
       }
       if (input.visibility !== undefined) {
         (args as { visibility?: 'private' | 'shared' }).visibility = input.visibility;
@@ -112,7 +110,7 @@ export function makeKnowledgeDocsListTool(
     async execute(ctx: ToolContext, input): Promise<ObjectsList> {
       const args: Parameters<KnowledgeService['listObjects']>[0] = {
         userId: ctx.userId,
-        kind: 'doc',
+        subtype: 'file',
       };
       if (input.limit !== undefined) {
         (args as { limit?: number }).limit = input.limit;
@@ -140,7 +138,7 @@ export function makeKnowledgeSkillsListTool(
     async execute(ctx: ToolContext, input): Promise<ObjectsList> {
       const args: Parameters<KnowledgeService['listObjects']>[0] = {
         userId: ctx.userId,
-        kind: 'skill',
+        subtype: 'skill_manifest',
       };
       if (input.limit !== undefined) {
         (args as { limit?: number }).limit = input.limit;
@@ -163,7 +161,7 @@ export function makeKnowledgeSearchTool(
   return {
     name: 'knowledge.search',
     description:
-      'Hybrid search across objects (docs, skills, apps, memos). Returns ranked hits.',
+      'Hybrid search across objects (free-form subtype filter, e.g. file/skill_manifest/memo/app:*). Returns ranked hits.',
     sensitivity: 'read',
     inputSchema: KnowledgeSearchInput,
     async execute(ctx: ToolContext, input): Promise<{ hits: ReadonlyArray<SearchHit> }> {
@@ -171,9 +169,8 @@ export function makeKnowledgeSearchTool(
         userId: ctx.userId,
         query: input.query,
       };
-      if (input.kinds !== undefined) {
-        (args as { kinds?: ReadonlyArray<'doc' | 'skill' | 'app' | 'memo'> }).kinds =
-          input.kinds;
+      if (input.subtypes !== undefined) {
+        (args as { subtypes?: ReadonlyArray<string> }).subtypes = input.subtypes;
       }
       if (input.limit !== undefined) {
         (args as { limit?: number }).limit = input.limit;

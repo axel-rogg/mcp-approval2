@@ -1,15 +1,15 @@
 /**
- * Objects-Tools — technical, kind-agnostic view auf den Knowledge-Store.
+ * Objects-Tools — technical, subtype-agnostic view auf den Knowledge-Store.
  *
  * Plan-Ref: PLAN-architecture-v1.md §2.1, §7
  *
  * `objects.list` und `objects.read` sind duenne Wrapper auf KnowledgeService
- * ohne kind-Filter (im Gegensatz zu docs/skills/memorize, die fix auf einen
- * kind festgenagelt sind). Vorgesehen fuer die PWA-Storage-Tab und Power-User-
+ * ohne subtype-Filter (im Gegensatz zu docs/skills/memorize, die fix auf einen
+ * subtype festgenagelt sind). Vorgesehen fuer die PWA-Storage-Tab und Power-User-
  * Debug-Workflows.
  *
  * Tool-Inventar:
- *   - objects.list (read)  — alle Kinds, optional kind/subtype-Filter
+ *   - objects.list (read)  — alle Objekte, optional subtype-Filter (free-form)
  *   - objects.read (read)  — by id, optional expand_body
  */
 import type { KnowledgeObject, ObjectsList } from '@mcp-approval2/adapters';
@@ -27,7 +27,7 @@ export interface ObjectsToolsDeps {
 }
 
 // ---------------------------------------------------------------------------
-// objects.list — read (kind-agnostic)
+// objects.list — read (subtype-agnostic)
 // ---------------------------------------------------------------------------
 
 export function makeObjectsListTool(
@@ -36,16 +36,13 @@ export function makeObjectsListTool(
   return {
     name: 'objects.list',
     description:
-      "Technical view: list the current user's objects across all kinds. Optional kind/subtype filter.",
+      "Technical view: list the current user's objects. Optional free-form subtype filter (e.g. 'file', 'skill_manifest', 'memo', 'app:composable').",
     sensitivity: 'read',
     inputSchema: ObjectsListInput,
     async execute(ctx: ToolContext, input): Promise<ObjectsList> {
       const args: Parameters<KnowledgeService['listObjects']>[0] = {
         userId: ctx.userId,
       };
-      if (input.kind !== undefined) {
-        (args as { kind?: 'doc' | 'skill' | 'app' | 'memo' }).kind = input.kind;
-      }
       if (input.subtype !== undefined) {
         (args as { subtype?: string }).subtype = input.subtype;
       }
@@ -57,7 +54,7 @@ export function makeObjectsListTool(
 }
 
 // ---------------------------------------------------------------------------
-// objects.read — read (kind-agnostic)
+// objects.read — read (subtype-agnostic)
 // ---------------------------------------------------------------------------
 
 export function makeObjectsReadTool(
@@ -65,7 +62,7 @@ export function makeObjectsReadTool(
 ): Tool<ObjectsReadInputT, KnowledgeObject> {
   return {
     name: 'objects.read',
-    description: 'Technical view: read any object by id (kind-agnostic). Pass expand_body=true for the body.',
+    description: 'Technical view: read any object by id (subtype-agnostic). Pass expand_body=true for the body.',
     sensitivity: 'read',
     inputSchema: ObjectsReadInput,
     async execute(ctx: ToolContext, input): Promise<KnowledgeObject> {

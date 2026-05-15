@@ -315,7 +315,8 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
 
   async createObject(args: CreateObjectArgs): Promise<KnowledgeObject> {
     // D-2 + D-3: body als base64 unter `body_b64`, plus mime_type/filename/embed.
-    const body: Record<string, unknown> = { kind: args.kind };
+    // ADR-0004: kein `kind` mehr, optionales free-form `subtype`.
+    const body: Record<string, unknown> = {};
     if (args.subtype !== undefined) body['subtype'] = args.subtype;
     if (args.title !== undefined) body['title'] = args.title;
     if (args.description !== undefined) body['description'] = args.description;
@@ -332,7 +333,7 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
       path: '/v1/objects',
       userId: args.userId,
       body,
-      scope: `${args.kind}:write`,
+      scope: 'objects:write',
       ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
       ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
     });
@@ -357,8 +358,8 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
 
   async listObjects(args: ListObjectsArgs): Promise<ObjectsList> {
     // D-4 + D-5: server liefert `{items, next_cursor}` mit number-cursor.
+    // ADR-0004: nur noch free-form `subtype`-Filter.
     const query: Record<string, string | number | undefined> = {};
-    if (args.kind !== undefined) query['kind'] = args.kind;
     if (args.subtype !== undefined) query['subtype'] = args.subtype;
     if (args.limit !== undefined) query['limit'] = args.limit;
     if (args.cursor !== undefined && args.cursor !== null) query['cursor'] = args.cursor;
@@ -475,17 +476,11 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
   // ---------------------------------------------------------------------------
 
   async search(args: SearchArgs): Promise<ReadonlyArray<SearchHit>> {
-    // D-9 (joint): server akzeptiert single `kind` heute. Multi-kind wird
-    // server-seitig nachgereicht — Adapter ist forward-compatible:
-    //   - kinds=[] / undefined → kein kind-filter
-    //   - kinds.length === 1   → server `kind: ObjectKind`
-    //   - kinds.length > 1     → server `kind: ObjectKind[]` (Server-Side wird
-    //                            das heute silently ignoriert; sobald die
-    //                            Server-Erweiterung live ist, filtern beide
-    //                            Seiten konsistent).
+    // ADR-0004: free-form `subtypes`-Array statt `kind`. Storage erlaubt
+    // Mehrfach-Filter; leeres Array / undefined → kein Filter.
     const body: Record<string, unknown> = { query: args.query };
-    if (args.kinds !== undefined && args.kinds.length > 0) {
-      body['kind'] = args.kinds.length === 1 ? args.kinds[0] : args.kinds;
+    if (args.subtypes !== undefined && args.subtypes.length > 0) {
+      body['subtypes'] = args.subtypes;
     }
     if (args.limit !== undefined) body['limit'] = args.limit;
     const res = await this.authedFetch<{ items: ReadonlyArray<SearchHit> }>({

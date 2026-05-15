@@ -6,7 +6,7 @@
  *   - listObjects: `{items, next_cursor}` (int cursor, nicht hasMore)
  *   - createShare: `{granted_to, scope, expires_at?}` snake_case (kein resourceKind)
  *   - listShares: `{items: [...]}` (kein bare array)
- *   - search: `{kind: ObjectKind | ObjectKind[]}` (heute single, multi-kind queued)
+ *   - search: `{subtypes: string[]}` (kind-agnostisch, ADR-0004)
  *   - eraseUser: `{user_id, confirmation_token}` + Service-Token + rich response
  *   - getObject: optional `?expand=body` → body_b64-Field
  *   - Errors: RFC 7807 Problem Details (mit Legacy-Fallback)
@@ -63,10 +63,10 @@ function makeProblemResponse(
 
 function defaultObjectView(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   // ObjectView wie der Server sie schickt (camelCase, alle Pflichtfelder).
+  // ADR-0004: kein `kind` mehr, nur free-form `subtype`.
   return {
     id: 'o1',
     ownerId: USER_ID,
-    kind: 'doc',
     subtype: null,
     title: null,
     description: null,
@@ -149,7 +149,7 @@ describe('HttpKnowledgeAdapter — authedFetch + JWT', () => {
     const adapter = makeAdapter({ fetchImpl: fetchMock });
     await adapter.createObject({
       userId: USER_ID,
-      kind: 'doc',
+      subtype: 'doc',
       title: 'hello',
       body: 'hello-body',
     });
@@ -159,7 +159,9 @@ describe('HttpKnowledgeAdapter — authedFetch + JWT', () => {
     expect(headers['content-type']).toBe('application/json');
     expect(init?.method).toBe('POST');
     const sent = JSON.parse(init?.body as string) as Record<string, unknown>;
-    expect(sent['kind']).toBe('doc');
+    // ADR-0004: kein `kind` mehr im Wire-Body.
+    expect(sent['kind']).toBeUndefined();
+    expect(sent['subtype']).toBe('doc');
     expect(sent['title']).toBe('hello');
     // D-2: body wird base64-encodet als body_b64 gesendet, NICHT als body.
     expect(sent['body']).toBeUndefined();
@@ -357,7 +359,7 @@ describe('HttpKnowledgeAdapter — createObject (D-2 + D-3)', () => {
     const bytes = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
     await adapter.createObject({
       userId: USER_ID,
-      kind: 'doc',
+      subtype: 'doc',
       body: bytes,
     });
     const [, init] = fetchMock.mock.calls[0] ?? [];
@@ -372,7 +374,7 @@ describe('HttpKnowledgeAdapter — createObject (D-2 + D-3)', () => {
     const adapter = makeAdapter({ fetchImpl: fetchMock });
     await adapter.createObject({
       userId: USER_ID,
-      kind: 'doc',
+      subtype: 'doc',
       title: 'T',
       description: 'D',
       keywords: ['a', 'b'],
@@ -387,7 +389,7 @@ describe('HttpKnowledgeAdapter — createObject (D-2 + D-3)', () => {
     const [, init] = fetchMock.mock.calls[0] ?? [];
     const sent = JSON.parse(init?.body as string) as Record<string, unknown>;
     expect(sent).toMatchObject({
-      kind: 'doc',
+      subtype: 'doc',
       title: 'T',
       description: 'D',
       keywords: ['a', 'b'],
@@ -398,6 +400,7 @@ describe('HttpKnowledgeAdapter — createObject (D-2 + D-3)', () => {
       embed: true,
       visibility: 'private',
     });
+    expect(sent['kind']).toBeUndefined();
     expect(sent['body_b64']).toBe(Buffer.from('body-text', 'utf-8').toString('base64'));
   });
 });
@@ -441,16 +444,18 @@ describe('HttpKnowledgeAdapter — getObject (D-11)', () => {
 });
 
 describe('HttpKnowledgeAdapter — listObjects (D-4 + D-5)', () => {
-  it('serializes kind/limit/cursor as query params (cursor as integer)', async () => {
+  it('serializes subtype/limit/cursor as query params (cursor as integer)', async () => {
     const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
       makeJsonResponse(200, { items: [], next_cursor: null }),
     );
     const adapter = makeAdapter({ fetchImpl: fetchMock });
-    await adapter.listObjects({ userId: USER_ID, kind: 'skill', limit: 50, cursor: 1234567890 });
+    await adapter.listObjects({ userId: USER_ID, subtype: 'skill', limit: 50, cursor: 1234567890 });
     const [url] = fetchMock.mock.calls[0] ?? [];
     const u = new URL(String(url));
     expect(u.pathname).toBe('/v1/objects');
-    expect(u.searchParams.get('kind')).toBe('skill');
+    // ADR-0004: kein `kind` mehr — `subtype` ist der einzige Discriminator.
+    expect(u.searchParams.get('kind')).toBeNull();
+    expect(u.searchParams.get('subtype')).toBe('skill');
     expect(u.searchParams.get('limit')).toBe('50');
     expect(u.searchParams.get('cursor')).toBe('1234567890');
   });
@@ -520,12 +525,11 @@ describe('HttpKnowledgeAdapter — deleteObject', () => {
 });
 
 describe('HttpKnowledgeAdapter — createShare (D-6 + D-7)', () => {
-  it('sends granted_to/scope snake_case (drops resourceKind)', async () => {
+  it('sends granted_to/scope snake_case (ADR-0004: no resourceKind on wire)', async () => {
     const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
       makeJsonResponse(201, {
         id: 's1',
         resourceId: 'o1',
-        resourceKind: 'doc',
         grantedBy: USER_ID,
         grantedTo: 'user-2',
         scope: 'read',
@@ -537,7 +541,6 @@ describe('HttpKnowledgeAdapter — createShare (D-6 + D-7)', () => {
     const adapter = makeAdapter({ fetchImpl: fetchMock });
     const share = await adapter.createShare({
       resourceId: 'o1',
-      resourceKind: 'doc',
       userId: USER_ID,
       grantedTo: 'user-2',
       scope: 'read',
@@ -546,7 +549,7 @@ describe('HttpKnowledgeAdapter — createShare (D-6 + D-7)', () => {
     expect(String(url)).toBe('https://knowledge.example.org/v1/objects/o1/shares');
     expect(init?.method).toBe('POST');
     const body = JSON.parse(init?.body as string) as Record<string, unknown>;
-    // D-6: server haelt resourceKind aus dem Body raus, snake_case granted_to.
+    // ADR-0004: server-Body ohne resourceKind, snake_case granted_to.
     expect(body).toEqual({ granted_to: 'user-2', scope: 'read' });
     // D-7: server-Response hat grantedAt (nicht createdAt).
     expect(share.grantedAt).toBe(1);
@@ -557,7 +560,6 @@ describe('HttpKnowledgeAdapter — createShare (D-6 + D-7)', () => {
       makeJsonResponse(201, {
         id: 's1',
         resourceId: 'o1',
-        resourceKind: 'doc',
         grantedBy: USER_ID,
         grantedTo: 'user-2',
         scope: 'read',
@@ -569,7 +571,6 @@ describe('HttpKnowledgeAdapter — createShare (D-6 + D-7)', () => {
     const adapter = makeAdapter({ fetchImpl: fetchMock });
     await adapter.createShare({
       resourceId: 'o1',
-      resourceKind: 'doc',
       userId: USER_ID,
       grantedTo: 'user-2',
       scope: 'read',
@@ -589,7 +590,6 @@ describe('HttpKnowledgeAdapter — listShares (D-8)', () => {
           {
             id: 's1',
             resourceId: 'o1',
-            resourceKind: 'doc',
             grantedBy: USER_ID,
             grantedTo: 'u2',
             scope: 'read',
@@ -618,38 +618,39 @@ describe('HttpKnowledgeAdapter — revokeShare', () => {
   });
 });
 
-describe('HttpKnowledgeAdapter — search (D-9)', () => {
-  it('sends single kind as string when kinds.length === 1', async () => {
+describe('HttpKnowledgeAdapter — search (ADR-0004 subtypes)', () => {
+  it('sends subtypes array even when only one subtype is requested', async () => {
     const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
       makeJsonResponse(200, {
         items: [
-          { id: 'o1', kind: 'doc', subtype: null, title: 'h', score: 0.9, ftsRank: 0.5, vectorScore: 0.4 },
+          { id: 'o1', subtype: 'doc', title: 'h', score: 0.9, ftsRank: 0.5, vectorScore: 0.4 },
         ],
       }),
     );
     const adapter = makeAdapter({ fetchImpl: fetchMock });
-    const hits = await adapter.search({ userId: USER_ID, query: 'foo', kinds: ['doc'], limit: 5 });
+    const hits = await adapter.search({ userId: USER_ID, query: 'foo', subtypes: ['doc'], limit: 5 });
     expect(hits).toHaveLength(1);
     expect(hits[0]?.id).toBe('o1');
     const [url, init] = fetchMock.mock.calls[0] ?? [];
     expect(String(url)).toBe('https://knowledge.example.org/v1/search');
     expect(init?.method).toBe('POST');
     const body = JSON.parse(init?.body as string) as Record<string, unknown>;
-    expect(body).toEqual({ query: 'foo', kind: 'doc', limit: 5 });
+    expect(body).toEqual({ query: 'foo', subtypes: ['doc'], limit: 5 });
+    expect(body['kind']).toBeUndefined();
   });
 
-  it('sends kind as array when kinds.length > 1 (forward-compatible)', async () => {
+  it('sends multi-subtype filter as array', async () => {
     const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
       makeJsonResponse(200, { items: [] }),
     );
     const adapter = makeAdapter({ fetchImpl: fetchMock });
-    await adapter.search({ userId: USER_ID, query: 'foo', kinds: ['doc', 'skill'] });
+    await adapter.search({ userId: USER_ID, query: 'foo', subtypes: ['doc', 'skill'] });
     const [, init] = fetchMock.mock.calls[0] ?? [];
     const body = JSON.parse(init?.body as string) as Record<string, unknown>;
-    expect(body).toEqual({ query: 'foo', kind: ['doc', 'skill'] });
+    expect(body).toEqual({ query: 'foo', subtypes: ['doc', 'skill'] });
   });
 
-  it('omits kind when kinds is undefined or empty', async () => {
+  it('omits subtypes when undefined or empty', async () => {
     const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
       makeJsonResponse(200, { items: [] }),
     );
@@ -658,6 +659,7 @@ describe('HttpKnowledgeAdapter — search (D-9)', () => {
     const [, init] = fetchMock.mock.calls[0] ?? [];
     const body = JSON.parse(init?.body as string) as Record<string, unknown>;
     expect(body).toEqual({ query: 'foo' });
+    expect(body['subtypes']).toBeUndefined();
     expect(body['kind']).toBeUndefined();
   });
 });

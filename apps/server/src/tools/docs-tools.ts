@@ -1,5 +1,5 @@
 /**
- * Docs-Tools — KC-Wrapper fuer kind='doc' Objekte.
+ * Docs-Tools — KC-Wrapper fuer subtype='file' Objekte.
  *
  * Plan-Ref: PLAN-architecture-v1.md §2.1 (Storage-Boundary), §7
  *
@@ -92,7 +92,7 @@ export function makeDocsPutTool(deps: DocsToolsDeps): Tool<DocsPutInputT, Knowle
       // Create
       const args: CreateObjectArgs = {
         userId: ctx.userId,
-        kind: 'doc',
+        subtype: 'file',
         title: input.filename,
         body: input.body,
         filename: input.filename,
@@ -149,13 +149,13 @@ export function makeDocsListTool(deps: DocsToolsDeps): Tool<DocsListInputT, Obje
   return {
     name: 'docs.list',
     description:
-      "List the current user's documents (kind=doc). Supports paging via limit/cursor and filter by namespace/category/tags/mime_type.",
+      "List the current user's documents (subtype=file). Supports paging via limit/cursor and filter by namespace/category/tags/mime_type.",
     sensitivity: 'read',
     inputSchema: DocsListInput,
     async execute(ctx: ToolContext, input): Promise<ObjectsList> {
       const args: Parameters<KnowledgeService['listObjects']>[0] = {
         userId: ctx.userId,
-        kind: 'doc',
+        subtype: 'file',
       };
       if (input.limit !== undefined) (args as { limit?: number }).limit = input.limit;
       if (input.cursor !== undefined) (args as { cursor?: number }).cursor = input.cursor;
@@ -226,7 +226,7 @@ export function makeDocsDeleteTool(deps: DocsToolsDeps): Tool<DocsDeleteInputT, 
 
 export function makeDocsUsagesTool(
   deps: DocsToolsDeps,
-): Tool<DocsUsagesInputT, { incoming: ReadonlyArray<{ kind: 'skill'; id: string; title: string | null }>; outgoing: ReadonlyArray<{ kind: string; id: string }> }> {
+): Tool<DocsUsagesInputT, { incoming: ReadonlyArray<{ subtype: 'skill_manifest'; id: string; title: string | null }>; outgoing: ReadonlyArray<{ subtype: string; id: string }> }> {
   return {
     name: 'docs.usages',
     description: 'List incoming references to a document (which skills attach it as a resource).',

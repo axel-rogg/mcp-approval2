@@ -9,11 +9,13 @@
  *     signt JWTs mit sub=userId, mcp-knowledge2 RLS filtert.
  *
  * Verantwortlichkeiten:
- *   - createApp: validate state via AppTypeDef, kind='app' in KC anlegen.
- *     (Schema-Note: KC2 nutzt kind='app', nicht 'app_state' wie Legacy.)
+ *   - createApp: validate state via AppTypeDef, subtype='app:<appType>' in KC anlegen.
+ *     (Schema-Note: KC2 nutzt subtype-Namespacing mit `app:`-Prefix nach
+ *     ADR-0004 / §6.1 Option A — vorher zweistufig kind='app' + subtype=<appType>.)
  *   - readApp: lade Object + decodes body als JSON-State (auto-migration).
  *   - updateState: CAS via KC's expectedVersion → KCError 409 → CONCURRENT_UPDATE.
- *   - listApps: KC listObjects mit kind='app' + Filter via meta.
+ *   - listApps: KC listObjects mit subtype='app:*' (client-side prefix-filter) +
+ *     exakt-Match bei args.appType.
  *   - deleteApp: KC deleteObject.
  *   - invoke: routeAction + applyPatches + updateState (CAS-retry).
  *   - query: routeQuery (read-only, kein write).
@@ -157,6 +159,24 @@ export function createAppsService(deps: CreateAppsServiceDeps): AppsService {
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
+const APP_SUBTYPE_PREFIX = 'app:';
+
+/** Build canonical subtype for an app of type `appType` (e.g. 'composable' → 'app:composable'). */
+function appSubtype(appType: string): string {
+  return `${APP_SUBTYPE_PREFIX}${appType}`;
+}
+
+/** Reverse: 'app:composable' → 'composable'. Empty/non-app → ''. */
+function appTypeFromSubtype(subtype: string | null | undefined): string {
+  if (!subtype || !subtype.startsWith(APP_SUBTYPE_PREFIX)) return '';
+  return subtype.slice(APP_SUBTYPE_PREFIX.length);
+}
+
+/** Type-guard: is this object an app (subtype starts with `app:`)? */
+function isAppObject(obj: KnowledgeObject): boolean {
+  return typeof obj.subtype === 'string' && obj.subtype.startsWith(APP_SUBTYPE_PREFIX);
+}
+
 function metaSchemaVersion(meta: Record<string, unknown> | null | undefined, fallback: number): number {
   if (!meta) return fallback;
   const v = (meta as { schema_version?: unknown }).schema_version;
@@ -167,7 +187,7 @@ function toAppInstance(obj: KnowledgeObject): AppInstance {
   return {
     id: obj.id,
     userId: obj.ownerId,
-    type: obj.subtype ?? '',
+    type: appTypeFromSubtype(obj.subtype),
     title: obj.title ?? '',
     state_version: obj.currentVersion,
     schema_version: metaSchemaVersion(obj.meta, 1),
@@ -208,8 +228,7 @@ class AppsServiceImpl implements AppsService {
     if (typeDef.single_instance) {
       const existing = await this.knowledge.listObjects({
         userId: args.userId,
-        kind: 'app',
-        subtype: args.appType,
+        subtype: appSubtype(args.appType),
         limit: 1,
       });
       const live = existing.items.find((o) => !o.archived);
@@ -229,8 +248,7 @@ class AppsServiceImpl implements AppsService {
 
     const createArgs: CreateObjectArgs = {
       userId: args.userId,
-      kind: 'app',
-      subtype: args.appType,
+      subtype: appSubtype(args.appType),
       title,
       description,
       meta: {
@@ -256,8 +274,11 @@ class AppsServiceImpl implements AppsService {
     } catch (e) {
       throw mapNotFound(e, args.id);
     }
-    if (obj.kind !== 'app') {
-      throw new AppsServiceError('NOT_FOUND', `object ${args.id} is not an app (kind=${obj.kind})`);
+    if (!isAppObject(obj)) {
+      throw new AppsServiceError(
+        'NOT_FOUND',
+        `object ${args.id} is not an app (subtype=${obj.subtype ?? 'null'})`,
+      );
     }
     // Fetch body explicitly via adapter call expandBody.
     // KnowledgeService.getObject doesn't accept expandBody — we work around by
@@ -307,12 +328,13 @@ class AppsServiceImpl implements AppsService {
     } catch (e) {
       throw mapNotFound(e, args.id);
     }
-    if (cur.kind !== 'app') {
+    if (!isAppObject(cur)) {
       throw new AppsServiceError('NOT_FOUND', `object ${args.id} is not an app`);
     }
-    const typeDef = getAppType(cur.subtype ?? '');
+    const curAppType = appTypeFromSubtype(cur.subtype);
+    const typeDef = getAppType(curAppType);
     if (!typeDef) {
-      throw new AppsServiceError('UNKNOWN_TYPE', `Unknown app type: ${cur.subtype}`);
+      throw new AppsServiceError('UNKNOWN_TYPE', `Unknown app type: ${curAppType || '(empty)'}`);
     }
     const validation = typeDef.validate(args.statePatch);
     if (!validation.valid) {
@@ -323,7 +345,7 @@ class AppsServiceImpl implements AppsService {
       body: newBody,
       meta: {
         ...(cur.meta ?? {}),
-        type: cur.subtype ?? '',
+        type: curAppType,
         schema_version: typeDef.current_schema_version,
       },
       expectedVersion: args.expectedVersion,
@@ -344,12 +366,19 @@ class AppsServiceImpl implements AppsService {
   async listApps(args: { userId: string; type?: string; limit?: number }): Promise<AppInstance[]> {
     const listArgs: Parameters<KnowledgeService['listObjects']>[0] = {
       userId: args.userId,
-      kind: 'app',
     };
-    if (args.type !== undefined) (listArgs as { subtype?: string }).subtype = args.type;
+    // §6.1 Option A: KC2 erwartet exakten subtype-Match. Bei explizitem
+    // appType → exakte Subtype-Anfrage. Ohne appType → ohne Filter laden,
+    // dann client-side per `app:`-Prefix narrowen.
+    if (args.type !== undefined) {
+      (listArgs as { subtype?: string }).subtype = appSubtype(args.type);
+    }
     if (args.limit !== undefined) (listArgs as { limit?: number }).limit = args.limit;
     const list = await this.knowledge.listObjects(listArgs);
-    return list.items.map((o) => toAppInstance(o));
+    const apps = args.type !== undefined
+      ? list.items
+      : list.items.filter(isAppObject);
+    return apps.map((o) => toAppInstance(o));
   }
 
   async deleteApp(args: { userId: string; id: string }): Promise<void> {
