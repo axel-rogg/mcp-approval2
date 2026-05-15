@@ -555,6 +555,13 @@ export interface KnowledgeServiceEnv {
   readonly JWT_AUDIENCE?: string;
   /** Optional: kid-Header fuer JWKS-Key-Selection. */
   readonly JWT_KID?: string;
+  /**
+   * AS-3: shared SERVICE_TOKEN fuer S2S-Calls an KC2. Wenn gesetzt, baut die
+   * Factory den HttpKnowledgeAdapter mit OBO-Pattern auf (alle user-Routes
+   * senden `Authorization: Bearer <service-token>` + `X-On-Behalf-Of: <obo-jwt>`).
+   * Wenn ungesetzt: Legacy-Pfad (`Authorization: Bearer <user-jwt>`).
+   */
+  readonly SERVICE_TOKEN?: string;
 }
 
 /**
@@ -592,28 +599,26 @@ export async function createKnowledgeService(args: {
     throw new Error('createKnowledgeService: failed to load private key');
   }
 
-  const signer: JwtSigner = {
-    async sign({ sub, scope, ttlSec = 60 }) {
-      const payload: Record<string, unknown> = {};
-      if (scope !== undefined) payload['scope'] = scope;
-      const signArgs: Parameters<typeof signJwt>[0] = {
-        payload,
-        privateKey,
-        alg: 'RS256',
-        expiresInSec: ttlSec,
-        issuer,
-        audience,
-        subject: sub,
-      };
-      if (args.env.JWT_KID !== undefined) signArgs.kid = args.env.JWT_KID;
-      return signJwt(signArgs);
-    },
-  };
+  const signer: JwtSigner = makeRs256Signer({
+    privateKey,
+    issuer,
+    audience,
+    ...(args.env.JWT_KID !== undefined ? { kid: args.env.JWT_KID } : {}),
+  });
 
-  const baseAdapterOpts = {
+  const baseAdapterOpts: {
+    baseUrl: string;
+    jwtSigner: JwtSigner;
+    serviceToken?: string;
+  } = {
     baseUrl: args.env.KNOWLEDGE_URL,
     jwtSigner: signer,
   };
+  // AS-3: wenn SERVICE_TOKEN gesetzt ist, schaltet der Adapter intern auf den
+  // OBO-Pfad um. Ohne den Token gilt der Legacy-Bearer-JWT-Pfad.
+  if (args.env.SERVICE_TOKEN !== undefined && args.env.SERVICE_TOKEN.length > 0) {
+    baseAdapterOpts.serviceToken = args.env.SERVICE_TOKEN;
+  }
   const fetchImpl = args.fetchImpl;
   const adapter = new HttpKnowledgeAdapter(
     fetchImpl
@@ -630,3 +635,83 @@ export async function createKnowledgeService(args: {
   return new KnowledgeService(svcOpts);
 }
 
+// =============================================================================
+// JWT-Signer-Factory (AS-3)
+// =============================================================================
+
+interface Rs256SignerArgs {
+  readonly privateKey: CryptoKey;
+  readonly issuer: string;
+  readonly audience: string;
+  readonly kid?: string;
+}
+
+/**
+ * Konstruiert einen `JwtSigner` der beide Methoden bedient — `sign` (legacy)
+ * und `signOBO` (AS-3). Beide nutzen denselben RS256-Private-Key, nur
+ * unterschiedliche Claim-Sets.
+ *
+ * Plan-Ref: PLAN-as3-autonomous.md §1.2 + §2.1.
+ *
+ * Behavior:
+ *   - `sign(sub, scope, ttlSec=60)`: Legacy-Pfad, traegt `iss/aud/sub/iat/exp`
+ *     und optional `scope`. Wird heute nur noch fuer den Internal-Erase-Route
+ *     gebraucht — der OBO-Pfad ersetzt alle User-Routes-Calls.
+ *   - `signOBO(SignOboArgs)`: AS-3-Pattern. Audience-Override moeglich (default
+ *     bleibt die Factory-Audience). Setzt:
+ *         `iss=issuer, aud=args.aud, sub=args.sub, on_behalf_of, request_id?, approval_id?, jti, iat, exp`.
+ *     `jti` wird hier generiert (crypto.randomUUID) damit KC2 Replay-
+ *     Detection in Phase 2 leicht nachruesten kann.
+ *
+ * `kid` wird im Protected-Header gesetzt wenn vorhanden — KC2's JWKS-Lookup
+ * matched darueber den Public-Key.
+ */
+export function makeRs256Signer(args: Rs256SignerArgs): JwtSigner {
+  const { privateKey, issuer, audience, kid } = args;
+
+  return {
+    async sign({ sub, scope, ttlSec = 60 }) {
+      const payload: Record<string, unknown> = {};
+      if (scope !== undefined) payload['scope'] = scope;
+      const signArgs: Parameters<typeof signJwt>[0] = {
+        payload,
+        privateKey,
+        alg: 'RS256',
+        expiresInSec: ttlSec,
+        issuer,
+        audience,
+        subject: sub,
+      };
+      if (kid !== undefined) signArgs.kid = kid;
+      return signJwt(signArgs);
+    },
+
+    async signOBO({ sub, aud, on_behalf_of, approval_id, request_id, ttlSec = 120 }) {
+      const payload: Record<string, unknown> = {
+        on_behalf_of,
+      };
+      if (approval_id !== undefined) payload['approval_id'] = approval_id;
+      if (request_id !== undefined) payload['request_id'] = request_id;
+      const signArgs: Parameters<typeof signJwt>[0] = {
+        payload,
+        privateKey,
+        alg: 'RS256',
+        expiresInSec: ttlSec,
+        issuer,
+        audience: aud,
+        subject: sub,
+        jti: randomUuid(),
+      };
+      if (kid !== undefined) signArgs.kid = kid;
+      return signJwt(signArgs);
+    },
+  };
+}
+
+function randomUuid(): string {
+  const g = globalThis as { crypto?: { randomUUID?: () => string } };
+  if (g.crypto?.randomUUID) return g.crypto.randomUUID();
+  // Fallback Pseudo-UUID (sehr unwahrscheinlich genutzt, Node 20+/CF haben randomUUID).
+  const rand = () => Math.floor(Math.random() * 0xffff_ffff).toString(16);
+  return `${rand()}-${rand()}-${rand()}-${rand()}`;
+}

@@ -36,6 +36,7 @@ export type {
   FetchLike,
   HttpKnowledgeAdapterOptions,
   JwtSigner,
+  SignOboArgs,
 } from './http-client.js';
 
 export {

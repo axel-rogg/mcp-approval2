@@ -43,12 +43,55 @@ import type {
 } from './types.js';
 import { errorFromResponse, ServiceError } from './errors.js';
 
+/**
+ * Args fuer `JwtSigner.signOBO` — On-Behalf-Of-Token gegen KC2.
+ *
+ * Plan-Ref: PLAN-as3-autonomous.md §2.1 + §1.2.
+ *
+ * Wire-Shape (was der Signer in den JWT-Payload setzt):
+ *   ```
+ *   {
+ *     iss: <SELF_OAUTH_ISSUER ?? ORIGIN>,
+ *     aud: 'mcp-knowledge2',
+ *     sub: <approval2-internal-users.id>,
+ *     on_behalf_of: <google-email>,
+ *     approval_id?: <uuid>,                 // Pflicht bei write-Tools
+ *     request_id?: <uuid>,
+ *     jti: <uuid>,                           // Replay-Prevention
+ *     iat, exp                               // exp = iat + ttlSec (Default 120s)
+ *   }
+ *   ```
+ */
+export interface SignOboArgs {
+  readonly sub: string;
+  readonly aud: string;
+  readonly on_behalf_of: string;
+  readonly approval_id?: string;
+  readonly request_id?: string;
+  /** Default 120s. */
+  readonly ttlSec?: number;
+}
+
 export interface JwtSigner {
   /**
-   * Signt einen kurzlebigen Service-Boundary-JWT.
+   * Signt einen kurzlebigen Service-Boundary-JWT (Legacy-Pattern, v1).
    * Pflicht: sub. Optional: scope (fine-grained), ttlSec (default 60).
+   *
+   * **Deprecation:** Wird durch `signOBO` ersetzt (AS-3, §1.2). Bleibt
+   * verfuegbar fuer den Internal-Erase-Pfad und Legacy-Pfade die noch
+   * keinen OBO-Konsumenten haben.
    */
   sign(args: { sub: string; scope?: string; ttlSec?: number }): Promise<string>;
+
+  /**
+   * Signt einen OBO-JWT (On-Behalf-Of) fuer den Service-Call approval2 →
+   * KC2. Wird im `X-On-Behalf-Of`-Header transportiert, das eigentliche
+   * Bearer-Token ist der statische `SERVICE_TOKEN` (siehe
+   * `HttpKnowledgeAdapterOptions.serviceToken`).
+   *
+   * Plan-Ref: PLAN-as3-autonomous.md §2.1.
+   */
+  signOBO(args: SignOboArgs): Promise<string>;
 }
 
 export type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
