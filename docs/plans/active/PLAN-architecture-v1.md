@@ -45,9 +45,16 @@
 
 ### Identity & Auth
 
+> ⚠️ **AS-3-Update (2026-05-15):** `Identity-Provider` ist erweitert von
+> "eigenes Google-OAuth" zu **AS-3 = Google OIDC als Authoritative IdP** (extern).
+> mcp-approval2 ist Resource-Server, betreibt aber zusätzlich eine
+> DCR-OAuth-2.1-Facade für Claude.ai-MCP-Clients (weil MCP-Spec DCR fordert).
+> mcp-knowledge2 wird autonom und betreibt ihre eigene Facade. S2S via OBO-JWT.
+> Details: [PLAN-as3-autonomous.md](./PLAN-as3-autonomous.md).
+
 | Decision | Wahl |
 |---|---|
-| Identity-Provider | **Eigenes Google-OAuth** (jeder Gmail-Account, Invite-Pflicht) |
+| Identity-Provider | **Google OIDC (extern, AS-3)** — Eigene OAuth-Client-IDs für approval2 + KC2 |
 | Bootstrap-Admin | **First-Login-First-Admin** — erster eingeloggter User wird Admin |
 | Passkey-Anzahl | **1 Passkey** + Email-Recovery (Re-Enter-Akzeptanz fuer PRF-Credentials) |
 | SCIM | **Phase 2 nichts** — spaeter wenn Enterprise-Customer nachfragt |
@@ -69,7 +76,7 @@
 | Storage-Service | **Paralleles Greenfield-Repo mcp-knowledge2** (Multi-User-faehiger Storage) |
 | Sharing-Logik-Location | **In mcp-knowledge2** (Storage-Service-Layer) |
 | Sharing-Scope | **Docs + Skills + Apps** sind teilbar. **Credentials NIE teilbar** (owner-only-Garantie) |
-| Service-Auth (mcp-approval2 → mcp-knowledge2) | **JWT-signed mit user-Claim** (sub=user_id), JWKS-validiert |
+| Service-Auth (mcp-approval2 → mcp-knowledge2) | **OBO-JWT (`X-On-Behalf-Of`) + `SERVICE_TOKEN`** (AS-3, 2026-05-15) — zwei-Faktor S2S. Vorher: JWT-signed-mit-user-Claim direkt. |
 
 ### Permissions
 

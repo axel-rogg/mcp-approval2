@@ -1,8 +1,13 @@
 # PLAN — mcp-approval2 AS-3 Proxy-Mode-Migration
 
-> **Status: ⚠️ SPEC — pre-implementation, 2026-05-15**
+> **Status: ✅ CODE-COMPLETE 2026-05-15 — pending Cutover-Day (Operator-Task)**
 >
-> Dieses Dokument beschreibt **was in mcp-approval2 umgestellt werden muss**, damit
+> Tasks A1-A12 + T3-Cross-Service-Contract-Tests implementiert auf Branch
+> `feat/as3-cutover` (14 Commits). 645 Tests grün über alle Workspaces.
+> Typecheck clean. Nichts gepusht. Cutover-Tag-Anleitung:
+> [knowledge2 runbook-as3-cutover.md](https://github.com/axel-rogg/mcp-knowledge2/blob/main/docs/runbooks/runbook-as3-cutover.md).
+>
+> Dieses Dokument beschreibt **was in mcp-approval2 umgestellt wurde**, damit
 > mcp-knowledge2 autonom betrieben werden kann und mcp-approval2 **optional als
 > Approval-Proxy davor** funktioniert (statt der heutigen harten Trust-Beziehung).
 >

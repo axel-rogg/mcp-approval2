@@ -3,6 +3,10 @@
 > **Greenfield-Successor** zu [mcp-approval](https://github.com/axel-rogg/mcp-approval) (Cloudflare-Workers, single-user).
 > Multi-User von Tag 0 (5-15 User pro Pilot-Instance), Postgres + OpenBao, EU-Region, DSGVO-tauglich.
 > Schwester-Repo: [mcp-knowledge2](https://github.com/axel-rogg/mcp-knowledge2) (Storage + Search).
+>
+> **Status 2026-05-15:** AS-3-Code-Complete auf Branch `feat/as3-cutover`
+> (14 Commits, 645 Tests grün). Cutover-Day pending — Runbook im Schwester-Repo:
+> [knowledge2/docs/runbooks/runbook-as3-cutover.md](https://github.com/axel-rogg/mcp-knowledge2/blob/main/docs/runbooks/runbook-as3-cutover.md).
 
 ## Architektur (Stand 2026-05-15)
 
@@ -27,7 +31,7 @@
 ```
 
 **Single-Tenant strikt**: 1 Firma = 1 Instance. Zweite Firma = fork und neue Instance.
-**Identity-Provider (Ziel-Architektur AS-3)**: Google OIDC. mcp-approval2 ist Resource-Server, betreibt aber eine DCR-OAuth-2.1-Facade für Claude.ai-MCP-Clients (weil Google kein DCR anbietet).
+**Identity-Provider (AS-3, Code-Complete 2026-05-15)**: Google OIDC. mcp-approval2 ist Resource-Server gegenüber Google, betreibt seine DCR-OAuth-2.1-Facade unter `apps/server/src/mcp/oauth/` für Claude.ai-MCP-Clients (mit `idp=google`-Claim in Tokens). S2S an KC2 via OBO-JWT + `SERVICE_TOKEN`.
 
 ## Plan-Index
 
@@ -35,18 +39,24 @@ Status-Banner oben in jedem PLAN-File.
 
 | Plan | Status | Zweck |
 |---|---|---|
-| [PLAN-architecture-v1.md](docs/plans/active/PLAN-architecture-v1.md) | ✅ Decisions complete, Phase 0-6 dokumentiert | 22-Decisions-Baseline aus Session 2026-05-13 |
+| [PLAN-architecture-v1.md](docs/plans/active/PLAN-architecture-v1.md) | ✅ Decisions complete (§3 Identity erweitert durch AS-3) | 22-Decisions-Baseline aus Session 2026-05-13 |
 | [PLAN-architecture-v0.md](docs/plans/active/PLAN-architecture-v0.md) | Vorgänger | Subagent-Recherche, Pattern-Options |
 | [PLAN-hetzner-deployment.md](docs/plans/active/PLAN-hetzner-deployment.md) | ⚠️ Spec | Multi-Instance auf Hetzner + GCP |
-| **[PLAN-as3-autonomous.md](docs/plans/active/PLAN-as3-autonomous.md)** | ⚠️ **SPEC (2026-05-15)** | **AS-3-Migration: approval2 als Proxy vor autonomem KC2**. Definiert OBO-Pattern, KnowledgeAdapter-Umstellung, kc-proxy-Route, KC-Tool-Auto-Wrapper. Lies das _vor_ Auth-/KC-Adapter-Arbeit. |
-| Master-Cutover-Plan (cross-repo) | ⚠️ SPEC | [mcp-knowledge2/docs/plans/active/PLAN-as3-bigbang.md](https://github.com/axel-rogg/mcp-knowledge2/blob/main/docs/plans/active/PLAN-as3-bigbang.md) — Ein-Wurf-Reihenfolge für AS-3-Cutover beider Repos. |
+| **[PLAN-as3-autonomous.md](docs/plans/active/PLAN-as3-autonomous.md)** | ✅ **CODE-COMPLETE 2026-05-15** | AS-3-Migration: approval2 als Proxy vor autonomem KC2. A1-A12 + T3 auf `feat/as3-cutover`. |
+| Master-Cutover-Plan (cross-repo) | ✅ TIER 0-3 CODE-COMPLETE | [knowledge2/docs/plans/active/PLAN-as3-bigbang.md](https://github.com/axel-rogg/mcp-knowledge2/blob/main/docs/plans/active/PLAN-as3-bigbang.md) — Tier 4 (Cutover-Window) pending |
+| Operator-Runbook | ✅ Live | [knowledge2/docs/runbooks/runbook-as3-cutover.md](https://github.com/axel-rogg/mcp-knowledge2/blob/main/docs/runbooks/runbook-as3-cutover.md) — Step-by-Step T-7 bis T+7d |
 
 ## Was bei Arbeit beachten
 
-- **KnowledgeAdapter-Code** (`packages/adapters/src/knowledge/`): aktuell auf v1-Pattern (JwtSigner → Bearer-JWT direkt an KC2). Bei jeder Änderung **erst** [PLAN-as3-autonomous.md §1.2](docs/plans/active/PLAN-as3-autonomous.md) lesen — das Pattern wechselt zu OBO + SERVICE_TOKEN. Keine neuen Calls im alten Pattern hinzufügen.
-- **OAuth-Facade** (`apps/server/src/mcp/oauth/`): existiert bereits (Discovery, DCR, Authorize, Token, JWKS, Revoke). AS-3 erweitert das um Google-IdP-Redirect-Step in `authorize.ts` und `idp=google`-Claims in `token.ts`.
-- **Approval-Flow + State-Changing Tools**: Approval-Resolver muss `approval_id` im OBO-JWT setzen damit KC2-Audit den Trail sehen kann (siehe §1.5 + 2.1 im AS-3-Spec).
-- **`MCP_KNOWLEDGE_URL` optional**: approval2 muss auch ohne KC2-Anbindung sauber starten (Native Tools + Gateways verfügbar, KC-Wrappers fehlen).
+**Welcher Branch?** Pre-Cutover ist `main` der V1-Stand und `feat/as3-cutover` der AS-3-Stand. Code-Änderungen die AS-3 anfassen: auf dem Branch. Reine Doc-Änderungen: nach `main`.
+
+- **KnowledgeAdapter-Code** (`packages/adapters/src/knowledge/`): auf `feat/as3-cutover` von Bearer-JWT auf OBO + `SERVICE_TOKEN` umgestellt. Neue Methode: `signOBO()` im `JwtSigner`-Interface. `syncUser()` ist neu für UserSync-Push.
+- **OAuth-Facade** (`apps/server/src/mcp/oauth/`): auf `feat/as3-cutover` erweitert um Google-IdP-Redirect-Flow in `authorize.ts`, Token mit `idp=google` + `idp_sub` Claims. Inbound-ID-Token-Verify via `verifyIdToken()` in `apps/server/src/auth/idp/google.ts`.
+- **kc-proxy-Route** (`apps/server/src/routes/kc-proxy.ts`): NEU auf `feat/as3-cutover`. PWA → `/admin/kc-proxy/*` → builds OBO from session-user → forwards to KC2.
+- **kc_wrappers Auto-Generator** (`apps/server/src/tools/kc_wrappers/`): NEU auf `feat/as3-cutover`. Beim Boot via `tools/list` von KC2, refresh per `*/5 * * * *` cron. Tools fehlen graceful wenn `MCP_KNOWLEDGE_URL` ungesetzt.
+- **Approval-Flow**: `ToolContext.approvalId` propagiert via `resumeApproval` durch in den OBO-JWT — KC2-Audit-Trail hat `approval_id` + `via_proxy=true`.
+- **`MCP_KNOWLEDGE_URL` optional**: approval2 startet ohne KC2-Anbindung sauber (Native Tools + Gateways verfügbar, KC-Wrappers fehlen).
+- **Contract-Tests** (`apps/server/tests/contract/`): Wire-Format zwischen approval2 ↔ KC2 ist hier ausführbar fixiert. Bei Änderungen am OBO-Format / kc_wrappers / kc-proxy: Tests anfassen, sonst bricht der Cutover.
 
 ## Repo-Struktur (Wiederholung aus README)
 
