@@ -278,7 +278,7 @@ export class KnowledgeService {
       action: 'knowledge.doc.attach_to',
       actorUserId: args.userId,
       result: 'success',
-      resourceKind: 'file',
+      resourceKind: 'doc',
       resourceId: args.docId,
       details: {
         attached: attached.length,
@@ -305,7 +305,7 @@ export class KnowledgeService {
     return this.audited(
       'knowledge.doc.usages',
       args.userId,
-      'file',
+      'doc',
       args.docId,
       async () => {
         const incoming: Array<{ subtype: 'skill_manifest'; id: string; title: string | null }> = [];
@@ -350,7 +350,7 @@ export class KnowledgeService {
     return this.audited(
       'knowledge.skill.read_resource',
       args.userId,
-      'file',
+      'doc',
       args.resourceId,
       () => this.adapter.getObject({ id: args.resourceId, userId: args.userId, expandBody: true }),
       () => ({ details: { skillId: args.skillId } }),
@@ -375,7 +375,7 @@ export class KnowledgeService {
     return this.audited(
       'knowledge.doc.update_summary',
       args.userId,
-      'file',
+      'doc',
       args.docId,
       () => this.adapter.updateObject({ id: args.docId, userId: args.userId, patch }),
       () => ({ details: { summaryLength: args.summary.length, reEmbed: args.reEmbed ?? true } }),

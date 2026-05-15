@@ -15,7 +15,7 @@ pre.textContent = decodeBody(obj) || '(empty)';
 bodySection.appendChild(pre);
 ```
 
-Alle Subtypes (`file` Markdown, `list` Checkbox-Markdown, `note` Markdown, `memo` Plain-Text, `skill_manifest` Markdown+YAML, `app:*` JSON) werden identisch als Plain-Text in `<pre>` gerendert. Keine Subtype-Differenzierung. Edit-Pencil nur für `subtype === 'file'`.
+Alle Subtypes (`doc` Markdown, `list` Checkbox-Markdown, `note` Markdown, `memo` Plain-Text, `skill_manifest` Markdown+YAML, `app:*` JSON) werden identisch als Plain-Text in `<pre>` gerendert. Keine Subtype-Differenzierung. Edit-Pencil nur für `subtype === 'doc'`.
 
 [storage-tab.ts:284-285](../../../apps/web/src/storage-tab.ts) rendert nur Badge mit `data-subtype="..."`, keine subtype-spezifische List-Item-Anzeige.
 
@@ -25,12 +25,12 @@ Subtype-aware Renderer-Dispatch im Detail-View. Pro Subtype ein dezidierter Rend
 
 | Subtype | Renderer | UX |
 |---|---|---|
-| `file` (mime=text/markdown) | Markdown→HTML | Headings, Listen, Code-Blocks, Links als HTML; raw-toggle für Source-Ansicht |
-| `file` (mime=code) | Code-Block | Plaintext mit monospace + Zeilen-Nummern, optional Syntax-Highlighting (later) |
-| `file` (mime=binary, image/*) | Image Embed | `<img>` mit `src=<blob-data-URL>` aus Body |
-| `file` (mime=binary, andere) | Download | Filename + Size + Download-Button (Body als Blob serven) |
+| `doc` (mime=text/markdown) | Markdown→HTML | Headings, Listen, Code-Blocks, Links als HTML; raw-toggle für Source-Ansicht |
+| `doc` (mime=text/plain, code) | Code-Block | Plaintext mit monospace + Zeilen-Nummern, optional Syntax-Highlighting (later) |
+| `doc` (mime=image/*) | Image Embed | `<img>` mit `src=<blob-data-URL>` aus Body |
+| `doc` (mime=binary) | Download | Filename + Size + Download-Button (Body als Blob serven) |
 | `list` | Checkbox-UI | Read-only Checkbox-Liste (HTML `<input type="checkbox" disabled>`), Item-Tags als `<span class="tag">`. Toggle-Schreibzugriff später via `lists.tick`-Tool. |
-| `note` | Markdown→HTML | Wie `file`/markdown |
+| `note` | Markdown→HTML | Wie `doc`/markdown |
 | `memo` | Plain-Text-Karte | `<p>` mit body, plus `meta.scope`-Tag falls gesetzt. Title-less per Definition. |
 | `skill_manifest` | YAML-Frontmatter + Markdown | Frontmatter-Block (slug/description/version/trigger_hints) als `<dl>`, Body als rendered Markdown |
 | `app:*` | App-Link | Body=JSON wird nicht direkt rendert; Button "→ App öffnen" navigiert zu `#/apps/<id>` (existierende apps-detail-Surface) |
@@ -119,7 +119,7 @@ export function dispatchRenderer(obj: KnowledgeObject): HTMLElement {
   }
 
   switch (subtype) {
-    case 'file': {
+    case 'doc': {
       const mime = obj.mimeType ?? 'text/plain';
       if (mime.startsWith('text/markdown')) return renderMarkdown(body);
       if (mime.startsWith('image/')) return renderBinary(obj);

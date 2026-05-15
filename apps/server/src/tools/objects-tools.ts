@@ -36,7 +36,7 @@ export function makeObjectsListTool(
   return {
     name: 'objects.list',
     description:
-      "Technical view: list the current user's objects. Optional free-form subtype filter (e.g. 'file', 'skill_manifest', 'memo', 'app:composable').",
+      "Technical view: list the current user's objects. Optional free-form subtype filter (e.g. 'doc', 'skill_manifest', 'memo', 'app:composable').",
     sensitivity: 'read',
     inputSchema: ObjectsListInput,
     async execute(ctx: ToolContext, input): Promise<ObjectsList> {

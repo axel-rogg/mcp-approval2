@@ -49,17 +49,17 @@ export function makeKnowledgeDocsCreateTool(
   return {
     name: 'knowledge.docs.create',
     description:
-      'Create a new document (subtype=file by default) in the knowledge store. Requires approval.',
+      'Create a new document (subtype=doc by default) in the knowledge store. Requires approval.',
     sensitivity: 'write',
     displayTemplate:
       'Create new document: {{title}} ({{body.length}} chars)',
     inputSchema: KnowledgeDocsCreateInput,
     async execute(ctx: ToolContext, input): Promise<KnowledgeObject> {
       // exactOptionalPropertyTypes: nur definierte Felder weitergeben.
-      // Default-Subtype 'file' wenn keiner uebergeben — kanonisch fuer docs.
+      // Default-Subtype 'doc' wenn keiner uebergeben — kanonisch fuer docs.
       const args: Parameters<KnowledgeService['createObject']>[0] = {
         userId: ctx.userId,
-        subtype: input.subtype ?? 'file',
+        subtype: input.subtype ?? 'doc',
         title: input.title,
         body: input.body,
       };
@@ -110,7 +110,7 @@ export function makeKnowledgeDocsListTool(
     async execute(ctx: ToolContext, input): Promise<ObjectsList> {
       const args: Parameters<KnowledgeService['listObjects']>[0] = {
         userId: ctx.userId,
-        subtype: 'file',
+        subtype: 'doc',
       };
       if (input.limit !== undefined) {
         (args as { limit?: number }).limit = input.limit;

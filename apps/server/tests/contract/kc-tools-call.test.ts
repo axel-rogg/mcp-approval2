@@ -57,7 +57,7 @@ describe('approval2 forwardToKc — OBO-JWT signing args (KC2-side contract)', (
       serviceToken: 'svc-token-x',
       signer,
       toolName: 'objects.create',
-      arguments: { subtype: 'file' },
+      arguments: { subtype: 'doc' },
       userId: '11111111-1111-1111-1111-111111111111',
       userEmail: 'axel@example.org',
       requestId: '33333333-3333-3333-3333-333333333333',
@@ -87,7 +87,7 @@ describe('approval2 forwardToKc — OBO-JWT signing args (KC2-side contract)', (
       serviceToken: 'svc',
       signer,
       toolName: 'objects.list',
-      arguments: { subtype: 'file' },
+      arguments: { subtype: 'doc' },
       userId: 'u1',
       userEmail: 'a@b.de',
       requestId: 'r1',
@@ -165,7 +165,7 @@ describe('approval2 forwardToKc — JSON-RPC body contract', () => {
       serviceToken: 'svc',
       signer,
       toolName: 'objects.create',
-      arguments: { subtype: 'file', title: 'hi' },
+      arguments: { subtype: 'doc', title: 'hi' },
       userId: 'u',
       userEmail: 'a@b.de',
       requestId: 'req-1',
@@ -178,7 +178,7 @@ describe('approval2 forwardToKc — JSON-RPC body contract', () => {
     expect(body.method).toBe('tools/call');
     expect(body.params).toEqual({
       name: 'objects.create',
-      arguments: { subtype: 'file', title: 'hi' },
+      arguments: { subtype: 'doc', title: 'hi' },
     });
   });
 
@@ -231,7 +231,7 @@ describe('approval2 forwardToKc — KC2 response handling', () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonRpcResponse({
         content: [{ type: 'text', text: 'ok' }],
-        structuredContent: { id: 'obj-1', subtype: 'file' },
+        structuredContent: { id: 'obj-1', subtype: 'doc' },
       }),
     );
     const res = await forwardToKc({
@@ -245,7 +245,7 @@ describe('approval2 forwardToKc — KC2 response handling', () => {
       requestId: 'r',
       fetchImpl: fetchMock as unknown as typeof fetch,
     });
-    expect(res.structuredContent).toEqual({ id: 'obj-1', subtype: 'file' });
+    expect(res.structuredContent).toEqual({ id: 'obj-1', subtype: 'doc' });
   });
 
   it('throws on JSON-RPC error envelope (KC2 reports tool failure)', async () => {

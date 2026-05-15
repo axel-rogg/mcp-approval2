@@ -271,7 +271,7 @@ describe('forwardToKc — execute path', () => {
       signer,
       fetchImpl: fetchMock as unknown as typeof fetch,
       toolName: 'objects.create',
-      arguments: { subtype: 'file', title: 'hi' },
+      arguments: { subtype: 'doc', title: 'hi' },
       userId: 'user-1',
       userEmail: 'axel@x.de',
       approvalId: 'appr-42',
@@ -303,7 +303,7 @@ describe('forwardToKc — execute path', () => {
     expect(body['method']).toBe('tools/call');
     const params = body['params'] as Record<string, unknown>;
     expect(params['name']).toBe('objects.create');
-    expect(params['arguments']).toEqual({ subtype: 'file', title: 'hi' });
+    expect(params['arguments']).toEqual({ subtype: 'doc', title: 'hi' });
   });
 
   it('omits approval_id when not provided (reads)', async () => {
@@ -396,7 +396,7 @@ describe('buildKcWrappers — execute integration', () => {
       signal: new AbortController().signal,
       approvalId: 'appr-99',
     };
-    const result = await tool.execute(ctx, { subtype: 'file' });
+    const result = await tool.execute(ctx, { subtype: 'doc' });
     expect((result as Array<{ text?: string }>)[0]?.text).toBe('created');
     const oboArgs = signer.oboMock.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(oboArgs['approval_id']).toBe('appr-99');

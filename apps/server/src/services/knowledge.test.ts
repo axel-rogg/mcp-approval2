@@ -24,7 +24,7 @@ function makeAdapterStub(): { adapter: KnowledgeAdapter; calls: Record<string, u
   const obj: KnowledgeObject = {
     id: 'obj-1',
     ownerId: USER_ID,
-    subtype: 'file',
+    subtype: 'doc',
     title: 't',
     description: 'd',
     keywords: [],
@@ -55,7 +55,7 @@ function makeAdapterStub(): { adapter: KnowledgeAdapter; calls: Record<string, u
     revokedAt: null,
   };
   const hits: ReadonlyArray<SearchHit> = [
-    { id: 'obj-1', subtype: 'file', title: 't', score: 0.9, ftsRank: 0.5, vectorScore: 0.4 },
+    { id: 'obj-1', subtype: 'doc', title: 't', score: 0.9, ftsRank: 0.5, vectorScore: 0.4 },
   ];
 
   const adapter: KnowledgeAdapter = {
@@ -132,12 +132,12 @@ describe('KnowledgeService — success path', () => {
     const { adapter, calls } = makeAdapterStub();
     const audit = makeAudit();
     const svc = new KnowledgeService({ adapter, audit });
-    const out = await svc.createObject({ userId: USER_ID, subtype: 'file', title: 't' });
+    const out = await svc.createObject({ userId: USER_ID, subtype: 'doc', title: 't' });
     expect(out.id).toBe('obj-1');
     expect(calls['createObject']).toHaveLength(1);
     expect(audit.emitted).toHaveLength(1);
     expect(audit.emitted[0]).toMatchObject({
-      action: 'knowledge.file.created',
+      action: 'knowledge.doc.created',
       actorUserId: USER_ID,
       result: 'success',
       resourceId: 'obj-1',
@@ -214,14 +214,14 @@ describe('KnowledgeService — success path', () => {
     const { adapter } = makeAdapterStub();
     const audit = makeAudit();
     const svc = new KnowledgeService({ adapter, audit });
-    await svc.search({ userId: USER_ID, query: 'foo bar', subtypes: ['file', 'skill_manifest'] });
+    await svc.search({ userId: USER_ID, query: 'foo bar', subtypes: ['doc', 'skill_manifest'] });
     expect(audit.emitted[0]).toMatchObject({
       action: 'knowledge.search',
       result: 'success',
     });
     expect(audit.emitted[0]?.details).toMatchObject({
       count: 1,
-      subtypes: ['file', 'skill_manifest'],
+      subtypes: ['doc', 'skill_manifest'],
       queryLength: 7,
     });
   });

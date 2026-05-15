@@ -6,7 +6,7 @@
  * UX:
  *   - Header mit Back-Button + Title
  *   - Meta (subtype, size, visibility, created)
- *   - Summary-Section mit Edit-Pencil (nur subtype=file, opens Modal)
+ *   - Summary-Section mit Edit-Pencil (nur subtype=doc, opens Modal)
  *   - Body-Preview (decoded falls utf8, sonst <hex preview>)
  *   - Footer: Force-Delete-Checkbox (refcount>0) + Delete-Button
  *
@@ -144,7 +144,7 @@ export async function renderStorageDetail(
 
     const sh = document.createElement('h2');
     sh.textContent = 'Summary';
-    if (obj.subtype === 'file') {
+    if (obj.subtype === 'doc') {
       const pencil = document.createElement('button');
       pencil.type = 'button';
       pencil.className = 'edit-pencil';

@@ -1,7 +1,7 @@
 /**
  * Storage-Browser-Liste — Object-Browser für alle Subtypes (file, skill_manifest, app:..., memo).
  *
- * Hash-Route: `#/storage[?subtype=file&q=foo&embedded=embedded]`
+ * Hash-Route: `#/storage[?subtype=doc&q=foo&embedded=embedded]`
  *
  * UX:
  *   - Filter-Chips für Subtypes (All, Docs, Skills, Apps, Memos)
@@ -52,7 +52,7 @@ const SUBTYPE_ICON: Record<string, string> = {
 
 const FILTER_CHIPS: ReadonlyArray<{ value: string; label: string }> = [
   { value: '', label: 'All' },
-  { value: 'file', label: 'Docs' },
+  { value: 'doc', label: 'Docs' },
   { value: 'skill_manifest', label: 'Skills' },
   { value: APP_FILTER, label: 'Apps' },
   { value: 'memo', label: 'Memos' },
@@ -73,7 +73,7 @@ function subtypeIcon(subtype: string | null | undefined): string {
 }
 
 export function parseFilters(hash: string): StorageFilters {
-  // Hash forms: '#/storage', '#/storage?subtype=file&q=foo&embedded=embedded'
+  // Hash forms: '#/storage', '#/storage?subtype=doc&q=foo&embedded=embedded'
   const qIdx = hash.indexOf('?');
   if (qIdx < 0) return { subtype: undefined, q: undefined, embeddedFlag: undefined };
   const params = new URLSearchParams(hash.slice(qIdx + 1));

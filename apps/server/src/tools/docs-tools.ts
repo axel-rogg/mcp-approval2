@@ -1,5 +1,5 @@
 /**
- * Docs-Tools — KC-Wrapper fuer subtype='file' Objekte.
+ * Docs-Tools — KC-Wrapper fuer subtype='doc' Objekte.
  *
  * Plan-Ref: PLAN-architecture-v1.md §2.1 (Storage-Boundary), §7
  *
@@ -92,7 +92,7 @@ export function makeDocsPutTool(deps: DocsToolsDeps): Tool<DocsPutInputT, Knowle
       // Create
       const args: CreateObjectArgs = {
         userId: ctx.userId,
-        subtype: 'file',
+        subtype: 'doc',
         title: input.filename,
         body: input.body,
         filename: input.filename,
@@ -149,13 +149,13 @@ export function makeDocsListTool(deps: DocsToolsDeps): Tool<DocsListInputT, Obje
   return {
     name: 'docs.list',
     description:
-      "List the current user's documents (subtype=file). Supports paging via limit/cursor and filter by namespace/category/tags/mime_type.",
+      "List the current user's documents (subtype=doc). Supports paging via limit/cursor and filter by namespace/category/tags/mime_type.",
     sensitivity: 'read',
     inputSchema: DocsListInput,
     async execute(ctx: ToolContext, input): Promise<ObjectsList> {
       const args: Parameters<KnowledgeService['listObjects']>[0] = {
         userId: ctx.userId,
-        subtype: 'file',
+        subtype: 'doc',
       };
       if (input.limit !== undefined) (args as { limit?: number }).limit = input.limit;
       if (input.cursor !== undefined) (args as { cursor?: number }).cursor = input.cursor;

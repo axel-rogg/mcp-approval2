@@ -15,11 +15,11 @@ Storage interpretiert NICHTS — diese Konventionen sind Wrapper-side enforced (
 
 | Subtype | Zweck | Body-Format | Title-Pflicht | Mutation | searchable_vector empfohlen | Cross-Object-Refs | shareable |
 |---|---|---|---|---|---|---|---|
-| `file` | Datei (Markdown/Code/Binary, ID-basiert) | text/markdown UTF-8, code mit `meta_json.language`, binary mit R2-overflow | ja | full_replace | optional (User-flag bei `description`) | als ref-target erlaubt | ja |
+| `doc` | Dokument (Markdown/Code/Binary, ID-basiert) — universeller Standard-Subtype | text/markdown UTF-8, code mit `meta_json.language`, binary mit R2-overflow | ja | full_replace | optional (User-flag bei `description`) | als ref-target erlaubt | ja |
 | `list` | Items mit Done-Flag (Einkaufsliste, Reading-List, Todo) | Markdown-Checkbox-Pattern (siehe §"Body-Formate" unten) | ja | full_replace (CAS-Retry server-internal) | nein | nein | ja |
 | `note` | Strukturierte Notiz (Markdown, frei) | Markdown ohne strikte Struktur | ja | full_replace | optional (User-flag) | nein | ja |
 | `memo` | Atomare Facts für semantic recall ("User hat zwei Kinder") | Plain-Text 1..500 chars | nein (titleless) | append-only (immutable + soft-delete) | **ja** (default true bei `memorize.add`) | nein | ja |
-| `skill_manifest` | Skill-Bundle (Markdown + YAML-Frontmatter + refs zu file-Resources) | Markdown + YAML-Frontmatter | ja | full_replace + revisions table | ja (default) | **ja** (`object_refs(role='skill_resource')` zu `subtype='file'`) | ja |
+| `skill_manifest` | Skill-Bundle (Markdown + YAML-Frontmatter + refs zu doc-Resources) | Markdown + YAML-Frontmatter | ja | full_replace + revisions table | ja (default) | **ja** (`object_refs(role='skill_resource')` zu `subtype='doc'`) | ja |
 | `app:<typ>` | App-Instance-State (Composable Apps, Workout-Tracker, etc.) | JSON LayoutDoc (A2UI v0.10) | ja | CAS-Patches via `current_version` | nein | nein | **nein in Phase 1** (CAS + interactive State erfordert OT/CRDT) |
 | `bookmark` | URL-Bookmark mit Title + Description (hypothetisch, noch nicht implementiert) | URL plus Markdown-Notes | ja | full_replace | optional | nein | ja |
 | `recipe` | Kochrezept (hypothetisch) | Markdown mit YAML-Frontmatter (Zutaten/Schritte) | ja | full_replace | optional | nein | ja |
@@ -48,14 +48,16 @@ Wer App-Objects findet/filtert nutzt diese Helper, nicht String-Manipulation per
 
 Storage akzeptiert opaque ciphertext. Wrapper validiert das Body-Format VOR dem POST/PATCH gegen Storage.
 
-### `subtype='file'`
+### `subtype='doc'`
 
-Body kann sein:
+Universeller Standard-Subtype für Dokumente jeder Art. Body kann sein:
 - **Markdown** (text/markdown UTF-8, max 16 KB inline, sonst R2-overflow)
 - **Code** (Plain-Text mit `meta_json.body_format='code'` + `meta_json.language` für Syntax-Hint)
 - **Binary** (PDFs, Images — `meta_json.body_format='binary'`, R2-overflow ab 16 KB ciphertext)
 
-`title` als Pseudo-Filename, `description` als optional Summary für Vector-Embed.
+`title` als Discovery-Schlüssel (kann Pseudo-Filename sein), `description` als optional Summary für Vector-Embed.
+
+**Begründung Subtype-Name `doc` (statt `file`):** Per User-Direktive 2026-05-15 nach ADR-0004-Cutover: "Alles sind Dokumente, kein file". Subtype-Convention reflektiert die semantische Sicht (Content-Document) statt der Storage-Sicht (Binary-File). Storage interpretiert NICHTS — das ist reine Caller-Convention.
 
 ### `subtype='list'`
 
@@ -156,7 +158,7 @@ Body ist **JSON LayoutDoc**:
 
 1. **Diese Tabelle ist kanonische Quelle.** Neue Subtypes brauchen Eintrag hier (Code-Review-Regel).
 2. **Wrapper exportieren Subtype-Konstanten** statt String-Literals. Beispiele:
-   - `const FILE_SUBTYPE = 'file'` in `apps/server/src/tools/docs-tools.ts`
+   - `const DOC_SUBTYPE = 'doc'` in `apps/server/src/tools/docs-tools.ts`
    - `appSubtype('composable')` returnt `'app:composable'` aus den apps/api.ts-Helpers
 3. **3 Zod-Schemas sind heute sync** (`tools/types.ts` ist Quelle, `federated-search-tool.ts` importiert, `routes/knowledge-proxy.ts` ist eigene Definition). Bonus-Folge-PR: alle drei auf einen einzigen Adapter-Package-Export konsolidieren.
 4. **Migration-Script falls Drift trotzdem passiert** (billig, kein Re-Encrypt):

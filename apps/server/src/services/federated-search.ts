@@ -25,7 +25,7 @@ import type { SearchHit } from '@mcp-approval2/adapters';
 /**
  * Subtype-Discriminator (free-form). Storage akzeptiert beliebige Strings
  * (post-ADR-0004 generic object model). Canonical mappings:
- *   - doc/file → subtype='file'
+ *   - doc/file → subtype='doc'
  *   - skill   → subtype='skill_manifest'
  *   - app     → subtype='app:<appType>' (z.B. 'app:composable')
  *   - memo    → subtype='memo'
@@ -87,7 +87,7 @@ export function createFederatedSearchService(
       // Per-file-Hit: compute used_by. N+1 — acceptable while result-page <= 20.
       const annotated: FederatedSearchHit[] = [];
       for (const h of rawHits) {
-        if (h.subtype !== 'file') {
+        if (h.subtype !== 'doc') {
           annotated.push(h);
           continue;
         }

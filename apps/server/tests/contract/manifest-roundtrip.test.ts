@@ -41,7 +41,7 @@ const KC2_MANIFEST_FIXTURE = {
       {
         name: 'objects.create',
         description:
-          'Create a new object. `subtype` is a free-form caller-convention string (e.g. "file", "skill_manifest", "memo", "app:composable"). Body is base64-encoded.',
+          'Create a new object. `subtype` is a free-form caller-convention string (e.g. "doc", "skill_manifest", "memo", "app:composable"). Body is base64-encoded.',
         inputSchema: {
           type: 'object',
           properties: {

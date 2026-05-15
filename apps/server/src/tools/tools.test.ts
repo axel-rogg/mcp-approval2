@@ -53,7 +53,7 @@ function makeStubObject(overrides: Partial<KnowledgeObject> = {}): KnowledgeObje
   return {
     id: 'obj-1',
     ownerId: USER_ID,
-    subtype: 'file',
+    subtype: 'doc',
     title: 'Stub',
     description: 'stub doc',
     keywords: [],
@@ -83,7 +83,7 @@ function makeKnowledgeAdapterStub(): KnowledgeAdapter {
   const hits: ReadonlyArray<SearchHit> = [
     {
       id: 'obj-1',
-      subtype: 'file',
+      subtype: 'doc',
       title: 'Stub',
       score: 0.42,
       ftsRank: 0.4,
@@ -488,7 +488,7 @@ describe('knowledge tools', () => {
       bypassApproval: true,
     });
     expect(spy).toHaveBeenCalledWith(
-      expect.objectContaining({ userId: USER_ID, subtype: 'file', title: 'T', body: 'B', description: 'D' }),
+      expect.objectContaining({ userId: USER_ID, subtype: 'doc', title: 'T', body: 'B', description: 'D' }),
     );
   });
 

@@ -48,7 +48,7 @@ function makeDoc(overrides: Partial<KnowledgeObject> = {}): KnowledgeObject {
   return {
     id: 'doc-1',
     ownerId: USER_ID,
-    subtype: 'file',
+    subtype: 'doc',
     title: 'Stub Doc',
     description: null,
     keywords: [],
@@ -112,7 +112,7 @@ function makeAdapter(): {
   const hits: ReadonlyArray<SearchHit> = [
     {
       id: 'doc-1',
-      subtype: 'file',
+      subtype: 'doc',
       title: 'Stub Doc',
       score: 0.9,
       ftsRank: 0.5,
@@ -139,9 +139,9 @@ function makeAdapter(): {
   const adapter: KnowledgeAdapter = {
     async createObject(args) {
       // Map canonical subtypes back to legacy IDs the tests expect:
-      //   'file' → 'new-doc', 'skill_manifest' → 'new-skill', 'memo' → 'new-memo'.
+      //   'doc' → 'new-doc', 'skill_manifest' → 'new-skill', 'memo' → 'new-memo'.
       const newIdSuffix =
-        args.subtype === 'file' ? 'doc'
+        args.subtype === 'doc' ? 'doc'
         : args.subtype === 'skill_manifest' ? 'skill'
         : args.subtype === 'memo' ? 'memo'
         : args.subtype ?? 'object';
@@ -705,7 +705,7 @@ describe('objects tools', () => {
     });
     const text = (res.result.content[0] as { text: string }).text;
     expect(text).toContain('skill-1');
-    expect(text).not.toContain('"subtype":"file"');
+    expect(text).not.toContain('"subtype":"doc"');
   });
 
   it('objects.read reads by id', async () => {

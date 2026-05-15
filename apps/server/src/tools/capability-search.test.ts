@@ -199,7 +199,7 @@ describe('federated-search', () => {
   it('returns hits with sub-doc annotation', async () => {
     const docHit: SearchHit = {
       id: 'doc-1',
-      subtype: 'file',
+      subtype: 'doc',
       title: 'A doc',
       score: 0.7,
       ftsRank: 1,
@@ -223,7 +223,7 @@ describe('federated-search', () => {
   it('skips sub-doc annotation when include_subdocs=false', async () => {
     const docHit: SearchHit = {
       id: 'doc-1',
-      subtype: 'file',
+      subtype: 'doc',
       title: 'A doc',
       score: 0.7,
       ftsRank: null,
