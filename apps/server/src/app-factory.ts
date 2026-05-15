@@ -129,6 +129,13 @@ import {
   makeSystemHealthTool,
   registerCoreTools,
 } from './tools/index.js';
+import {
+  buildKcWrappers,
+  type BuildKcWrappersOpts,
+} from './tools/kc_wrappers/index.js';
+import { makeRs256Signer } from './services/knowledge.js';
+import { getSigningKey } from './auth/jwt-signing.js';
+import { effectiveOauthIssuer } from './schema/env.js';
 
 // ---------------------------------------------------------------------------
 // Burst-7 service-instantiation helpers
@@ -168,6 +175,12 @@ export interface CreateAppDeps {
    * Wenn nicht gesetzt, wird die Route NICHT gemountet → 404.
    */
   readonly kcProxy?: import('./routes/kc-proxy.js').KcProxyDeps;
+  /**
+   * AS-3 (Tests): fetchImpl-Override fuer kc_wrappers/* boot-time
+   * Manifest-Fetch. Tests injizieren hier einen Stub, der das
+   * `POST /mcp tools/list` ohne Network beantwortet.
+   */
+  readonly kcWrappersFetchOverride?: typeof fetch;
   /**
    * Tool-Registry-Override fuer Tests. Default: frische Registry; bei vollem
    * Service-Set wird via `registerCoreTools(...)` befuellt, sonst nur mit den
@@ -370,6 +383,39 @@ export async function createApp(
         ? { federatedSearch: optionalServices.federatedSearch }
         : {}),
     });
+
+    // AS-3 (§1.4 + A8): KC-Wrapper-Tools aus KC2's tools/list-Manifest
+    // generieren und registrieren. Graceful — bei KC2-Unreach laufen
+    // approval2 + Native-Tools weiter.
+    if (deps.kcProxy) {
+      try {
+        const signer = await buildBootKcSigner(server);
+        const wrapperArgs: BuildKcWrappersOpts = {
+          knowledgeUrl: deps.kcProxy.knowledgeUrl,
+          serviceToken: deps.kcProxy.serviceToken,
+          signer,
+          ...(deps.kcWrappersFetchOverride !== undefined
+            ? { fetchImpl: deps.kcWrappersFetchOverride }
+            : {}),
+        };
+        const { tools: kcTools, manifest } = await buildKcWrappers(wrapperArgs);
+        for (const t of kcTools) {
+          if (!registry.has(t.name)) {
+            registry.register(t);
+          }
+        }
+        // Manifest in einer module-scoped Cache-Reference ablegen — der
+        // refresh-Cron (A9) kann es lesen und neu builden.
+        kcWrappersCache.set(server, { tools: kcTools, manifest, opts: wrapperArgs });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[mcp-approval2] kc_wrappers boot-build failed: ${
+            err instanceof Error ? err.message : String(err)
+          }. KC-Wrappers not mounted; native + gateway tools remain.`,
+        );
+      }
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────
@@ -754,6 +800,66 @@ function constantTimeEqualHex(a: string, b: string): boolean {
     diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   }
   return diff === 0;
+}
+
+// ---------------------------------------------------------------------------
+// AS-3 (§1.4): KC-Wrappers boot helpers + cache
+// ---------------------------------------------------------------------------
+
+/**
+ * Module-scoped Cache fuer den Wrapper-Bauplan. Der Refresh-Cron (A9)
+ * liest hier `opts` + alte `tools`-Liste, baut neu, und ersetzt im
+ * registry.
+ */
+export interface KcWrappersCacheEntry {
+  readonly tools: ReadonlyArray<import('./mcp/protocol/tool.js').Tool<unknown, unknown>>;
+  readonly manifest: import('./tools/kc_wrappers/index.js').KcManifest;
+  readonly opts: import('./tools/kc_wrappers/index.js').BuildKcWrappersOpts;
+}
+
+class KcWrappersCache {
+  private map = new WeakMap<ServerContext, KcWrappersCacheEntry>();
+  set(srv: ServerContext, e: KcWrappersCacheEntry): void {
+    this.map.set(srv, e);
+  }
+  get(srv: ServerContext): KcWrappersCacheEntry | undefined {
+    return this.map.get(srv);
+  }
+}
+
+export const kcWrappersCache = new KcWrappersCache();
+
+async function buildBootKcSigner(
+  server: ServerContext,
+): Promise<import('@mcp-approval2/adapters').JwtSigner> {
+  const pem =
+    process.env['JWT_RS256_PRIVATE_KEY_PEM'] ?? process.env['JWT_PRIVATE_KEY'];
+  if (!pem) {
+    throw new Error(
+      'kc_wrappers: JWT_RS256_PRIVATE_KEY_PEM not configured — cannot sign OBO-JWTs',
+    );
+  }
+  const signingEnv: { JWT_RS256_PRIVATE_KEY_PEM: string; JWT_KID?: string } = {
+    JWT_RS256_PRIVATE_KEY_PEM: pem,
+  };
+  if (process.env['JWT_KID']) signingEnv.JWT_KID = process.env['JWT_KID'];
+  const privateKey = await getSigningKey(signingEnv);
+  if (!privateKey) {
+    throw new Error('kc_wrappers: failed to load private key');
+  }
+  const issuer = effectiveOauthIssuer({
+    ORIGIN: server.config.ORIGIN,
+    ...(server.config.SELF_OAUTH_ISSUER !== undefined
+      ? { SELF_OAUTH_ISSUER: server.config.SELF_OAUTH_ISSUER }
+      : {}),
+  });
+  const kid = process.env['JWT_KID'];
+  return makeRs256Signer({
+    privateKey,
+    issuer,
+    audience: 'mcp-knowledge2',
+    ...(kid ? { kid } : {}),
+  });
 }
 
 // ---------------------------------------------------------------------------
