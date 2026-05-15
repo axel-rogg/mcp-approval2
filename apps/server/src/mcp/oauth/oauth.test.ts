@@ -72,6 +72,7 @@ interface UsersRow {
   id: string;
   email: string;
   role: 'admin' | 'member';
+  external_id?: string | null;
 }
 
 interface StubState {
@@ -189,6 +190,14 @@ function makeStubDb(state: StubState): ServerContext['db'] {
       }
       return [];
     }
+    // AS-3: SELECT external_id, email FROM users WHERE id = $1 — IdP-Claims-Lookup.
+    if (s.startsWith('SELECT EXTERNAL_ID, EMAIL FROM USERS')) {
+      const row = state.users.get(String(params[0]));
+      if (!row) return [];
+      return [
+        { external_id: row.external_id ?? null, email: row.email ?? null },
+      ] as unknown as T[];
+    }
     // audit_log insert — swallow + record action
     if (s.startsWith('INSERT INTO AUDIT_LOG')) {
       state.auditEvents.push({
@@ -255,6 +264,8 @@ function makeStubConfig(): AppConfig {
     RP_ORIGIN: 'http://localhost:8787',
     INVITE_TTL_SEC: 24 * 60 * 60,
     RECOVERY_TTL_SEC: 24 * 60 * 60,
+    ALLOWED_ORIGINS: [],
+    GOOGLE_ALLOWED_AUDIENCES: [],
   };
 }
 
@@ -442,6 +453,84 @@ describe('OAuth Authorization-Server', () => {
     expect(payload.aud).toBe('https://api.example.test');
     expect(payload['client_id']).toBe(clientId);
     expect(payload['scope']).toBe('mcp:tools');
+    // AS-3: ohne external_id (legacy-User ohne IdP-Link): keine IdP-Claims.
+    expect(payload['idp']).toBeUndefined();
+    expect(payload['idp_sub']).toBeUndefined();
+  });
+
+  it('AS-3: Token includes idp=google + idp_sub + email when user has external_id', async () => {
+    // Pre-arrange: User mit external_id (Google-IdP-Linked).
+    const googleSub = '110248495921238';
+    state.users.set(userId, {
+      id: userId,
+      email: 'axel@example.com',
+      role: 'member',
+      external_id: googleSub,
+    });
+
+    // DCR registration
+    const regRes = await app.request('/oauth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        redirect_uris: ['https://client.example.test/cb'],
+        token_endpoint_auth_method: 'client_secret_basic',
+      }),
+    });
+    const reg = (await regRes.json()) as ClientRegistrationResponse;
+    const clientId = reg.client_id;
+    const clientSecret = reg.client_secret;
+    expect(clientId).toBeTruthy();
+    expect(clientSecret).toBeTruthy();
+
+    const cfg = makeStubConfig();
+    const { token: sessionJwt } = await issueSessionJwt(
+      { userId, email: 'axel@example.com', role: 'member', sessionId: 'sess-1' },
+      cfg,
+    );
+    const { verifier, challenge } = pkcePair();
+    const authzUrl =
+      '/oauth/authorize?' +
+      new URLSearchParams({
+        response_type: 'code',
+        client_id: clientId,
+        redirect_uri: 'https://client.example.test/cb',
+        scope: 'mcp:tools',
+        state: 's',
+        code_challenge: challenge,
+        code_challenge_method: 'S256',
+        resource: 'https://api.example.test',
+      }).toString();
+    const authzRes = await app.request(authzUrl, {
+      headers: { authorization: `Bearer ${sessionJwt}` },
+    });
+    expect(authzRes.status).toBe(302);
+    const code = new URL(authzRes.headers.get('location') ?? '').searchParams.get('code');
+    expect(code).toBeTruthy();
+
+    const tokenRes = await app.request('/oauth/token', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code: code!,
+        redirect_uri: 'https://client.example.test/cb',
+        client_id: clientId,
+        client_secret: clientSecret!,
+        code_verifier: verifier,
+      }).toString(),
+    });
+    expect(tokenRes.status).toBe(200);
+    const tokenBody = (await tokenRes.json()) as { access_token: string };
+    const secret = new TextEncoder().encode(cfg.JWT_SECRET);
+    const { payload } = await jwtVerify(tokenBody.access_token, secret, {
+      issuer: 'https://mcp.example.test',
+      audience: 'https://api.example.test',
+      algorithms: ['HS256'],
+    });
+    expect(payload['idp']).toBe('google');
+    expect(payload['idp_sub']).toBe(googleSub);
+    expect(payload['email']).toBe('axel@example.com');
   });
 
   it('Token: rejects wrong PKCE-verifier', async () => {
