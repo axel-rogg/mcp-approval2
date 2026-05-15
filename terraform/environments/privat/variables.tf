@@ -79,6 +79,12 @@ variable "cloudflare_api_token" {
   description = "Cloudflare API token. Optional now — kommt via Doppler-Sync nach Setup."
 }
 
+variable "cloudflare_account_id" {
+  type        = string
+  default     = ""
+  description = "Cloudflare account ID (öffentlich, sichtbar in Dashboard-URLs). Needed for account-scoped Resources (R2, AI Gateway, Workers AI). Kommt via Doppler-Sync."
+}
+
 variable "r2_access_key_id" {
   type        = string
   sensitive   = true

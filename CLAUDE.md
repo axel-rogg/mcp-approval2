@@ -44,7 +44,9 @@ Status-Banner oben in jedem PLAN-File.
 | [PLAN-architecture-v0.md](docs/plans/active/PLAN-architecture-v0.md) | Vorgänger | Subagent-Recherche, Pattern-Options |
 | [PLAN-hetzner-deployment.md](docs/plans/active/PLAN-hetzner-deployment.md) | ⚠️ Spec | Multi-Instance auf Hetzner + GCP |
 | **[PLAN-as3-autonomous.md](docs/plans/active/PLAN-as3-autonomous.md)** | ✅ **CODE-COMPLETE 2026-05-15** | AS-3-Migration: approval2 als Proxy vor autonomem KC2. A1-A12 + T3 auf `feat/as3-cutover`. |
-| **[PLAN-wrapper-conventions.md](docs/plans/active/PLAN-wrapper-conventions.md)** | ✅ **Live 2026-05-15** | Subtype-Konventionen (file/skill_manifest/app:*/memo/list/note/…), Body-Formate, Drift-Prevention. Kanonische Quelle nach ADR-0004 (Brief in knowledge2). |
+| **[PLAN-wrapper-conventions.md](docs/plans/active/PLAN-wrapper-conventions.md)** | ✅ **Live 2026-05-15** | Subtype-Konventionen (doc/skill_manifest/app:*/memo/list/note/bookmark/recipe), Body-Formate, Drift-Prevention. Kanonische Quelle nach ADR-0004. |
+| **[PLAN-pwa-subtype-renderers.md](docs/plans/active/PLAN-pwa-subtype-renderers.md)** | ✅ **Live 2026-05-15** | PWA-Renderer pro Subtype (markdown/list/memo/skill-manifest/app-link/binary/code). Dispatcher in `apps/web/src/renderers/` mit marked@18 + dompurify@3. |
+| **[PLAN-vulnerabilities-2026-05-15.md](docs/plans/active/PLAN-vulnerabilities-2026-05-15.md)** | ✅ **Live 2026-05-15** | npm audit 0 Vulnerabilities. drizzle-orm@0.45.2 (HIGH-Fix GHSA-gpj5-g38j-94v9) + vite@8 + vitest@4 + esbuild-override. |
 | Master-Cutover-Plan (cross-repo) | ✅ TIER 0-3 CODE-COMPLETE | [knowledge2/docs/plans/active/PLAN-as3-bigbang.md](https://github.com/axel-rogg/mcp-knowledge2/blob/main/docs/plans/active/PLAN-as3-bigbang.md) — Tier 4 (Cutover-Window) pending |
 | Operator-Runbook | ✅ Live | [knowledge2/docs/runbooks/runbook-as3-cutover.md](https://github.com/axel-rogg/mcp-knowledge2/blob/main/docs/runbooks/runbook-as3-cutover.md) — Step-by-Step T-7 bis T+7d |
 

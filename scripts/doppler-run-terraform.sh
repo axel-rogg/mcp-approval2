@@ -65,6 +65,7 @@ doppler_get() {
 # (shellcheck SC2155). ──
 TF_VAR_hcloud_token="$(doppler_get HCLOUD_TOKEN)"
 TF_VAR_operator_ssh_public_key="$(doppler_get OPERATOR_SSH_PUBLIC_KEY)"
+TF_VAR_cloudflare_account_id="$(doppler_get CLOUDFLARE_ACCOUNT_ID)"
 TF_VAR_cloudflare_zone_id="$(doppler_get CLOUDFLARE_ZONE_ID)"
 TF_VAR_cloudflare_api_token="$(doppler_get CLOUDFLARE_API_TOKEN)"
 TF_VAR_r2_access_key_id="$(doppler_get AWS_ACCESS_KEY_ID)"
@@ -72,7 +73,7 @@ TF_VAR_r2_secret_access_key="$(doppler_get AWS_SECRET_ACCESS_KEY)"
 TF_VAR_hetzner_deploy_ssh_private_key="$(doppler_get HETZNER_DEPLOY_SSH_PRIVATE_KEY)"
 TF_VAR_mcp_approval_internal_token="$(doppler_get MCP_APPROVAL_INTERNAL_TOKEN)"
 export TF_VAR_hcloud_token TF_VAR_operator_ssh_public_key \
-  TF_VAR_cloudflare_zone_id TF_VAR_cloudflare_api_token \
+  TF_VAR_cloudflare_account_id TF_VAR_cloudflare_zone_id TF_VAR_cloudflare_api_token \
   TF_VAR_r2_access_key_id TF_VAR_r2_secret_access_key \
   TF_VAR_hetzner_deploy_ssh_private_key TF_VAR_mcp_approval_internal_token
 
