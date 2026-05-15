@@ -73,8 +73,13 @@ locals {
     MCP_APPROVAL_ISSUER    = "mcp-approval2"
     BLOB_REGION            = "eu-central"
     BLOB_PATH_STYLE        = "true"
+    # Embedding-Provider-Defaults (Wechsel zu Cloudflare Workers AI via AI Gateway)
+    EMBED_PROVIDER         = "cloudflare"
+    CLOUDFLARE_AI_MODEL    = "@cf/baai/bge-m3"
+    CLOUDFLARE_AI_GATEWAY_ID = "mcp-knowledge2"
+    # Vertex bleibt verfügbar als Fallback; nur aktiv wenn EMBED_PROVIDER=vertex
     VERTEX_LOCATION        = "europe-west4"
-    VERTEX_MODEL           = "text-multilingual-embedding-002" # User-Decision: multilingual default
+    VERTEX_MODEL           = "text-multilingual-embedding-002"
     OPENBAO_TRANSIT_PATH   = "transit"
     BACKUP_RETENTION_DAYS  = "30"
   }
@@ -192,7 +197,11 @@ locals {
     "BLOB_BUCKET",
     "BACKUP_BUCKET",
 
-    # Vertex AI (real GCP-Project)
+    # Cloudflare Workers AI (Embedding-Provider, EMBED_PROVIDER=cloudflare)
+    "CLOUDFLARE_ACCOUNT_ID",
+    "CLOUDFLARE_API_TOKEN",
+
+    # Vertex AI (Legacy-Fallback, nur wenn EMBED_PROVIDER=vertex)
     "VERTEX_PROJECT",
     "VERTEX_SERVICE_ACCOUNT_JSON_PATH",
 
@@ -234,8 +243,10 @@ locals {
   knowledge2_dev_externals = toset([
     "GOOGLE_OAUTH_CLIENT_ID",
     "GOOGLE_OAUTH_CLIENT_SECRET",
-    "VERTEX_PROJECT", # leer ok, nur fuer Embed-Tests gebraucht
-    "MCP_APPROVAL_JWKS_URL", # leer ok, nur fuer OBO-Tests
+    "CLOUDFLARE_ACCOUNT_ID",     # leer ok, nur fuer Embed-Tests gebraucht
+    "CLOUDFLARE_API_TOKEN",      # leer ok, nur fuer Embed-Tests gebraucht
+    "VERTEX_PROJECT",            # leer ok, Vertex-Fallback nur wenn EMBED_PROVIDER=vertex
+    "MCP_APPROVAL_JWKS_URL",     # leer ok, nur fuer OBO-Tests
   ])
 }
 

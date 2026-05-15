@@ -17,6 +17,7 @@ import type { ApiStorageClient, KnowledgeObject } from './api-storage.js';
 import type { ApiClient, Session } from './api.js';
 import { logout } from './auth.js';
 import { renderHeader } from './components/header.js';
+import { dispatchRenderer } from './renderers/index.js';
 
 function formatBytes(n: number | undefined): string {
   if (n === undefined || n === null) return '–';
@@ -164,17 +165,27 @@ export async function renderStorageDetail(
     main.appendChild(summary);
   }
 
-  // Body
+  // Body — Subtype-aware Renderer + Raw-Toggle (Fallback)
   const bodySection = document.createElement('section');
   bodySection.className = 'storage-body card';
   const bh = document.createElement('h2');
   bh.textContent = 'Body';
   bodySection.appendChild(bh);
 
+  const rendered = dispatchRenderer(obj);
+  bodySection.appendChild(rendered);
+
+  const rawToggle = document.createElement('details');
+  rawToggle.className = 'storage-body-raw';
+  const summary = document.createElement('summary');
+  summary.textContent = 'Raw';
+  rawToggle.appendChild(summary);
   const pre = document.createElement('pre');
   pre.className = 'storage-body-pre';
   pre.textContent = decodeBody(obj) || '(empty)';
-  bodySection.appendChild(pre);
+  rawToggle.appendChild(pre);
+  bodySection.appendChild(rawToggle);
+
   main.appendChild(bodySection);
 
   // Actions footer
