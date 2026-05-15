@@ -3,10 +3,12 @@
  *
  * Plan-Ref: PLAN-architecture-v1.md §2.1 (Storage-Boundary)
  *
- * Wrappers fuer docs.*, skills.*, memorize.*, objects.* — alle forwarden an
- * KnowledgeService → mcp-knowledge2 (HttpKnowledgeAdapter).
+ * Wrappers fuer docs.*, skills.*, memorize.*, objects.*, lists.*, notes.*,
+ * bookmarks.*, recipes.* — alle forwarden an KnowledgeService → mcp-knowledge2
+ * (HttpKnowledgeAdapter).
  *
- * Total: 20 Tools (7 docs + 7 skills + 4 memorize + 2 objects).
+ * Total: 40 Tools (7 docs + 7 skills + 4 memorize + 2 objects + 6 lists +
+ *                  5 notes + 4 bookmarks + 5 recipes).
  *
  * Wird vom Caller (createApp) AUFTRAGSGEMAESS getrennt von den existierenden
  * registerCoreTools registriert. Hot-Path: registerKcWrapperTools(registry, {knowledge}).
@@ -46,6 +48,38 @@ import {
   makeObjectsReadTool,
   type ObjectsToolsDeps,
 } from './objects-tools.js';
+import {
+  makeListsAddItemTool,
+  makeListsCreateTool,
+  makeListsGetTool,
+  makeListsListTool,
+  makeListsTickTool,
+  makeListsUntickTool,
+  type ListsToolsDeps,
+} from './lists-tools.js';
+import {
+  makeNotesCreateTool,
+  makeNotesDeleteTool,
+  makeNotesGetTool,
+  makeNotesListTool,
+  makeNotesUpdateTool,
+  type NotesToolsDeps,
+} from './notes-tools.js';
+import {
+  makeBookmarksCreateTool,
+  makeBookmarksDeleteTool,
+  makeBookmarksGetTool,
+  makeBookmarksListTool,
+  type BookmarksToolsDeps,
+} from './bookmarks-tools.js';
+import {
+  makeRecipesCreateTool,
+  makeRecipesDeleteTool,
+  makeRecipesGetTool,
+  makeRecipesListTool,
+  makeRecipesUpdateTool,
+  type RecipesToolsDeps,
+} from './recipes-tools.js';
 
 export interface KcWrapperDeps {
   readonly knowledge: KnowledgeService;
@@ -69,6 +103,10 @@ export function registerKcWrapperTools(
   const sDeps: SkillsToolsDeps = { knowledge: deps.knowledge };
   const mDeps: MemorizeToolsDeps = { knowledge: deps.knowledge };
   const oDeps: ObjectsToolsDeps = { knowledge: deps.knowledge };
+  const liDeps: ListsToolsDeps = { knowledge: deps.knowledge };
+  const nDeps: NotesToolsDeps = { knowledge: deps.knowledge };
+  const bDeps: BookmarksToolsDeps = { knowledge: deps.knowledge };
+  const rDeps: RecipesToolsDeps = { knowledge: deps.knowledge };
 
   // Docs (7)
   registry.register(makeDocsPutTool(dDeps));
@@ -97,6 +135,34 @@ export function registerKcWrapperTools(
   // Objects (2)
   registry.register(makeObjectsListTool(oDeps));
   registry.register(makeObjectsReadTool(oDeps));
+
+  // Lists (6)
+  registry.register(makeListsCreateTool(liDeps));
+  registry.register(makeListsAddItemTool(liDeps));
+  registry.register(makeListsTickTool(liDeps));
+  registry.register(makeListsUntickTool(liDeps));
+  registry.register(makeListsListTool(liDeps));
+  registry.register(makeListsGetTool(liDeps));
+
+  // Notes (5)
+  registry.register(makeNotesCreateTool(nDeps));
+  registry.register(makeNotesUpdateTool(nDeps));
+  registry.register(makeNotesListTool(nDeps));
+  registry.register(makeNotesGetTool(nDeps));
+  registry.register(makeNotesDeleteTool(nDeps));
+
+  // Bookmarks (4)
+  registry.register(makeBookmarksCreateTool(bDeps));
+  registry.register(makeBookmarksListTool(bDeps));
+  registry.register(makeBookmarksGetTool(bDeps));
+  registry.register(makeBookmarksDeleteTool(bDeps));
+
+  // Recipes (5)
+  registry.register(makeRecipesCreateTool(rDeps));
+  registry.register(makeRecipesUpdateTool(rDeps));
+  registry.register(makeRecipesListTool(rDeps));
+  registry.register(makeRecipesGetTool(rDeps));
+  registry.register(makeRecipesDeleteTool(rDeps));
 }
 
 // ---------------------------------------------------------------------------
@@ -138,3 +204,39 @@ export {
   makeObjectsReadTool,
 } from './objects-tools.js';
 export type { ObjectsToolsDeps } from './objects-tools.js';
+
+export {
+  makeListsAddItemTool,
+  makeListsCreateTool,
+  makeListsGetTool,
+  makeListsListTool,
+  makeListsTickTool,
+  makeListsUntickTool,
+} from './lists-tools.js';
+export type { ListsToolsDeps } from './lists-tools.js';
+
+export {
+  makeNotesCreateTool,
+  makeNotesDeleteTool,
+  makeNotesGetTool,
+  makeNotesListTool,
+  makeNotesUpdateTool,
+} from './notes-tools.js';
+export type { NotesToolsDeps } from './notes-tools.js';
+
+export {
+  makeBookmarksCreateTool,
+  makeBookmarksDeleteTool,
+  makeBookmarksGetTool,
+  makeBookmarksListTool,
+} from './bookmarks-tools.js';
+export type { BookmarksToolsDeps } from './bookmarks-tools.js';
+
+export {
+  makeRecipesCreateTool,
+  makeRecipesDeleteTool,
+  makeRecipesGetTool,
+  makeRecipesListTool,
+  makeRecipesUpdateTool,
+} from './recipes-tools.js';
+export type { RecipesToolsDeps } from './recipes-tools.js';

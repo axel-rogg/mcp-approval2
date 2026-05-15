@@ -64,6 +64,15 @@ export interface GetObjectArgs extends OnBehalfOfFields {
 export interface ListObjectsArgs extends OnBehalfOfFields {
   readonly userId: string;
   readonly subtype?: string;
+  /**
+   * Server-side prefix-match filter (`LIKE 'prefix%'`). Mutually exclusive
+   * with `subtype` — passing both throws locally before the HTTP call.
+   *
+   * Use case: list all apps (`subtype_prefix: 'app:'`) without enumerating
+   * each app-type. The Postgres B-Tree-Index on `(owner_id, subtype)` makes
+   * this index-friendly because the pattern is left-anchored.
+   */
+  readonly subtypePrefix?: string;
   readonly limit?: number;
   /**
    * D-4: Server cursor ist Integer (Unix-ms vom letzten updatedAt). `null`
@@ -99,6 +108,13 @@ export interface SearchArgs extends OnBehalfOfFields {
    * Array oder undefined → kein Filter.
    */
   readonly subtypes?: ReadonlyArray<string>;
+  /**
+   * Prefix-match filters analog to `subtypes`. Combinable — KC2 joins
+   * via OR. e.g. `subtypePrefixes: ['app:']` for "all apps", or
+   * `subtypes: ['skill'], subtypePrefixes: ['app:']` for "all skills
+   * AND all apps".
+   */
+  readonly subtypePrefixes?: ReadonlyArray<string>;
   readonly limit?: number;
 }
 

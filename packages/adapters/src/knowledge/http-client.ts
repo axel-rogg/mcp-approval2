@@ -359,8 +359,18 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
   async listObjects(args: ListObjectsArgs): Promise<ObjectsList> {
     // D-4 + D-5: server liefert `{items, next_cursor}` mit number-cursor.
     // ADR-0004: nur noch free-form `subtype`-Filter.
+    // Mutual-Exclusive: subtype + subtypePrefix duerfen nicht zusammen
+    // gesetzt sein. Wir fangen das lokal ab — kein unnoetiger HTTP-Call
+    // gegen eine garantierte 400.
+    if (args.subtype !== undefined && args.subtypePrefix !== undefined) {
+      throw new ServiceError(
+        'listObjects: subtype and subtypePrefix are mutually exclusive',
+        400,
+      );
+    }
     const query: Record<string, string | number | undefined> = {};
     if (args.subtype !== undefined) query['subtype'] = args.subtype;
+    if (args.subtypePrefix !== undefined) query['subtype_prefix'] = args.subtypePrefix;
     if (args.limit !== undefined) query['limit'] = args.limit;
     if (args.cursor !== undefined && args.cursor !== null) query['cursor'] = args.cursor;
     const raw = await this.authedFetch<{
@@ -481,6 +491,10 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
     const body: Record<string, unknown> = { query: args.query };
     if (args.subtypes !== undefined && args.subtypes.length > 0) {
       body['subtypes'] = args.subtypes;
+    }
+    // subtype_prefixes combinable with subtypes (server joins via OR).
+    if (args.subtypePrefixes !== undefined && args.subtypePrefixes.length > 0) {
+      body['subtype_prefixes'] = args.subtypePrefixes;
     }
     if (args.limit !== undefined) body['limit'] = args.limit;
     const res = await this.authedFetch<{ items: ReadonlyArray<SearchHit> }>({

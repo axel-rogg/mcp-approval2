@@ -367,18 +367,22 @@ class AppsServiceImpl implements AppsService {
     const listArgs: Parameters<KnowledgeService['listObjects']>[0] = {
       userId: args.userId,
     };
-    // §6.1 Option A: KC2 erwartet exakten subtype-Match. Bei explizitem
-    // appType → exakte Subtype-Anfrage. Ohne appType → ohne Filter laden,
-    // dann client-side per `app:`-Prefix narrowen.
+    // Bei explizitem appType → exakte Subtype-Anfrage (`app:<typ>`). Ohne
+    // appType → server-side prefix-match via `subtypePrefix: 'app:'` (index-
+    // friendly LIKE 'app:%' im B-Tree-Index). Frueher haben wir hier
+    // ohne Filter geladen und client-side genarrowt — bei wachsendem
+    // Dataset kostete das je nach Forderung 10x mehr Storage-Roundtrip.
     if (args.type !== undefined) {
       (listArgs as { subtype?: string }).subtype = appSubtype(args.type);
+    } else {
+      (listArgs as { subtypePrefix?: string }).subtypePrefix = APP_SUBTYPE_PREFIX;
     }
     if (args.limit !== undefined) (listArgs as { limit?: number }).limit = args.limit;
     const list = await this.knowledge.listObjects(listArgs);
-    const apps = args.type !== undefined
-      ? list.items
-      : list.items.filter(isAppObject);
-    return apps.map((o) => toAppInstance(o));
+    // Server hat schon gefiltert (exact-match oder prefix-match). isAppObject
+    // bleibt als zusaetzliche Defense-Layer falls KC2 trotz Filter ein
+    // fremdes Object schickt (sollte nicht passieren — defensive).
+    return list.items.filter(isAppObject).map((o) => toAppInstance(o));
   }
 
   async deleteApp(args: { userId: string; id: string }): Promise<void> {

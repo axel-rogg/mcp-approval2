@@ -326,6 +326,30 @@ describe('registerCoreTools', () => {
         // KC-Wrappers — objects.*
         'objects.list',
         'objects.read',
+        // KC-Wrappers — lists.*
+        'lists.create',
+        'lists.add_item',
+        'lists.tick',
+        'lists.untick',
+        'lists.list',
+        'lists.get',
+        // KC-Wrappers — notes.*
+        'notes.create',
+        'notes.update',
+        'notes.list',
+        'notes.get',
+        'notes.delete',
+        // KC-Wrappers — bookmarks.*
+        'bookmarks.create',
+        'bookmarks.list',
+        'bookmarks.get',
+        'bookmarks.delete',
+        // KC-Wrappers — recipes.*
+        'recipes.create',
+        'recipes.update',
+        'recipes.list',
+        'recipes.get',
+        'recipes.delete',
         // Credentials
         'credentials.add',
         'credentials.delete',

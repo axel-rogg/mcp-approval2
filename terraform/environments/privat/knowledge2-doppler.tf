@@ -76,7 +76,9 @@ locals {
     # Embedding-Provider-Defaults (Wechsel zu Cloudflare Workers AI via AI Gateway)
     EMBED_PROVIDER         = "cloudflare"
     CLOUDFLARE_AI_MODEL    = "@cf/baai/bge-m3"
-    CLOUDFLARE_AI_GATEWAY_ID = "mcp-knowledge2"
+    # Wiederverwendung des existing AI Gateways aus mcp-approval (Quality-Gate).
+    # AI Gateways sind provider-agnostisch — ein Gateway kann Workers AI + Google AI Studio + … parallel routen.
+    CLOUDFLARE_AI_GATEWAY_ID = "mcp-approval-quality"
     # Vertex bleibt verfügbar als Fallback; nur aktiv wenn EMBED_PROVIDER=vertex
     VERTEX_LOCATION        = "europe-west4"
     VERTEX_MODEL           = "text-multilingual-embedding-002"
@@ -200,6 +202,8 @@ locals {
     # Cloudflare Workers AI (Embedding-Provider, EMBED_PROVIDER=cloudflare)
     "CLOUDFLARE_ACCOUNT_ID",
     "CLOUDFLARE_API_TOKEN",
+    # Optional: nur bei AI Gateway "Authenticated Mode" — eigener gateway-scoped Token
+    "CLOUDFLARE_AI_GATEWAY_TOKEN",
 
     # Vertex AI (Legacy-Fallback, nur wenn EMBED_PROVIDER=vertex)
     "VERTEX_PROJECT",
@@ -243,9 +247,10 @@ locals {
   knowledge2_dev_externals = toset([
     "GOOGLE_OAUTH_CLIENT_ID",
     "GOOGLE_OAUTH_CLIENT_SECRET",
-    "CLOUDFLARE_ACCOUNT_ID",     # leer ok, nur fuer Embed-Tests gebraucht
-    "CLOUDFLARE_API_TOKEN",      # leer ok, nur fuer Embed-Tests gebraucht
-    "VERTEX_PROJECT",            # leer ok, Vertex-Fallback nur wenn EMBED_PROVIDER=vertex
+    "CLOUDFLARE_ACCOUNT_ID",        # leer ok, nur fuer Embed-Tests gebraucht
+    "CLOUDFLARE_API_TOKEN",         # leer ok, nur fuer Embed-Tests gebraucht
+    "CLOUDFLARE_AI_GATEWAY_TOKEN",  # leer ok, nur bei Authenticated Gateway gebraucht
+    "VERTEX_PROJECT",               # leer ok, Vertex-Fallback nur wenn EMBED_PROVIDER=vertex
     "MCP_APPROVAL_JWKS_URL",     # leer ok, nur fuer OBO-Tests
   ])
 }

@@ -253,7 +253,7 @@ function buildRegistry(): {
 // ===========================================================================
 
 describe('registerKcWrapperTools — registration', () => {
-  it('registers all 20 KC-wrapper tools', () => {
+  it('registers all 40 KC-wrapper tools', () => {
     const { registry } = buildRegistry();
     const names = registry.list().map((t) => t.name);
     expect(names.sort()).toEqual(
@@ -278,9 +278,29 @@ describe('registerKcWrapperTools — registration', () => {
         'memorize.delete',
         'objects.list',
         'objects.read',
+        'lists.create',
+        'lists.add_item',
+        'lists.tick',
+        'lists.untick',
+        'lists.list',
+        'lists.get',
+        'notes.create',
+        'notes.update',
+        'notes.list',
+        'notes.get',
+        'notes.delete',
+        'bookmarks.create',
+        'bookmarks.list',
+        'bookmarks.get',
+        'bookmarks.delete',
+        'recipes.create',
+        'recipes.update',
+        'recipes.list',
+        'recipes.get',
+        'recipes.delete',
       ].sort(),
     );
-    expect(registry.size()).toBe(20);
+    expect(registry.size()).toBe(40);
   });
 
   it('exposes correct sensitivity annotations', () => {

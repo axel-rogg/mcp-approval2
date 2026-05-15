@@ -481,6 +481,30 @@ describe('HttpKnowledgeAdapter — listObjects (D-4 + D-5)', () => {
     const list = await adapter.listObjects({ userId: USER_ID });
     expect(list.nextCursor).toBeNull();
   });
+
+  it('serializes subtypePrefix as ?subtype_prefix= query param', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, { items: [], next_cursor: null }),
+    );
+    const adapter = makeAdapter({ fetchImpl: fetchMock });
+    await adapter.listObjects({ userId: USER_ID, subtypePrefix: 'app:' });
+    const [url] = fetchMock.mock.calls[0] ?? [];
+    const u = new URL(String(url));
+    expect(u.pathname).toBe('/v1/objects');
+    expect(u.searchParams.get('subtype_prefix')).toBe('app:');
+    // mutually exclusive — neither flag should leak the other.
+    expect(u.searchParams.get('subtype')).toBeNull();
+  });
+
+  it('rejects locally when both subtype and subtypePrefix are set (mutual-excl)', async () => {
+    const fetchMock = vi.fn<FetchLike>();
+    const adapter = makeAdapter({ fetchImpl: fetchMock });
+    await expect(
+      adapter.listObjects({ userId: USER_ID, subtype: 'doc', subtypePrefix: 'app:' }),
+    ).rejects.toThrowError(/mutually exclusive/);
+    // No HTTP roundtrip should have happened — caught locally.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('HttpKnowledgeAdapter — updateObject', () => {
@@ -661,6 +685,37 @@ describe('HttpKnowledgeAdapter — search (ADR-0004 subtypes)', () => {
     expect(body).toEqual({ query: 'foo' });
     expect(body['subtypes']).toBeUndefined();
     expect(body['kind']).toBeUndefined();
+  });
+
+  it('sends subtype_prefixes when provided (combinable with subtypes)', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, { items: [] }),
+    );
+    const adapter = makeAdapter({ fetchImpl: fetchMock });
+    await adapter.search({
+      userId: USER_ID,
+      query: 'foo',
+      subtypes: ['skill'],
+      subtypePrefixes: ['app:'],
+    });
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+    expect(body).toEqual({
+      query: 'foo',
+      subtypes: ['skill'],
+      subtype_prefixes: ['app:'],
+    });
+  });
+
+  it('omits subtype_prefixes when undefined or empty', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, { items: [] }),
+    );
+    const adapter = makeAdapter({ fetchImpl: fetchMock });
+    await adapter.search({ userId: USER_ID, query: 'foo', subtypePrefixes: [] });
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+    expect(body['subtype_prefixes']).toBeUndefined();
   });
 });
 

@@ -10,7 +10,7 @@
  *   - SINGLE_INSTANCE-Guard (n/a heute — composable nicht single_instance)
  *   - Multi-User-Isolation (User-A kann nicht User-B's app lesen)
  */
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   CreateObjectArgs,
   GetObjectArgs,
@@ -112,7 +112,14 @@ class InMemoryKnowledgeAdapter implements KnowledgeAdapter {
   async listObjects(args: ListObjectsArgs): Promise<ObjectsList> {
     const bucket = this.bucket(args.userId);
     let items: KnowledgeObject[] = [...bucket.values()].map((v) => v.obj);
+    if (args.subtype !== undefined && args.subtypePrefix !== undefined) {
+      throw new Error('subtype and subtypePrefix are mutually exclusive');
+    }
     if (args.subtype) items = items.filter((o) => o.subtype === args.subtype);
+    if (args.subtypePrefix) {
+      const p = args.subtypePrefix;
+      items = items.filter((o) => typeof o.subtype === 'string' && o.subtype.startsWith(p));
+    }
     items.sort((a, b) => b.updatedAt - a.updatedAt);
     const limit = args.limit ?? items.length;
     return { items: items.slice(0, limit), nextCursor: null };
@@ -283,6 +290,42 @@ describe('AppsService — list + delete', () => {
     expect(listB).toHaveLength(1);
     expect(listA.map((a) => a.title).sort()).toEqual(['A1', 'A2']);
     expect(listB[0]!.title).toBe('B1');
+  });
+
+  it('listApps without args.type asks adapter for subtype_prefix="app:" and ignores non-app objects', async () => {
+    const svc = makeService();
+    // 1 echte App via Service-Pfad
+    await svc.apps.createApp({ userId: USER_A, appType: 'composable', title: 'mine' });
+    // 1 Fremd-Object (kein `app:`-Prefix) direkt in den Adapter — wird durch
+    // server-side prefix-Filter ausgeschlossen.
+    await svc.knowledge.createObject({
+      userId: USER_A,
+      subtype: 'memo',
+      title: 'random memo',
+      body: 'x',
+    });
+    // Adapter-Spy: listObjects-Args sehen
+    const spy = vi.spyOn(svc.adapter, 'listObjects');
+    const list = await svc.apps.listApps({ userId: USER_A });
+    expect(list).toHaveLength(1);
+    expect(list[0]!.title).toBe('mine');
+    // Server-Filter wurde ueber `subtypePrefix: 'app:'` ausgedrueckt —
+    // NICHT mehr per client-side filter.
+    expect(spy).toHaveBeenCalledTimes(1);
+    const arg = spy.mock.calls[0]?.[0];
+    expect(arg).toBeDefined();
+    expect(arg?.subtypePrefix).toBe('app:');
+    expect(arg?.subtype).toBeUndefined();
+  });
+
+  it('listApps WITH args.type uses exact-match subtype=app:<typ>', async () => {
+    const svc = makeService();
+    await svc.apps.createApp({ userId: USER_A, appType: 'composable', title: 'comp' });
+    const spy = vi.spyOn(svc.adapter, 'listObjects');
+    await svc.apps.listApps({ userId: USER_A, type: 'composable' });
+    const arg = spy.mock.calls[0]?.[0];
+    expect(arg?.subtype).toBe('app:composable');
+    expect(arg?.subtypePrefix).toBeUndefined();
   });
 
   it('deleteApp removes the instance', async () => {

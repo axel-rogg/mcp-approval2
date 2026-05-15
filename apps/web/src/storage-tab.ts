@@ -229,24 +229,19 @@ async function loadAndRender(
   }
 
   try {
-    // Apps-Filter (`app:*`) ist ein Client-Sentinel: kein konkreter Subtype, sondern
-    // ein Prefix-Match. Server kann das nicht, also pre-filter weglassen und
-    // unten client-seitig nach `subtype.startsWith('app:')` filtern.
-    const isAppsFilter = filters.subtype === 'app:*';
+    // Apps-Filter (`app:*`) ist ein URL-Sentinel — er wird im API-Call zum
+    // server-side `subtype_prefix=app:` (KC2 macht `LIKE 'app:%'`). Kein
+    // client-side narrowing mehr noetig.
+    const isAppsFilter = filters.subtype === APP_FILTER;
     const args: ListObjectsArgs = {
       limit: 50,
       ...(filters.subtype && !isAppsFilter ? { subtype: filters.subtype } : {}),
+      ...(isAppsFilter ? { subtypePrefix: 'app:' } : {}),
       ...(filters.q ? { q: filters.q } : {}),
       ...(filters.embeddedFlag ? { embeddedFlag: filters.embeddedFlag } : {}),
       ...(cursor !== undefined ? { cursor } : {}),
     };
-    const raw: ListObjectsResult = await api.listObjects(args);
-    const result: ListObjectsResult = isAppsFilter
-      ? {
-          items: raw.items.filter((o) => (o.subtype ?? '').startsWith('app:')),
-          nextCursor: raw.nextCursor,
-        }
-      : raw;
+    const result: ListObjectsResult = await api.listObjects(args);
 
     if (!append) listEl.innerHTML = '';
 

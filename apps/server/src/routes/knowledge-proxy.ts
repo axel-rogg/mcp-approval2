@@ -89,6 +89,9 @@ function buildUpdatePatch(input: z.infer<typeof updateObjectSchema>): UpdatePatc
 
 const listObjectsQuerySchema = z.object({
   subtype: objectSubtypeSchema.optional(),
+  // Prefix-Match — mutually exclusive with `subtype`. Same shape-regex
+  // as `objectSubtypeSchema`.
+  subtype_prefix: objectSubtypeSchema.optional(),
   limit: z.coerce.number().int().positive().max(500).optional(),
   cursor: z.coerce.number().int().nonnegative().optional(),
 });
@@ -101,6 +104,8 @@ const createShareSchema = z.object({
 const searchSchema = z.object({
   query: z.string().min(1).max(2000),
   subtypes: z.array(objectSubtypeSchema).optional(),
+  // Prefix-match — combinable with `subtypes` (server joins via OR).
+  subtype_prefixes: z.array(objectSubtypeSchema).max(8).optional(),
   limit: z.number().int().positive().max(100).optional(),
 });
 
@@ -166,10 +171,20 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
   app.get('/v1/knowledge/objects', zValidator('query', listObjectsQuerySchema), async (c) => {
     const user = requireUser(c);
     const q = c.req.valid('query');
+    // Mutual-Exclusive: subtype + subtype_prefix duerfen nicht beide
+    // gesetzt sein. zod kann das nicht ausdruecken ohne refinement-
+    // Branch; wir machen es hier explizit.
+    if (q.subtype !== undefined && q.subtype_prefix !== undefined) {
+      throw HttpError.badRequest(
+        'invalid_request',
+        'subtype and subtype_prefix are mutually exclusive',
+      );
+    }
     const list = await runProxy(() =>
       deps.knowledge.listObjects({
         userId: user.userId,
         ...(q.subtype !== undefined ? { subtype: q.subtype } : {}),
+        ...(q.subtype_prefix !== undefined ? { subtypePrefix: q.subtype_prefix } : {}),
         ...(q.limit !== undefined ? { limit: q.limit } : {}),
         ...(q.cursor !== undefined ? { cursor: q.cursor } : {}),
       }),
@@ -223,6 +238,9 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
         userId: user.userId,
         query: body.query,
         ...(body.subtypes !== undefined ? { subtypes: body.subtypes } : {}),
+        ...(body.subtype_prefixes !== undefined
+          ? { subtypePrefixes: body.subtype_prefixes }
+          : {}),
         ...(body.limit !== undefined ? { limit: body.limit } : {}),
       }),
     );
