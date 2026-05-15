@@ -89,11 +89,21 @@ services:
       # HETZNER_FQDN_V4 fuer Coop-Bypass. Server parsed das in
       # apps/server/src/lib/config.ts. Siehe runbook-coop-bypass.md.
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
-      # ── JWT RS256 (RS-signed Knowledge-Bridge + JWKS) ───────
+      # ── JWT RS256 (Sessions + DCR-Facade-Tokens + OBO-Signing fuer KC2) ──
+      # AS-3: Derselbe Key signt jetzt sowohl approval2's DCR-OAuth-Facade-
+      # Tokens (aud=mcp-approval2) als auch die OBO-JWTs an KC2
+      # (aud=mcp-knowledge2). Public-half wird unter
+      # /.well-known/jwks.json published — KC2's MCP_APPROVAL_JWKS_URL
+      # zeigt darauf.
       JWT_RS256_PRIVATE_KEY_PEM: ${JWT_RS256_PRIVATE_KEY_PEM}
       JWT_RS256_PUBLIC_KEY_PEM: ${JWT_RS256_PUBLIC_KEY_PEM}
       JWT_KID: ${JWT_KID}
-      JWT_ISSUER: mcp-approval2
+      # AS-3: SELF_OAUTH_ISSUER ist die canonical iss fuer alle Tokens die
+      # approval2's Facade emittiert (inkl. OBO-Tokens). KC2-Verifier matched
+      # darauf. Format: 'https://<DOMAIN_MCP>'.
+      SELF_OAUTH_ISSUER: https://${DOMAIN_MCP}
+      # Legacy-Alias (intern noch genutzt) — wird zum Cutover entfernt.
+      JWT_ISSUER: https://${DOMAIN_MCP}
       # ── JWT HS256 (Sessions, OAuth-access-tokens, /internal/credentials) ──
       # 32-byte hex random. Required by zod schema (config.ts:22). Used by
       # auth/session/issuer.ts, mcp/oauth/token.ts, routes/internal/credentials.ts.
@@ -104,9 +114,14 @@ services:
       # 32 raw bytes, base64-encoded. Required for /v1/credentials/*, GDPR
       # routes, and /internal/v1/dek/*.
       MASTER_KEY_BASE64: ${MASTER_KEY_BASE64}
+      # ── AS-3 S2S an KC2 (Shared SERVICE_TOKEN + KC-Adapter-URL) ────────
+      # SERVICE_TOKEN ist Two-Factor mit dem OBO-JWT. KC2 erwartet exakt
+      # diesen String im Authorization-Header. ROTATE TOGETHER mit KC2.
+      MCP_KNOWLEDGE_URL: http://mcp-knowledge2:8788
+      MCP_KNOWLEDGE_SERVICE_TOKEN: ${MCP_KNOWLEDGE_SERVICE_TOKEN}
       # ── Internal Service Token (Sub-MCP ↔ Approval) ─────────
       MCP_APPROVAL_INTERNAL_TOKEN: ${MCP_APPROVAL_INTERNAL_TOKEN}
-      # ── KC2 (intra-network) ─────────────────────────────────
+      # ── KC2 Legacy-Alias (wird zum Cutover entfernt) ────────
       KNOWLEDGE_URL: http://mcp-knowledge2:8788
       # ── Sub-MCPs auf Cloudflare (cross-cloud HTTPS) ─────────
       GATEWAY_CF_URL: https://cf.ai-toolhub.org
@@ -146,18 +161,54 @@ services:
     labels:
       com.centurylinklabs.watchtower.enable: "true"
     environment:
+      # ── DB (separate logical DB on same postgres instance) ───
       DATABASE_URL: postgres://app:${POSTGRES_PASSWORD}@postgres:5432/knowledge2
-      JWKS_URL: http://mcp-approval2:8787/.well-known/jwks.json
-      JWT_ISSUER: mcp-approval2
-      JWT_AUDIENCE: mcp-knowledge2
-      MCP_APPROVAL_BASE_URL: http://mcp-approval2:8787
-      MCP_APPROVAL_INTERNAL_TOKEN: ${MCP_APPROVAL_INTERNAL_TOKEN}
-      VERTEX_REGION: ${VERTEX_AI_REGION:-europe-west4}
-      VERTEX_PROJECT_ID: ${VERTEX_AI_PROJECT_ID:-}
+      DATABASE_ADMIN_URL: postgres://app:${POSTGRES_PASSWORD}@postgres:5432/knowledge2
+      DATABASE_POOL_MAX: 20
+      # ── AS-3 K3/K4: own DCR-OAuth-Facade (Claude.ai direct path) ──────
+      SELF_OAUTH_ISSUER: https://${DOMAIN_KNOWLEDGE}
+      GOOGLE_OAUTH_CLIENT_ID: ${KC_GOOGLE_OAUTH_CLIENT_ID}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${KC_GOOGLE_OAUTH_CLIENT_SECRET}
+      GOOGLE_OAUTH_REDIRECT_URI: https://${DOMAIN_KNOWLEDGE}/auth/google/callback
+      # Optional Workspace-domain allowlist (K-D1).
+      GOOGLE_HD_ALLOWLIST: ${GOOGLE_HD_ALLOWLIST:-}
+      JWKS_CACHE_TTL_SECONDS: 86400
+      # ── AS-3 K7: OBO (Proxy path from approval2) ─────────────
+      # When set, KC2 accepts X-On-Behalf-Of + service-token from approval2.
+      MCP_APPROVAL_JWKS_URL: http://mcp-approval2:8787/.well-known/jwks.json
+      MCP_APPROVAL_ISSUER: https://${DOMAIN_MCP}
+      # ── Shared SERVICE_TOKEN (must match approval2 MCP_KNOWLEDGE_SERVICE_TOKEN) ──
+      SERVICE_TOKEN: ${MCP_KNOWLEDGE_SERVICE_TOKEN}
+      # ── AS-3 K9: KMS provider ────────────────────────────────
+      # Pilot/shared-OpenBao: 'openbao' + OPENBAO_ADDR + OPENBAO_TOKEN.
+      # Dev/solo:             'hkdf_local' + KMS_MASTER_KEY_B64.
+      KMS_PROVIDER: ${KC_KMS_PROVIDER:-openbao}
+      OPENBAO_ADDR: http://openbao:8200
+      OPENBAO_TOKEN: ${VAULT_TOKEN}
+      OPENBAO_TRANSIT_PATH: ${KC_OPENBAO_TRANSIT_PATH:-transit}
+      KMS_MASTER_KEY_B64: ${KC_KMS_MASTER_KEY_B64:-}
+      # ── Blob (S3-compatible; can re-use approval2's MinIO if pilot) ──
+      BLOB_ENDPOINT: ${KC_BLOB_ENDPOINT}
+      BLOB_REGION: ${KC_BLOB_REGION:-eu-central}
+      BLOB_ACCESS_KEY: ${KC_BLOB_ACCESS_KEY}
+      BLOB_SECRET_KEY: ${KC_BLOB_SECRET_KEY}
+      BLOB_BUCKET: ${KC_BLOB_BUCKET:-knowledge2}
+      BLOB_PATH_STYLE: "true"
+      # ── Vertex (Embedding-Provider) ──────────────────────────
+      VERTEX_PROJECT: ${VERTEX_AI_PROJECT_ID:-}
+      VERTEX_LOCATION: ${VERTEX_AI_REGION:-europe-west4}
+      VERTEX_MODEL: ${VERTEX_MODEL:-text-multilingual-embedding-002}
+      VERTEX_SERVICE_ACCOUNT_JSON_PATH: /secrets/vertex-sa.json
+      # ── Backup master key (also encrypts the signing_keys at rest, K1) ──
       BACKUP_MASTER_KEY: ${KNOWLEDGE_BACKUP_MASTER_KEY_BASE64}
+      BACKUP_BUCKET: ${KC_BACKUP_BUCKET:-knowledge2-backup}
+      BACKUP_RETENTION_DAYS: 30
+      # ── Server ───────────────────────────────────────────────
       LOG_LEVEL: ${LOG_LEVEL:-info}
       PORT: 8788
       NODE_ENV: production
+    volumes:
+      - ./secrets/vertex-sa.json:/secrets/vertex-sa.json:ro
     healthcheck:
       test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost:8788/health']
       interval: 30s
@@ -167,7 +218,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      mcp-approval2:
+      openbao:
         condition: service_started
     restart: unless-stopped
     networks: [internal]
