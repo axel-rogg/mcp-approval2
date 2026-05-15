@@ -74,11 +74,10 @@ locals {
     BLOB_REGION            = "eu-central"
     BLOB_PATH_STYLE        = "true"
     # Embedding-Provider-Defaults (Wechsel zu Cloudflare Workers AI via AI Gateway)
-    EMBED_PROVIDER         = "cloudflare"
-    CLOUDFLARE_AI_MODEL    = "@cf/baai/bge-m3"
-    # Wiederverwendung des existing AI Gateways aus mcp-approval (Quality-Gate).
-    # AI Gateways sind provider-agnostisch — ein Gateway kann Workers AI + Google AI Studio + … parallel routen.
-    CLOUDFLARE_AI_GATEWAY_ID = "mcp-approval-quality"
+    EMBED_PROVIDER      = "cloudflare"
+    CLOUDFLARE_AI_MODEL = "@cf/baai/bge-m3"
+    # CLOUDFLARE_AI_GATEWAY_ID wird via knowledge2-cloudflare.tf gesetzt
+    # (dediziert, weil dort der cloudflare_ai_gateway-Resource lebt).
     # Vertex bleibt verfügbar als Fallback; nur aktiv wenn EMBED_PROVIDER=vertex
     VERTEX_LOCATION        = "europe-west4"
     VERTEX_MODEL           = "text-multilingual-embedding-002"

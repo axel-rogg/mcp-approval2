@@ -116,3 +116,37 @@ mcp-approval2/
 - Spec-Files für noch nicht implementierte Architektur-Aspekte: `docs/plans/active/PLAN-<topic>.md`
 - ADRs in `docs/adr/` für engere Architektur-Entscheidungen (nicht Plan-Klasse)
 - Cross-Repo-Referenzen via GitHub-URL (nicht relative Paths), da Repos separate Working-Copies haben können
+
+## Infrastructure-Policy: alles via Terraform
+
+**Default: Infrastruktur-Änderungen werden in `terraform/` gemacht, NICHT im Dashboard.**
+
+Gilt für: Cloudflare-Resources (DNS, AI Gateway, API-Tokens, Workers, Rulesets,
+Zone-Settings, Cert-Packs, R2-Buckets), Hetzner-Resources (VM, Volumes, Firewall,
+Networks), Doppler-Project/Configs/Placeholders/Secrets, GitHub-Repo-Settings +
+Secrets, Google Cloud Resources (Cloud-Run/SQL/GCS für Phase-2).
+
+`terraform/environments/privat/` ist der Root für die Single-Tenant-Instance —
+auch für das Schwester-Repo `mcp-knowledge2` (Doppler-Project, AI Gateway,
+DNS-Records, Tokens). KC2 hat **keinen eigenen TF-State**; alles läuft hier.
+
+**Workflow:**
+1. Datei unter `terraform/environments/privat/*.tf` (oder neues Modul unter
+   `terraform/modules/`) editieren
+2. `bash scripts/doppler-run-terraform.sh plan -target=... -out=/tmp/x.tfplan`
+3. User reviewed Diff
+4. `bash scripts/doppler-run-terraform.sh apply /tmp/x.tfplan`
+5. Live verifizieren (`curl`, Dashboard-Stichprobe)
+6. Commit + push
+
+**Anti-Reflex-Test:** Wenn du gerade Dashboard-Klicks aufschreibst ("CF-Dashboard
+→ ...", "Doppler-UI → ...", "Hetzner-Console → ..."): stop, prüfe ob es einen
+TF-Provider dafür gibt. Token-Werte und Geheimnisse können meist via TF-Resource-
+Outputs direkt in Doppler-Secrets gepiped werden — kein Copy-Paste durch den
+User nötig.
+
+**Dokumentierte Ausnahmen** (Dashboard-Pfad legitim):
+- Provider unterstützt die Ressource nicht (z.B. CF AI Gateway Authentication
+  Token ist gateway-intern, kein eigenes TF-Resource — fallback: Authenticated=false)
+- Einmalige Operations-Tasks (Token-Revoke, Cache-Purge, Notfall-Toggle)
+- Out-of-Band-Resources die in `terraform/README.md` so markiert sind
