@@ -56,6 +56,7 @@ import { inviteRoutes } from './routes/auth/invite.js';
 import { recoveryRoutes } from './routes/auth/recovery.js';
 import { credentialsRoutes } from './routes/credentials.js';
 import { knowledgeProxyRoutes } from './routes/knowledge-proxy.js';
+import { kcProxyRoutes } from './routes/kc-proxy.js';
 import { adminRoutes } from './routes/admin.js';
 import { gdprRoutes } from './routes/gdpr.js';
 import { approvalsRoutes } from './routes/approvals.js';
@@ -161,6 +162,12 @@ export interface CreateAppDeps {
    * `/v1/knowledge/*`-Proxy-Routen NICHT montiert.
    */
   readonly knowledge?: KnowledgeService;
+  /**
+   * AS-3: KC-Proxy-Konfiguration fuer `/admin/kc-proxy/*` PWA-Pfad.
+   * Erfordert `MCP_KNOWLEDGE_URL` + `MCP_KNOWLEDGE_SERVICE_TOKEN`.
+   * Wenn nicht gesetzt, wird die Route NICHT gemountet → 404.
+   */
+  readonly kcProxy?: import('./routes/kc-proxy.js').KcProxyDeps;
   /**
    * Tool-Registry-Override fuer Tests. Default: frische Registry; bei vollem
    * Service-Set wird via `registerCoreTools(...)` befuellt, sonst nur mit den
@@ -308,6 +315,12 @@ export async function createApp(
 
   if (deps.knowledge) {
     app.route('/', knowledgeProxyRoutes(server, { knowledge: deps.knowledge }));
+  }
+
+  // AS-3 (§1.3): /admin/kc-proxy/* — PWA-Same-Origin-Proxy zu KC2.
+  // Nur gemountet wenn beide Felder gesetzt sind (graceful ohne KC-Anbindung).
+  if (deps.kcProxy) {
+    app.route('/', kcProxyRoutes(server, deps.kcProxy));
   }
 
   // Admin-Routes (role='admin' check intern in adminOnly-middleware)

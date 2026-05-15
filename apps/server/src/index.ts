@@ -168,6 +168,16 @@ async function buildOptionalDeps(
     deps.internalServiceToken = bootEnv.MCP_APPROVAL_INTERNAL_TOKEN;
   }
 
+  // ─── AS-3: kc-proxy ──────────────────────────────────────────────────
+  // PWA-Same-Origin-Proxy zu mcp-knowledge2. Nur gemountet wenn beide
+  // KC-URL + SERVICE_TOKEN gesetzt sind.
+  if (bootEnv.KNOWLEDGE_URL && bootEnv.MCP_KNOWLEDGE_SERVICE_TOKEN) {
+    deps.kcProxy = {
+      knowledgeUrl: bootEnv.KNOWLEDGE_URL,
+      serviceToken: bootEnv.MCP_KNOWLEDGE_SERVICE_TOKEN,
+    };
+  }
+
   return deps;
 }
 
