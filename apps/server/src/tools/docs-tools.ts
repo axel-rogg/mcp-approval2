@@ -27,7 +27,7 @@ import type {
   UpdateObjectArgs,
 } from '@mcp-approval2/adapters';
 import type { Tool, ToolContext } from '../mcp/protocol/tool.js';
-import type { KnowledgeService } from '../services/knowledge.js';
+import { kcAuthFromCtx, type KnowledgeService } from '../services/knowledge.js';
 import {
   DocsAttachToInput,
   DocsDeleteInput,
@@ -62,6 +62,7 @@ export function makeDocsPutTool(deps: DocsToolsDeps): Tool<DocsPutInputT, Knowle
     displayTemplate: 'Create/Update document: {{filename}}',
     inputSchema: DocsPutInput,
     async execute(ctx: ToolContext, input): Promise<KnowledgeObject> {
+      const kcAuth = kcAuthFromCtx(ctx);
       if (input.id !== undefined) {
         // Upsert via update — KC-Service patch
         const patch: UpdateObjectArgs['patch'] = {
@@ -85,6 +86,7 @@ export function makeDocsPutTool(deps: DocsToolsDeps): Tool<DocsPutInputT, Knowle
           id: input.id,
           userId: ctx.userId,
           patch,
+          ...kcAuth,
         });
       }
       // Create
@@ -94,6 +96,7 @@ export function makeDocsPutTool(deps: DocsToolsDeps): Tool<DocsPutInputT, Knowle
         title: input.filename,
         body: input.body,
         filename: input.filename,
+        ...kcAuth,
       };
       if (input.summary !== undefined) {
         (args as { description?: string }).description = input.summary;
@@ -202,15 +205,16 @@ export function makeDocsDeleteTool(deps: DocsToolsDeps): Tool<DocsDeleteInputT, 
     displayTemplate: 'DELETE document {{id}}{{#force}} (force){{/force}}',
     inputSchema: DocsDeleteInput,
     async execute(ctx: ToolContext, input): Promise<{ deleted: true; id: string }> {
+      const kcAuth = kcAuthFromCtx(ctx);
       if (input.force !== true) {
-        const obj = await deps.knowledge.getObject({ id: input.id, userId: ctx.userId });
+        const obj = await deps.knowledge.getObject({ id: input.id, userId: ctx.userId, ...kcAuth });
         if (obj.refcount > 0) {
           throw new Error(
             `docs.delete: document is still referenced by ${obj.refcount} skill(s); pass force=true to override`,
           );
         }
       }
-      await deps.knowledge.deleteObject({ id: input.id, userId: ctx.userId });
+      await deps.knowledge.deleteObject({ id: input.id, userId: ctx.userId, ...kcAuth });
       return { deleted: true, id: input.id };
     },
   };

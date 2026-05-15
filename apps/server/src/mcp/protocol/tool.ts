@@ -68,6 +68,17 @@ export interface ToolContext {
   readonly db: DbAdapter;
   /** AbortSignal — wird auf `notifications/cancelled` getriggert. */
   readonly signal: AbortSignal;
+  /**
+   * AS-3 (§1.5 + §1.6): bei state-changing Tools, die nach Approve via
+   * `resumeApproval` wieder dispatched werden, traegt der Resume-Pfad die
+   * Approval-ID im Context mit. Tools die KC2-OBO-Calls machen (kc_wrappers/*),
+   * forwarden das als `approval_id`-Claim im OBO-JWT → KC2-Audit sieht den
+   * Verbindungs-Trail `via_proxy=true, approval_id=<...>`.
+   *
+   * Read-Tools setzen das nicht, write-Tools schon (Approval-Wall passt
+   * davor).
+   */
+  readonly approvalId?: string;
 }
 
 /**

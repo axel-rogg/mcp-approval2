@@ -38,6 +38,41 @@ import {
 } from '@mcp-approval2/adapters';
 
 /**
+ * AS-3 (§1.2 + §1.5): User-Identity-Trio fuer KC-Calls.
+ *
+ * Tools koennen das per-Aufruf mitgeben — der Adapter forwarded es in den
+ * OBO-JWT (`on_behalf_of` + `approval_id`-Claim). Im Legacy-Pfad (kein
+ * SERVICE_TOKEN konfiguriert) werden die Felder ignoriert.
+ *
+ * Konvention: tools/kc_wrappers/* sollten `kcAuthFromCtx(ctx)` aufrufen
+ * und das Resultat in die Service-Args spreizen. So bleibt der Auth-
+ * Flow konsistent ueber alle KC-Wrapper.
+ */
+export interface KcAuthFields {
+  readonly userEmail?: string;
+  readonly approvalId?: string;
+}
+
+/**
+ * Hilfsfunktion: extrahiert die KC-Auth-Felder aus einem ToolContext.
+ *
+ * Caller-Pattern:
+ *   ```ts
+ *   const auth = kcAuthFromCtx(ctx);
+ *   return deps.knowledge.updateObject({ userId: ctx.userId, ...auth, ... });
+ *   ```
+ */
+export function kcAuthFromCtx(ctx: {
+  email?: string;
+  approvalId?: string;
+}): KcAuthFields {
+  const out: { userEmail?: string; approvalId?: string } = {};
+  if (ctx.email) out.userEmail = ctx.email;
+  if (ctx.approvalId) out.approvalId = ctx.approvalId;
+  return out;
+}
+
+/**
  * Lokaler Audit-Service-Contract.
  *
  * Format-kompatibel mit `AuditService` aus src/mcp/protocol/tool.ts — wir
@@ -90,7 +125,13 @@ export class KnowledgeService {
     );
   }
 
-  async getObject(args: { id: string; userId: string }): Promise<KnowledgeObject> {
+  async getObject(args: {
+    id: string;
+    userId: string;
+    userEmail?: string;
+    approvalId?: string;
+    expandBody?: boolean;
+  }): Promise<KnowledgeObject> {
     return this.audited(
       'knowledge.object.read',
       args.userId,
@@ -132,7 +173,12 @@ export class KnowledgeService {
     );
   }
 
-  async deleteObject(args: { id: string; userId: string }): Promise<void> {
+  async deleteObject(args: {
+    id: string;
+    userId: string;
+    userEmail?: string;
+    approvalId?: string;
+  }): Promise<void> {
     await this.audited(
       'knowledge.object.deleted',
       args.userId,
@@ -391,7 +437,12 @@ export class KnowledgeService {
     );
   }
 
-  async listShares(args: { resourceId: string; userId: string }): Promise<ReadonlyArray<Share>> {
+  async listShares(args: {
+    resourceId: string;
+    userId: string;
+    userEmail?: string;
+    approvalId?: string;
+  }): Promise<ReadonlyArray<Share>> {
     return this.audited(
       'knowledge.share.list',
       args.userId,
