@@ -61,18 +61,16 @@ output "fly_apps" {
   description = "Fly-Apps die für privat-Mode deployed werden müssen (via bash deploy/fly/deploy.sh)."
   value = {
     approval2_app     = "mcp-approval2"
-    approval2_pg      = "mcp-approval2-pg"
-    approval2_openbao = "mcp-approval2-openbao"
     knowledge2_app    = "mcp-knowledge2"
-    knowledge2_pg     = "mcp-knowledge2-pg"
+    approval2_openbao = var.enable_openbao_fly ? "mcp-approval2-openbao" : "(disabled — Cloud-KMS Default seit ADR-0011)"
   }
 }
 
 output "custom_domains" {
-  description = "Geplante Custom-Domains (manuell via `fly certs add` + CF CNAME setzen, nicht terraform-managed)."
+  description = "Custom-Domains (TF-managed via cloudflare_dns_record + fly_cert)."
   value = {
-    mcp2       = "mcp2.ai-toolhub.org       → mcp-approval2.fly.dev"
-    app2       = "app2.ai-toolhub.org       → mcp-approval2.fly.dev"
-    knowledge2 = "knowledge2.ai-toolhub.org → mcp-knowledge2.fly.dev"
+    mcp       = "mcp.ai-toolhub.org       → mcp-approval2.fly.dev"
+    app       = "app.ai-toolhub.org       → mcp-approval2.fly.dev"
+    knowledge = "knowledge.ai-toolhub.org → mcp-knowledge2.fly.dev"
   }
 }

@@ -96,7 +96,12 @@ resource "cloudflare_zone_setting" "knowledge2_always_use_https" {
 # (count=0) oder upgrade auf CF Pro.
 
 resource "cloudflare_ruleset" "knowledge2_rate_limit" {
-  count = var.enable_knowledge2_fly_cf ? 1 : 0
+  # Gate: braucht CF Pro Plan (Free erlaubt max 1 zone-ruleset pro
+  # http_ratelimit-Phase, und der ist von der v1-Worker bereits belegt).
+  # Default `false`: Defense-in-Depth durch In-Process-Rate-Limiter in
+  # mcp-knowledge2/src/middleware/rate_limit.ts. Auf `true` setzen nach
+  # CF-Pro-Upgrade oder wenn die v1-Worker-Ruleset migriert wurde.
+  count = var.enable_knowledge2_fly_cf && var.enable_cf_zone_ratelimit ? 1 : 0
 
   zone_id     = data.cloudflare_zone.ai_toolhub.id
   name        = "knowledge2-rate-limit"

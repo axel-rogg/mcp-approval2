@@ -32,11 +32,13 @@
 # ---------------------------------------------------------------------------
 
 resource "fly_app" "approval2_openbao" {
+  count = var.enable_openbao_fly ? 1 : 0
+
   name = "mcp-approval2-openbao"
   org  = var.fly_org
 
   # Wenn die App schon via `fly apps create` angelegt wurde:
-  #   terraform import fly_app.approval2_openbao mcp-approval2-openbao
+  #   terraform import 'fly_app.approval2_openbao[0]' mcp-approval2-openbao
 }
 
 # ---------------------------------------------------------------------------
@@ -50,7 +52,9 @@ resource "fly_app" "approval2_openbao" {
 # kann die Machine nicht mounten.
 
 resource "fly_volume" "approval2_openbao_data" {
-  app    = fly_app.approval2_openbao.name
+  count = var.enable_openbao_fly ? 1 : 0
+
+  app    = fly_app.approval2_openbao[0].name
   name   = "vault_data"
   size   = 1 # GB
   region = "fra"
@@ -61,16 +65,16 @@ resource "fly_volume" "approval2_openbao_data" {
 # ---------------------------------------------------------------------------
 
 output "approval2_openbao_fly_app_name" {
-  value       = fly_app.approval2_openbao.name
-  description = "OpenBao-App-Name. Für `fly ssh console -a <name>` + Unseal-Workflow."
+  value       = var.enable_openbao_fly ? fly_app.approval2_openbao[0].name : null
+  description = "OpenBao-App-Name. Nur gesetzt wenn enable_openbao_fly=true. Sonst Cloud-KMS-Pfad aktiv (Default seit ADR-0011)."
 }
 
 output "approval2_openbao_internal_url" {
-  value       = "http://${fly_app.approval2_openbao.name}.internal:8200"
-  description = "Internal-DNS-URL für VAULT_ADDR. Resolved nur innerhalb der Fly-6PN."
+  value       = var.enable_openbao_fly ? "http://${fly_app.approval2_openbao[0].name}.internal:8200" : null
+  description = "Internal-DNS-URL für VAULT_ADDR. Resolved nur innerhalb der Fly-6PN. Nur gesetzt wenn enable_openbao_fly=true."
 }
 
 output "approval2_openbao_volume_name" {
-  value       = fly_volume.approval2_openbao_data.name
-  description = "Volume-Name für `fly volumes snapshots create -a mcp-approval2-openbao -v vault_data`."
+  value       = var.enable_openbao_fly ? fly_volume.approval2_openbao_data[0].name : null
+  description = "Volume-Name für `fly volumes snapshots create -a mcp-approval2-openbao -v vault_data`. Nur gesetzt wenn enable_openbao_fly=true."
 }
