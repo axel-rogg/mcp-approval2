@@ -56,3 +56,6 @@ deploy/hetzner/docker-compose.override.yml
 # Secrets (lokal-only, NIE committen!)
 .dev.vars
 
+
+# Fly CLI artifacts
+.fly/

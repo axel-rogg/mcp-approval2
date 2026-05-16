@@ -72,7 +72,7 @@ inklusive Let's-Encrypt-Cert-Issuance.
 
 Verkabelt + gegen den Pilot getestet (14.05.):
 
-- [fly.toml](../fly.toml) (sek. Self-Host-Variante) + [fly.openbao.toml](../fly.openbao.toml) — Fly-Apps `mcp-approval2` + `mcp-approval2-openbao`, Postgres via `fly postgres attach`.
+- [fly.toml](../fly.toml) (primärer Deploy-Pfad seit Fly-Switch 2026-05-17) + [fly.openbao.toml](../fly.openbao.toml) (deprecated; OpenBao-Pfad ersetzt durch Cloud-KMS) — Fly-App `mcp-approval2` (TF-managed via `fly_app.approval2`), Postgres als **Neon Free Tier** (TF-managed in `terraform/environments/privat/neon-approval2.tf`, Connection-Strings landen automatisch in Doppler).
 - [deploy/hetzner/docker-compose.yml](../deploy/hetzner/docker-compose.yml) — 5 Services im `internal` Bridge-Netz: `postgres` (pgvector/pg16), `openbao`, `mcp-approval2`, `mcp-knowledge2`, `caddy`, plus `watchtower` für Auto-Update.
 - [terraform/environments/privat/](../terraform/environments/privat/) provisioniert Hetzner-VM + Cloudflare-DNS + Doppler-Project + AI Gateway.
 - 10 Postgres-Migrations (0001-0010) komplett.

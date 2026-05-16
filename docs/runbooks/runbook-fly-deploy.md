@@ -98,21 +98,30 @@ Until Vault is unsealed, `mcp-approval2` returns 503 for any request that touche
 
 **Auto-unseal**: not configured for the hobby setup (cloud-KMS would defeat the cost target). Document each restart event in your private journal.
 
-## Postgres restore
+## Postgres restore (Neon)
 
-Fly takes daily automatic backups of managed Postgres clusters.
+Postgres-Backend ist Neon (seit 2026-05-17, vorher kurz Fly Postgres geplant). Neon hält ein 6h Point-in-Time-Restore-Window auf Free Tier, 7d auf Launch.
 
+**Restore-Pfad (Neon-Console):**
+1. Neon-Dashboard → Project `mcp-approval2` → Branches → "Create branch from a point in time"
+2. Source = `main`, Timestamp = gewünschter Punkt (max 6h zurück auf Free Tier)
+3. Neon legt einen neuen Branch + Endpoint an, Hostname `ep-<new-name>.c-3.eu-central-1.aws.neon.tech`
+4. Neue Connection-Strings aus dem Neon-Dashboard kopieren oder via `neon` CLI:
+   ```bash
+   neon connection-string --project-id $(bash scripts/doppler-run-terraform.sh -chdir=terraform/environments/privat output -raw approval2_neon_project_id) --branch <new-branch-name>
+   ```
+5. `DATABASE_URL` + `DATABASE_ADMIN_URL` in Doppler updaten (`doppler secrets set DATABASE_URL=...`), Fly-App pickt sie beim nächsten Sync auf
+6. Smoke `/health/ready` — wenn grün, alten Branch in Neon-Console löschen (oder weiter behalten falls Diff-Vergleich nötig)
+
+**Cold-Backup-Fallback** (außerhalb des PITR-Windows):
 ```bash
-fly postgres backup list -a mcp-approval2-pg
-# pick a backup-id
-fly postgres backup restore <backup-id> -a mcp-approval2-pg --target-cluster <new-name>
-# attach the new cluster:
-fly postgres attach <new-name> --app mcp-approval2
+export ADMIN_URL=$(doppler secrets get DATABASE_ADMIN_URL --plain --project mcp-approval2 --config fly)
+pg_dump "$ADMIN_URL" > /external/disk/mcp-approval2-$(date +%Y%m%d).sql
+unset ADMIN_URL
 ```
+Quartalsweise auf externe SSD im Schrank — das ist die echte 3-2-1-Air-Gap-Schicht (siehe privat.md §9.2).
 
-The attach command rotates `DATABASE_URL` to point at the new cluster and redeploys. The old cluster keeps running until you `fly apps destroy <old-name>`.
-
-**Test-restore drill**: do this once a quarter. Confirm `/health` is green + a known row is readable.
+**Test-restore drill**: einmal pro Quartal. Branch-from-time gegen Test-Timestamp anlegen, `DATABASE_URL` umstellen, `/health` grün + bekannten Row readable.
 
 ## Vault disaster
 
@@ -165,7 +174,7 @@ Hard cap: set up a Fly-billing alert in the dashboard (Account → Billing → A
 
 ## Known limitations of the hobby setup
 
-1. **Single region** — `fra` only. Cross-Atlantic latency to the Fly Postgres primary if you scale machines to other regions.
+1. **Single region** — Fly App `fra` + Neon `eu-central-1` (Frankfurt). Cross-Atlantic-Latency wenn Machines in andere Regions skaliert werden, weil Neon-Endpoint regional ist.
 2. **Single-node OpenBao** — file-backend, not Raft-HA. If the machine vanishes between snapshots, you lose key material. Snapshots are the only safety net.
 3. **No DLQ for cron jobs** — the existing apps/server cron framework retries in-process. If a cron throws repeatedly, you'll only see it in logs.
 4. **No structured cost alerts** — Fly bills monthly in arrears; check `fly orgs show personal` weekly.

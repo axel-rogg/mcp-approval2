@@ -4,16 +4,20 @@
 # Doppler is Single-Source-of-Truth for all credentials. This wrapper:
 #   1. Sources .dev.vars (only DOPPLER_TOKEN strictly needed; AWS_* fallback
 #      for the very first apply before Doppler has the R2 keys).
-#   2. Pulls all secrets from doppler project=mcp-approval2 config=privat.
+#   2. Pulls all secrets from doppler project=mcp-approval2 config=$DOPPLER_CONFIG
+#      (default `fly` — Fly.io-Switch 2026-05-17. Legacy: `privat` for the
+#      Hetzner-VM-era setup, kept as backup; override via `DOPPLER_CONFIG=privat`).
 #   3. Maps Doppler-secret-names → terraform TF_VAR_* convention.
-#   4. Exposes provider-native env-vars (HCLOUD_TOKEN, CLOUDFLARE_API_TOKEN,
-#      GITHUB_TOKEN, AWS_* for the R2 backend).
+#   4. Exposes provider-native env-vars (FLY_API_TOKEN, CLOUDFLARE_API_TOKEN,
+#      GITHUB_TOKEN, AWS_* for the R2 backend; HCLOUD_TOKEN kept for
+#      Hetzner-Legacy-Modules even when running on Fly).
 #   5. Execs `terraform <args>` in the environments/privat directory.
 #
 # Usage:
 #   bash scripts/doppler-run-terraform.sh plan
 #   bash scripts/doppler-run-terraform.sh apply
 #   bash scripts/doppler-run-terraform.sh output -raw doppler_vm_token
+#   DOPPLER_CONFIG=privat bash scripts/doppler-run-terraform.sh plan  # legacy
 #
 # Why a wrapper and not plain `doppler run -- terraform`:
 #   Doppler exposes secrets under their stored names (HCLOUD_TOKEN,
@@ -22,6 +26,8 @@
 #   through to default = "" and produce broken plans.
 
 set -euo pipefail
+
+DOPPLER_CONFIG="${DOPPLER_CONFIG:-fly}"
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TF_DIR="$REPO_ROOT/terraform/environments/privat"
@@ -47,8 +53,8 @@ command -v doppler >/dev/null || {
 }
 
 # ── 2. Pull all secrets as one JSON blob → faster than per-secret calls. ──
-SECRETS_JSON="$(doppler secrets --json -p mcp-approval2 -c privat 2>/dev/null)" || {
-  echo "ERROR: failed to read secrets from Doppler. Check DOPPLER_TOKEN scope." >&2
+SECRETS_JSON="$(doppler secrets --json -p mcp-approval2 -c "$DOPPLER_CONFIG" 2>/dev/null)" || {
+  echo "ERROR: failed to read secrets from Doppler (config=$DOPPLER_CONFIG). Check DOPPLER_TOKEN scope." >&2
   exit 1
 }
 
@@ -86,7 +92,9 @@ export TF_VAR_ghcr_token=""
 HCLOUD_TOKEN="$(doppler_get HCLOUD_TOKEN)"
 CLOUDFLARE_API_TOKEN="$(doppler_get CLOUDFLARE_API_TOKEN)"
 GITHUB_TOKEN="$(doppler_get GITHUB_TOKEN)"
-export HCLOUD_TOKEN CLOUDFLARE_API_TOKEN GITHUB_TOKEN
+FLY_API_TOKEN="$(doppler_get FLY_API_TOKEN)"
+NEON_API_KEY="$(doppler_get NEON_API_KEY)"
+export HCLOUD_TOKEN CLOUDFLARE_API_TOKEN GITHUB_TOKEN FLY_API_TOKEN NEON_API_KEY
 
 # R2 backend uses S3 protocol → reads AWS_* from env. Already loaded from
 # .dev.vars above; re-export from Doppler if present (Doppler wins for
@@ -96,12 +104,17 @@ AWS_SECRET_DOPPLER="$(doppler_get AWS_SECRET_ACCESS_KEY)"
 [[ -n "$AWS_KID_DOPPLER"    ]] && export AWS_ACCESS_KEY_ID="$AWS_KID_DOPPLER"
 [[ -n "$AWS_SECRET_DOPPLER" ]] && export AWS_SECRET_ACCESS_KEY="$AWS_SECRET_DOPPLER"
 
-# ── 5. Sanity check — DOPPLER_TOKEN itself is the bootstrap secret for the
-#      doppler provider in main.tf. ──
-[[ -n "${TF_VAR_hcloud_token:-}" ]] || {
-  echo "WARN: HCLOUD_TOKEN empty in Doppler. terraform plan will likely fail" >&2
-  echo "       at module.vm — fill it in dashboard.doppler.com first." >&2
-}
+# ── 5. Sanity check — soft warnings only (Hetzner ist deprecated nach
+#      Fly-Switch 2026-05-17, aber Module-Code bleibt als Audit-Trail). ──
+if [[ -z "${FLY_API_TOKEN:-}" ]]; then
+  echo "WARN: FLY_API_TOKEN empty in Doppler (config=$DOPPLER_CONFIG)." >&2
+  echo "       Fly-Resources (fly_app, fly_ip) werden im Plan failen." >&2
+  echo "       Fix: doppler secrets set FLY_API_TOKEN=\"\$(fly tokens create deploy-org --org personal --expiry 8760h)\" \\" >&2
+  echo "             --project mcp-approval2 --config $DOPPLER_CONFIG --silent" >&2
+fi
+if [[ -z "${TF_VAR_hcloud_token:-}" ]]; then
+  echo "INFO: HCLOUD_TOKEN empty (OK after Fly-Switch — Hetzner-Module wird nicht mehr referenziert)." >&2
+fi
 
 cd "$TF_DIR"
 exec terraform "$@"
