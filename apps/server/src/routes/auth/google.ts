@@ -148,7 +148,13 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
     // Sitzung erstellen
     const now = Date.now();
     const expiresAt = now + server.config.SESSION_TTL_SEC * 1000;
-    const ip = c.req.header('x-forwarded-for') ?? null;
+    // INET-Column erwartet single-IP, kein CSV. Hinter Fly + CF kommen
+    // mehrere Hops in X-Forwarded-For ("client, cf-edge, fly-edge"). Fly
+    // setzt zusaetzlich Fly-Client-IP (immer single IP, vom Edge gepruefte
+    // Originator-IP) — bevorzugen wir.
+    const flyIp = c.req.header('fly-client-ip');
+    const xffFirst = c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
+    const ip = flyIp ?? xffFirst ?? null;
     const ua = c.req.header('user-agent') ?? null;
     const raw = server.db.unsafe('create_session');
     const sessions = await raw.query<{ id: string }>(
