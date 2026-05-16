@@ -224,10 +224,12 @@ resource "doppler_secret" "approval2_google_application_credentials_json" {
   project = "mcp-approval2"
   config  = "privat"
   name    = "GOOGLE_APPLICATION_CREDENTIALS_JSON"
-  # google_service_account_key.private_key ist base64-encoded JSON. Wir
-  # geben den base64-Wert direkt rein; @google-cloud/kms's GoogleAuth
-  # akzeptiert beides (auto-detect via Content-Sniffing).
-  value = google_service_account_key.approval2.private_key
+  # google_service_account_key.private_key ist base64-encoded JSON laut
+  # Provider-Doku. Der CloudKmsKekProvider akzeptiert beides (raw JSON
+  # via Inline-Pattern, base64-JSON via TF-Default-Pattern) — wir geben
+  # hier base64-decoded raw JSON rein damit andere Google-Clients (die
+  # nur raw JSON erwarten) den gleichen Secret weiterverwenden koennen.
+  value = base64decode(google_service_account_key.approval2.private_key)
 }
 
 # --- knowledge2 ---
@@ -256,7 +258,7 @@ resource "doppler_secret" "knowledge2_google_application_credentials_json" {
   project = "mcp-knowledge2"
   config  = "privat"
   name    = "GOOGLE_APPLICATION_CREDENTIALS_JSON"
-  value   = google_service_account_key.knowledge2.private_key
+  value   = base64decode(google_service_account_key.knowledge2.private_key)
 }
 
 # ---------------------------------------------------------------------------

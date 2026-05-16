@@ -224,14 +224,17 @@ Entscheidung dokumentiert in [ADR-0005](./adr/0005-cloud-kms-decision.md).
 4. `MASTER_KEY_BASE64` → **LocalKekProvider** (in-process HKDF, nur dev/tests)
 5. (none) → kein KEK-Provider, Boot in no-credentials-mode (`KekRequiredError` bei Bedarf)
 
-**TF-managed:** [`terraform/environments/privat/gcp-kms.tf`](../terraform/environments/privat/gcp-kms.tf) legt alles in einem Apply an:
-- APIs aktiviert (cloudkms, iamcredentials, iam)
+**TF-managed:** [`terraform/environments/privat/gcp-kms.tf`](../terraform/environments/privat/gcp-kms.tf) (KMS) + [`gcp-vertex.tf`](../terraform/environments/privat/gcp-vertex.tf) (Vertex) legen in einem Apply an:
+- APIs aktiviert (`cloudkms`, `iamcredentials`, `iam`, `aiplatform`)
 - KeyRing in `eu` multi-region
 - CryptoKey ENCRYPT_DECRYPT, SOFTWARE-Protection, auto-rotate 90d, `prevent_destroy=true`
 - 32-byte random_bytes Master → KMS-gewrappt via `google_kms_secret_ciphertext` → in Doppler als `CLOUD_KMS_WRAPPED_MASTER_B64`
-- Service-Account `mcp-approval2-fly` + `mcp-knowledge2-fly` (separater Audit-Trail)
-- Beide SAs als `roles/cloudkms.cryptoKeyDecrypter` (nur Decrypt — Encrypt/Destroy bewusst ausgeschlossen)
-- SA-Keys (JSON) → Doppler als `GOOGLE_APPLICATION_CREDENTIALS_JSON`
+- **Drei Service-Accounts mit isoliertem Blast-Radius:**
+  - `mcp-approval2-fly@...` → `roles/cloudkms.cryptoKeyDecrypter` (KMS-only)
+  - `mcp-knowledge2-fly@...` → `roles/cloudkms.cryptoKeyDecrypter` (KMS-only)
+  - `mcp-knowledge2-vertex@...` → `roles/aiplatform.user` (Vertex-only — Embeddings via `text-multilingual-embedding-002` in `europe-west4`)
+- SA-Keys (JSON, base64-decoded) → Doppler als `GOOGLE_APPLICATION_CREDENTIALS_JSON` (KMS) + `VERTEX_SERVICE_ACCOUNT_JSON` (Vertex)
+- Begründung der Drei-SA-Aufteilung statt eines kombinierten SA: ein Leak einer Doppler-Variable kompromittiert nur einen Concern (KMS oder Vertex, nicht beide). Audit-Trail in Cloud Logging zeigt sauber pro Principal welcher Call gemacht wurde.
 
 **Operations-Bilanz:**
 - Setup: 1× `terraform apply` (~3 Min). Kein Init-Ceremony, kein Unseal, kein Offline-Keys-Storage.

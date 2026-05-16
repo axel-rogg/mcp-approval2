@@ -84,7 +84,61 @@ async function defaultClientFactory(): Promise<CloudKmsDecryptClient> {
   // Dynamic import: zieht das @google-cloud/kms-Modul (≈ 1 MB) nur dann
   // in den Bundle wenn dieser Provider aktiv ist.
   const { KeyManagementServiceClient } = await import('@google-cloud/kms');
+
+  // Auth-Resolution (in Precedence-Reihenfolge):
+  //   1. GOOGLE_APPLICATION_CREDENTIALS_JSON — inline JSON in env (Fly-Pattern,
+  //      vom TF-Apply via doppler_secret.*_google_application_credentials_json
+  //      eingespielt). NICHT Teil des Standard-ADC-Chains, deswegen explizit.
+  //   2. GOOGLE_APPLICATION_CREDENTIALS — file-path (local dev, k8s-mounts)
+  //   3. Metadata-Server / gcloud auth (Cloud Run, GCE, lokale Dev-Maschine)
+  const inlineJson = process.env['GOOGLE_APPLICATION_CREDENTIALS_JSON'];
+  if (inlineJson && inlineJson.trim().length > 0) {
+    const parsed = parseSaJson(inlineJson);
+    return new KeyManagementServiceClient({
+      credentials: parsed,
+      projectId: parsed.project_id,
+    }) as unknown as CloudKmsDecryptClient;
+  }
+
+  // Fallback: Default-ADC-Chain (file-path env / metadata server / gcloud).
   return new KeyManagementServiceClient() as unknown as CloudKmsDecryptClient;
+}
+
+/**
+ * Parse Service-Account-JSON. Akzeptiert:
+ *   - Raw JSON-String         (KC2-Pattern: VERTEX_SERVICE_ACCOUNT_JSON)
+ *   - Base64-encoded JSON     (TF-Default: google_service_account_key.private_key
+ *                              ist base64-encoded JSON laut Provider-Doku)
+ * Wirft wenn weder JSON-parseable noch base64+JSON-parseable.
+ */
+function parseSaJson(raw: string): {
+  client_email: string;
+  private_key: string;
+  project_id: string;
+} {
+  // Erst: raw JSON probieren (Inline-Variante)
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (typeof parsed['client_email'] === 'string') {
+      return parsed as unknown as ReturnType<typeof parseSaJson>;
+    }
+  } catch {
+    /* fall through to base64 */
+  }
+  // Dann: base64-decoded JSON (TF-Provider-Default)
+  try {
+    const decoded = Buffer.from(raw, 'base64').toString('utf8');
+    const parsed = JSON.parse(decoded) as Record<string, unknown>;
+    if (typeof parsed['client_email'] === 'string') {
+      return parsed as unknown as ReturnType<typeof parseSaJson>;
+    }
+  } catch {
+    /* fall through */
+  }
+  throw new Error(
+    'CloudKmsKekProvider: GOOGLE_APPLICATION_CREDENTIALS_JSON ist weder valides ' +
+      'JSON noch base64-encoded JSON mit client_email-Feld.',
+  );
 }
 
 function randomBytes(len: number): Uint8Array {
