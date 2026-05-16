@@ -96,6 +96,11 @@ FLY_API_TOKEN="$(doppler_get FLY_API_TOKEN)"
 NEON_API_KEY="$(doppler_get NEON_API_KEY)"
 export HCLOUD_TOKEN CLOUDFLARE_API_TOKEN GITHUB_TOKEN FLY_API_TOKEN NEON_API_KEY
 
+# Mirror FLY_API_TOKEN into TF_VAR_fly_api_token so github-fly-token.tf can
+# spiegel-push it into both GH-repos (see var.fly_api_token in variables.tf
+# + terraform/environments/privat/github-fly-token.tf).
+export TF_VAR_fly_api_token="${FLY_API_TOKEN}"
+
 # R2 backend uses S3 protocol → reads AWS_* from env. Already loaded from
 # .dev.vars above; re-export from Doppler if present (Doppler wins for
 # steady-state runs).
