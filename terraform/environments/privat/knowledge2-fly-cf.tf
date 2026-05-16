@@ -33,8 +33,8 @@
 
 variable "enable_knowledge2_fly_cf" {
   type        = bool
-  default     = false
-  description = "Wenn true, legt CNAME knowledge2.ai-toolhub.org → mcp-knowledge2.fly.dev + WAF-Rules + Bot-Fight-Mode an. Default false damit existierender knowledge2-A-Record (Hetzner-Pfad) nicht versehentlich überschrieben wird. Erst aktivieren wenn der alte Record aufgeräumt ist (siehe Header-Kommentar)."
+  default     = true
+  description = "Wenn true, legt CNAME knowledge2.ai-toolhub.org → mcp-knowledge2.fly.dev + WAF-Rules + Bot-Fight-Mode an. Default seit 2026-05-17 true (Hetzner-A-Record wurde 2026-05-14 destroyed, kein Konflikt mehr)."
 }
 
 variable "knowledge2_fly_fqdn" {
