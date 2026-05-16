@@ -41,9 +41,6 @@ kill_timeout   = 30
 # (via approval_app-Owner-GRANT, siehe ADR-pending). Default-Privilege-
 # Vererbung folgt fuer neue Tabellen.
 # ──────────────────────────────────────────────────────────────────────────
-[deploy]
-  release_command = "sh -c 'DATABASE_URL=$DATABASE_ADMIN_URL npm run db:migrate'"
-
 # ──────────────────────────────────────────────────────────────────────────
 # Env — non-sensitive defaults only.
 # DATABASE_URL is injected by `fly postgres attach`.
@@ -111,7 +108,19 @@ kill_timeout   = 30
   cpus   = 1
 
 # ──────────────────────────────────────────────────────────────────────────
-# Deploy strategy — rolling so health-check gates new release.
+# Deploy strategy + Release-Command
+#
+# release_command: runs in a one-shot VM after image-build, BEFORE the
+# app-machines roll. DB-Migrations leben hier statt im Boot-Pfad, damit
+# (1) Boot-Latenz konstant ist, (2) Migration-Fail den App-Start abbricht
+# bevor halb-migrierter State live geht, (3) Re-Deploy idempotent ist
+# (migrate.ts trackt applied versions via _migrations-Tabelle).
+#
+# DATABASE_URL=$DATABASE_ADMIN_URL Override: migrate.ts liest DATABASE_URL
+# env, aber Migrations brauchen den Neon-Direct-Endpoint statt des Pooled-
+# Endpoint (PgBouncer ist transaktions-safe fuer unsere SQL aber direct ist
+# robuster fuer DDL).
 # ──────────────────────────────────────────────────────────────────────────
 [deploy]
-  strategy = "rolling"
+  strategy        = "rolling"
+  release_command = "sh -c 'DATABASE_URL=$DATABASE_ADMIN_URL npm run db:migrate'"
