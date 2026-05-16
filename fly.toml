@@ -28,6 +28,23 @@ kill_timeout   = 30
   dockerfile = "deploy/fly/Dockerfile.server"
 
 # ──────────────────────────────────────────────────────────────────────────
+# Release command — runs in a one-shot VM after image-build, BEFORE the
+# app-machines roll. DB-Migrations leben hier statt im Boot-Pfad, damit
+# (1) Boot-Latenz konstant ist, (2) Migration-Fail den App-Start abbricht
+# bevor halb-migrierter State live geht, (3) Re-Deploy idempotent ist
+# (migrate.ts trackt applied versions via _migrations-Tabelle).
+#
+# DATABASE_URL=$DATABASE_ADMIN_URL: migrate.ts liest DATABASE_URL env, aber
+# Migrations brauchen den DIRECT-Endpoint (PgBouncer-pooled ist transaktions-
+# safe für unsere SQL aber direct ist robuster für DDL). approval_admin
+# wurde 2026-05-16 manuell mit CREATE auf public schema beschenkt
+# (via approval_app-Owner-GRANT, siehe ADR-pending). Default-Privilege-
+# Vererbung folgt fuer neue Tabellen.
+# ──────────────────────────────────────────────────────────────────────────
+[deploy]
+  release_command = "sh -c 'DATABASE_URL=$DATABASE_ADMIN_URL npm run db:migrate'"
+
+# ──────────────────────────────────────────────────────────────────────────
 # Env — non-sensitive defaults only.
 # DATABASE_URL is injected by `fly postgres attach`.
 # Secrets (JWT_*, OAuth-Client-Secrets, MASTER_KEY_BASE64, VAULT_TOKEN,
