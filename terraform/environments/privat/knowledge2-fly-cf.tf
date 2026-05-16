@@ -84,6 +84,27 @@ resource "cloudflare_zone_setting" "knowledge2_always_use_https" {
 }
 
 # ---------------------------------------------------------------------------
+# fly_cert — Custom-Domain TLS-Cert auf Fly (analog approval2-fly-cf.tf)
+# ---------------------------------------------------------------------------
+#
+# Provisioniert das TLS-Zertifikat fuer knowledge2.ai-toolhub.org auf der
+# mcp-knowledge2 Fly-App. Validation laeuft via DNS-CNAME (siehe oben), keine
+# manuelle ACME-Challenge noetig.
+#
+# Voraussetzung: mcp-knowledge2 Fly-App ist bereits angelegt (manuell via
+# `fly apps create` ODER via eigenes fly_app-Resource in knowledge2-fly.tf,
+# je nach lifecycle-decision).
+
+resource "fly_cert" "knowledge2" {
+  count = var.enable_knowledge2_fly_cf ? 1 : 0
+
+  app      = "mcp-knowledge2"
+  hostname = var.domain_knowledge
+
+  depends_on = [cloudflare_dns_record.knowledge2_fly_cname]
+}
+
+# ---------------------------------------------------------------------------
 # WAF — Rate-Limit auf /oauth/register (DCR-Spam-Mitigation)
 # ---------------------------------------------------------------------------
 #
