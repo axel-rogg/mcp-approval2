@@ -503,7 +503,13 @@ resource "doppler_secret" "placeholder_blob_endpoint" {
   project = doppler_project.mcp_approval2.name
   config  = doppler_environment.privat.slug
   name    = "BLOB_ENDPOINT"
-  value   = "" # Format: https://<cf-account-id>.r2.cloudflarestorage.com
+  # Pflicht-Format fuer EU-Jurisdiction-Buckets:
+  #   https://<cf-account-id>.eu.r2.cloudflarestorage.com
+  # `.eu.` ist nicht optional — ohne knallt es mit 403 (CF gibt "bucket not
+  # found" als 403 zurueck wenn am Global-Endpoint nach EU-Bucket gefragt
+  # wird). Drift-Bug 2026-05-16 hat /health/ready bei knowledge2 in degraded
+  # geschickt; Fix via `doppler secrets set BLOB_ENDPOINT=...`.
+  value = ""
   lifecycle {
     ignore_changes = [value]
   }

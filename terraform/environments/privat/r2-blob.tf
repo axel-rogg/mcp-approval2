@@ -117,7 +117,11 @@ output "approval2_r2_buckets" {
   value = {
     blob_bucket   = cloudflare_r2_bucket.approval2_blob_eu.name
     backup_bucket = cloudflare_r2_bucket.approval2_backup_eu.name
-    endpoint      = "https://${var.cloudflare_account_id}.r2.cloudflarestorage.com"
+    # EU-jurisdiction-Buckets MUESSEN das `.eu.`-Endpoint nutzen, sonst 403 (CF
+    # gibt "bucket not found" als 403 zurueck wenn man am Global-Endpoint nach
+    # einem EU-Bucket fragt). Drift-Bug 2026-05-16: ohne `.eu.` knallt knowledge2
+    # /health/ready in HeadObject mit "UnknownError" (403 unter der Haube).
+    endpoint      = "https://${var.cloudflare_account_id}.eu.r2.cloudflarestorage.com"
     region        = "auto"
   }
 }
@@ -127,7 +131,11 @@ output "knowledge2_r2_buckets" {
   value = {
     blob_bucket   = cloudflare_r2_bucket.knowledge2_blob_eu.name
     backup_bucket = cloudflare_r2_bucket.knowledge2_backup_eu.name
-    endpoint      = "https://${var.cloudflare_account_id}.r2.cloudflarestorage.com"
+    # EU-jurisdiction-Buckets MUESSEN das `.eu.`-Endpoint nutzen, sonst 403 (CF
+    # gibt "bucket not found" als 403 zurueck wenn man am Global-Endpoint nach
+    # einem EU-Bucket fragt). Drift-Bug 2026-05-16: ohne `.eu.` knallt knowledge2
+    # /health/ready in HeadObject mit "UnknownError" (403 unter der Haube).
+    endpoint      = "https://${var.cloudflare_account_id}.eu.r2.cloudflarestorage.com"
     region        = "auto"
   }
 }
@@ -153,7 +161,9 @@ output "r2_operator_next_steps" {
     2. Doppler-Secrets pflegen (manuell oder via doppler-secrets-set):
 
        Doppler-Project: mcp-approval2 / privat
-         BLOB_ENDPOINT      = https://<account>.r2.cloudflarestorage.com
+         BLOB_ENDPOINT      = https://<account>.eu.r2.cloudflarestorage.com
+                              ↑ `.eu.` ist Pflicht — EU-Jurisdiction-Bucket
+                                braucht das EU-Endpoint, sonst 403.
          BLOB_REGION        = auto
          BLOB_BUCKET        = mcp-approval2-blob-eu
          BLOB_ACCESS_KEY    = <approval2-data-rw AccessKey>
