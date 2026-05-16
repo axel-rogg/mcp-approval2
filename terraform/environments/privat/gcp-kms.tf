@@ -201,28 +201,28 @@ locals {
 # --- approval2 ---
 resource "doppler_secret" "approval2_kms_provider" {
   project = "mcp-approval2"
-  config  = "privat"
+  config  = "fly"
   name    = "KMS_PROVIDER"
   value   = "cloud_kms"
 }
 
 resource "doppler_secret" "approval2_cloud_kms_key_name" {
   project = "mcp-approval2"
-  config  = "privat"
+  config  = "fly"
   name    = "CLOUD_KMS_KEY_NAME"
   value   = local.cloud_kms_key_name
 }
 
 resource "doppler_secret" "approval2_cloud_kms_wrapped_master" {
   project = "mcp-approval2"
-  config  = "privat"
+  config  = "fly"
   name    = "CLOUD_KMS_WRAPPED_MASTER_B64"
   value   = google_kms_secret_ciphertext.user_dek_master.ciphertext
 }
 
 resource "doppler_secret" "approval2_google_application_credentials_json" {
   project = "mcp-approval2"
-  config  = "privat"
+  config  = "fly"
   name    = "GOOGLE_APPLICATION_CREDENTIALS_JSON"
   # google_service_account_key.private_key ist base64-encoded JSON laut
   # Provider-Doku. Der CloudKmsKekProvider akzeptiert beides (raw JSON
@@ -235,28 +235,28 @@ resource "doppler_secret" "approval2_google_application_credentials_json" {
 # --- knowledge2 ---
 resource "doppler_secret" "knowledge2_kms_provider" {
   project = "mcp-knowledge2"
-  config  = "privat"
+  config  = "fly"
   name    = "KMS_PROVIDER"
   value   = "cloud_kms"
 }
 
 resource "doppler_secret" "knowledge2_cloud_kms_key_name" {
   project = "mcp-knowledge2"
-  config  = "privat"
+  config  = "fly"
   name    = "CLOUD_KMS_KEY_NAME"
   value   = local.cloud_kms_key_name
 }
 
 resource "doppler_secret" "knowledge2_cloud_kms_wrapped_master" {
   project = "mcp-knowledge2"
-  config  = "privat"
+  config  = "fly"
   name    = "CLOUD_KMS_WRAPPED_MASTER_B64"
   value   = google_kms_secret_ciphertext.user_dek_master.ciphertext
 }
 
 resource "doppler_secret" "knowledge2_google_application_credentials_json" {
   project = "mcp-knowledge2"
-  config  = "privat"
+  config  = "fly"
   name    = "GOOGLE_APPLICATION_CREDENTIALS_JSON"
   value   = base64decode(google_service_account_key.knowledge2.private_key)
 }

@@ -72,7 +72,7 @@ resource "google_service_account_key" "knowledge2_vertex" {
 
 resource "doppler_secret" "knowledge2_vertex_service_account_json" {
   project = "mcp-knowledge2"
-  config  = "privat"
+  config  = "fly"
   name    = "VERTEX_SERVICE_ACCOUNT_JSON"
   # base64decode weil google_service_account_key.private_key per Default
   # base64-encoded JSON liefert; KC2's vertex.ts erwartet raw JSON-String.
@@ -81,14 +81,14 @@ resource "doppler_secret" "knowledge2_vertex_service_account_json" {
 
 resource "doppler_secret" "knowledge2_vertex_project" {
   project = "mcp-knowledge2"
-  config  = "privat"
+  config  = "fly"
   name    = "VERTEX_PROJECT"
   value   = var.gcp_project_id
 }
 
 resource "doppler_secret" "knowledge2_vertex_location" {
   project = "mcp-knowledge2"
-  config  = "privat"
+  config  = "fly"
   name    = "VERTEX_LOCATION"
   # europe-west4 (Niederlande) ist die naechstgelegene Region fuer
   # text-multilingual-embedding-002 — Frankfurt (europe-west3) hat das

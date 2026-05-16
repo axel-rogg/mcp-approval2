@@ -26,6 +26,10 @@ terraform {
       source  = "fly-apps/fly"
       version = "~> 0.0.23"
     }
+    neon = {
+      source  = "kislerdm/neon"
+      version = "~> 0.6"
+    }
   }
 }
 

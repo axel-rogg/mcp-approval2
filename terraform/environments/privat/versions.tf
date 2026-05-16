@@ -33,6 +33,10 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
+    neon = {
+      source  = "kislerdm/neon"
+      version = "~> 0.6"
+    }
   }
 }
 

@@ -1,16 +1,16 @@
 # privat.md — Private-Mode-Setup für mcp-approval2
 
-> **Status:** ✅ Aktiv 2026-05-17 (Fly.io-Switch von Hetzner + KMS-Switch auf Google Cloud KMS)
+> **Status:** ✅ Aktiv 2026-05-17 (Fly.io-Switch von Hetzner + KMS-Switch auf Google Cloud KMS + **Neon-Switch von Fly Postgres**)
 > **Owner:** Axel
 > **Schwester-Doc:** [`mcp-knowledge2/docs/STRATEGIE-pilot.md`](https://github.com/axel-rogg/mcp-knowledge2/blob/main/docs/STRATEGIE-pilot.md)
-> **Auslöser:** User-Decision 2026-05-17 — (1) Operations-Last bei Hetzner-Self-Host ist für Solo-Operator nicht durchhaltbar (OS-Patches, Reboots, SSH-Hygiene), Fly.io übernimmt diese Schicht; (2) OpenBao verlangt Offline-Key-Storage (USB/Paper-Wallet) den der Operator nicht hat — Google Cloud KMS multi-region `eu` ersetzt OpenBao als Default-KEK-Path, siehe [ADR-0005](./adr/0005-cloud-kms-decision.md). **GCP-Kompatibilität (business-Mode) bleibt Prio** — Adapter-Pattern + Provider-Switch-Matrix unverändert, KMS ist nur EIN-Knopf-Tausch zwischen privat und business.
+> **Auslöser:** User-Decision 2026-05-17 — (1) Operations-Last bei Hetzner-Self-Host ist für Solo-Operator nicht durchhaltbar (OS-Patches, Reboots, SSH-Hygiene), Fly.io übernimmt diese Schicht; (2) OpenBao verlangt Offline-Key-Storage (USB/Paper-Wallet) den der Operator nicht hat — Google Cloud KMS multi-region `eu` ersetzt OpenBao als Default-KEK-Path, siehe [ADR-0005](./adr/0005-cloud-kms-decision.md); (3) **Fly Managed Postgres** (MPG) ist mit ~38 $/Monat (Basic-Plan) für einen Solo-Pilot überdimensioniert, **Neon Postgres Free-Tier** (0 €/Monat, 0,5 GB Storage, pgvector built-in, EU-Region Frankfurt) reicht jahrelang. **GCP-Kompatibilität (business-Mode) bleibt Prio** — Adapter-Pattern + Provider-Switch-Matrix unverändert, KMS ist nur EIN-Knopf-Tausch zwischen privat und business.
 
 Diese Datei dokumentiert die ehrliche Pilot-Linie für mcp-approval2 im **privat-Modus** (Solo-User axelrogg@gmail.com + bis 2-5 Family/Friends), zeigt welche Ressourcen mit dem Schwester-Service mcp-knowledge2 geteilt werden können, und bewahrt die Provider-Switch-Matrix für eine spätere Migration in den **business-Modus** (Google Cloud) ohne Code-Refactor.
 
 ## 1. Was „privat" hier bedeutet
 
 - **Single-Tenant**: 1 Familien-Setup = 1 Instance. Solo-User axelrogg + bis 2-5 Family/Friends-Allowlist, DSGVO-light.
-- **Cost-Cap-Ziel**: ~10-12 €/Monat für die komplette Approval-Stack (approval2 + knowledge2 + Postgres + Blob + Backups).
+- **Cost-Cap-Ziel**: ~3-7 €/Monat für die komplette Approval-Stack (approval2 + knowledge2 + Neon-Postgres + R2-Blob + Backups). Neon Free Tier deckt beide DBs ab — Compute ist der einzige laufende Posten.
 - **Operations-Cap**: ~1.5-2.5h/Monat Total-Wartung. Self-Host-Aufwand (OS-Patches, SSH-Hygiene, Reboots) **explizit verlagert** auf Fly.io.
 - **Eine ehrliche Decision-Linie**: keine Multi-Cloud-Orchestrierung, keine HA, keine Region-Replicas.
 - **Mit Wechsel-Option zu business**: jede Komponente hat ein definiertes GCP-Gegenstück, das per Env-Var oder Manifest-Switch aktiviert wird — kein Code-Refactor.
@@ -19,8 +19,8 @@ Diese Datei dokumentiert die ehrliche Pilot-Linie für mcp-approval2 im **privat
 
 | Service | Compute | Datenbank | KMS | Blob | Embeddings |
 |---|---|---|---|---|---|
-| **mcp-approval2** | **Fly.io App** (`mcp-approval2`, fra, shared-cpu-1x 512MB, auto-stop) — ~0-3 €/mo unter Free-Allowance | Fly Postgres (`mcp-approval2-pg`, shared-cpu-1x + 3GB) — ~3 €/mo | **Google Cloud KMS** multi-region `eu` (project `axelrogg-ai-tools`) — ~0,30 €/mo (1 Key + Ops) | Cloudflare R2 EU (S3-API) | nicht benötigt heute |
-| **mcp-knowledge2** | **Fly.io App** (`mcp-knowledge2`, fra, shared-cpu-1x 512MB, min=1) — ~3 €/mo | Fly Postgres (`mcp-knowledge2-pg`, shared-cpu-1x + 3GB) — ~3 €/mo | **Google Cloud KMS** (gleicher Master-Key, shared via 2. Service-Account) — ~0 €/mo zusätzlich | Cloudflare R2 EU (S3-API) | Vertex AI EU `text-embedding-005` |
+| **mcp-approval2** | **Fly.io App** (`mcp-approval2`, fra, shared-cpu-1x 512MB, auto-stop) — ~0-3 €/mo unter Free-Allowance | **Neon Postgres** (project `mcp-approval2`, eu-central-1 Frankfurt, Free Tier, 0.5 GB, 0.25 CU shared) — **0 €/mo** | **Google Cloud KMS** multi-region `eu` (project `axelrogg-ai-tools`) — ~0,30 €/mo (1 Key + Ops) | Cloudflare R2 EU (S3-API) | nicht benötigt heute |
+| **mcp-knowledge2** | **Fly.io App** (`mcp-knowledge2`, fra, shared-cpu-1x 512MB, min=1) — ~3 €/mo | **Neon Postgres** (project `mcp-knowledge2`, eu-central-1 Frankfurt, Free Tier, 0.5 GB, **pgvector 0.8.0 built-in**) — **0 €/mo** | **Google Cloud KMS** (gleicher Master-Key, shared via 2. Service-Account) — ~0 €/mo zusätzlich | Cloudflare R2 EU (S3-API) | Vertex AI EU `text-embedding-005` |
 
 **Beide Services nutzen denselben Operations-Pfad (`flyctl`).** Stack-Unifizierung war der Haupt-Driver für den Switch von Hetzner-Self-Host (siehe §9.4).
 
@@ -55,7 +55,7 @@ Was bewusst NICHT geteilt wird:
 |---|---|---|
 | **`BACKUP_MASTER_KEY`** | Pro Service unique (32 Bytes random) | Cross-Compromise: Leak einer Service-Vault → beide Backup-Reihen lesbar |
 | **`MASTER_KEY_BASE64`** / OpenBao-Transit-Keys | Pro Service unique | Cross-Compromise auf Body-Encryption-Layer |
-| **Postgres-DBs** (`mcp-approval2-pg` vs `mcp-knowledge2-pg`) | Eine pro Service, eigener Schema-Hash, eigene Migrations | Cross-Schema-Bug + Row-Bleed bei RLS-Fehlern |
+| **Neon-Postgres-Projects** (`mcp-approval2` vs `mcp-knowledge2`) | Eine pro Service als separates Neon-Project (eigene Crypto-Boundary), eigener Schema-Hash, eigene Migrations | Cross-Schema-Bug + Row-Bleed bei RLS-Fehlern; Neon-Projects sind voneinander isoliert (keine cross-project queries möglich) |
 | **Doppler-Projects** (`mcp-approval2`, `mcp-knowledge2`) | Strikt getrennt | Wenn jemand approval2-Doppler-Service-Token bekommt, soll er nicht automatisch knowledge2-Secrets sehen |
 | **R2-Buckets** (4 separate Buckets) | Pro Service eigene data+backup Pair | Bucket-Cred-Leak begrenzt Scope |
 | **Google OAuth Client Secrets** | Pro Service separater Client | Hijack auf einen erlaubt nicht den anderen |
@@ -71,8 +71,8 @@ Was bewusst NICHT geteilt wird:
 |---|---|---|
 | `NODE_ENV` | `production` | `production` |
 | Compute-Target | Fly.io App, `shared-cpu-1x` 512MB, auto-stop | Cloud Run gen2 (europe-west4) minScale=1 |
-| `DATABASE_URL` | injected by `fly postgres attach` → `postgres://...@mcp-approval2-pg.flycast:5432/mcp_approval2` | `postgres://app:<pw>@/approval?host=/cloudsql/<proj>:<region>:<inst>` |
-| Postgres-Hoster | Fly Postgres (Stolon-cluster mit pgvector) | Cloud SQL Postgres 16 mit `cloudsql.enable_pgvector_extension=on` |
+| `DATABASE_URL` | Neon pooled endpoint via PGBouncer → `postgresql://approval_app:<pw>@ep-<name>-pooler.c-3.eu-central-1.aws.neon.tech/mcp_approval2?sslmode=require` (von Terraform in Doppler gepusht, [neon-approval2.tf](../terraform/environments/privat/neon-approval2.tf)) | `postgres://app:<pw>@/approval?host=/cloudsql/<proj>:<region>:<inst>` |
+| Postgres-Hoster | **Neon Postgres** (managed, Free Tier, eu-central-1 Frankfurt, pgvector + pg_trgm built-in, Pooled-Endpoint via PGBouncer) | Cloud SQL Postgres 16 mit `cloudsql.enable_pgvector_extension=on` |
 | `KEK_PROVIDER` | `openbao` | `cloud_kms` (Cloud-KMS-wrapped master + HKDF-derive) |
 | `VAULT_ADDR` / `VAULT_TOKEN` | `http://mcp-approval2-openbao.internal:8200` + Root-Token aus VM-Setup | unset (cloud_kms aktiv) |
 | `VAULT_APPROLE_ROLE_ID` / `VAULT_APPROLE_SECRET_ID` | gesetzt **wenn AppRole** (sonst Static-Token) | unset |
@@ -145,9 +145,9 @@ Was muss in Doppler `mcp-approval2 / privat` aktiv sein, damit der Fly-Deploy l�
 - knowledge2-Side: `MCP_APPROVAL_JWKS_URL=https://mcp2.ai-toolhub.org/.well-known/jwks.json` (aktiviert OBO-Pfad)
 - knowledge2-Side: `MCP_APPROVAL_BASE_URL=https://mcp2.ai-toolhub.org` (für `/internal/v1/dek/*` Aufrufe)
 
-**Was Fly automatisch managed (NICHT in Doppler):**
-- `DATABASE_URL` — injected durch `fly postgres attach`
-- TLS-Cert (automatisch via `fly certs add mcp2.ai-toolhub.org`)
+**Was Terraform / Fly automatisch managed (NICHT manuell in Doppler einzutragen):**
+- `DATABASE_URL` + `DATABASE_ADMIN_URL` — von Terraform aus den Neon-Resource-Outputs in Doppler gepusht (siehe [`neon-approval2.tf`](../terraform/environments/privat/neon-approval2.tf) / [`neon-knowledge2.tf`](../terraform/environments/privat/neon-knowledge2.tf)). Hostnames kommen aus `neon_project.<name>.database_host[_pooler]` — NICHT aus dem Branch-ID-Pattern (das produziert DNS-unauflösbare Hosts, siehe Lesson-learned in [PLAN-installer.md](plans/active/PLAN-installer.md)).
+- TLS-Cert (automatisch via `fly certs add mcp2.ai-toolhub.org` bzw. `fly_cert`-TF-Resource)
 - Internal-DNS (`*.internal` resolved out-of-box)
 
 ## 7. Cost-Estimate
@@ -155,18 +155,18 @@ Was muss in Doppler `mcp-approval2 / privat` aktiv sein, damit der Fly-Deploy l�
 | Position | privat (Fly.io komplett) | business (Google Cloud) |
 |---|---|---|
 | approval2 Compute | Fly App, free unter 3-Machine-Allowance bei auto-stop | Cloud Run gen2 minScale=1 ~8 €/mo |
-| approval2 Postgres | Fly Postgres `shared-cpu-1x` + 3GB ~3 €/mo | Cloud SQL Postgres 16 db-custom-1-3840 ~50 €/mo |
-| approval2 OpenBao | Fly App `shared-cpu-1x` 256MB + 1GB Volume ~2 €/mo | (Cloud KMS, kein OpenBao) ~0.06 €/mo per Key + 0.03 €/10k Ops |
+| approval2 Postgres | **Neon Postgres** Free Tier (0.5 GB, 0.25 CU shared, pgvector built-in) **0 €/mo** | Cloud SQL Postgres 16 db-custom-1-3840 ~50 €/mo |
+| approval2 KMS | **Google Cloud KMS** multi-region `eu` ~0.30 €/mo (1 Key + Ops) — OpenBao deprecated | (Cloud KMS, gleich) ~0.06 €/mo per Key + 0.03 €/10k Ops |
 | approval2 Blob | R2 EU, 10GB Free-Tier <1 €/mo | GCS <1 €/mo |
 | approval2 Backup | R2 EU, separate Bucket <1 €/mo | GCS <1 €/mo |
-| **approval2 subtotal** | **~5-6 €/mo** | **~60 €/mo** |
-| **knowledge2 (Fly, getrennt)** | **~5-7 €/mo** | **~60 €/mo (Cloud Run + Cloud SQL)** |
-| **Cross-Service Shared** | Doppler free, CF free | Doppler free, CF free |
-| **TOTAL** | **~10-13 €/mo** | **~120 €/mo** |
-| **3-Jahres-TCO** | **~430 €** | **~4300 €** |
+| **approval2 subtotal** | **~1-3 €/mo** | **~60 €/mo** |
+| **knowledge2 (Fly + Neon, getrennt)** | **~3-4 €/mo** (Neon free + Fly compute + KMS share) | **~60 €/mo (Cloud Run + Cloud SQL)** |
+| **Cross-Service Shared** | Doppler free, CF free, Neon free | Doppler free, CF free |
+| **TOTAL** | **~3-7 €/mo** | **~120 €/mo** |
+| **3-Jahres-TCO** | **~150-250 €** | **~4300 €** |
 | **Operations-Aufwand/Monat** | **~1.5-2.5h** | **~3-5h** |
 
-Faktor ~9-12× Kostenunterschied + ~30-50% mehr Ops bei business. Treiber für business-Cost: Cloud SQL ist preisintensiv, Cloud Run minScale=1 always-on.
+Faktor ~17-40× Kostenunterschied + ~30-50% mehr Ops bei business. Treiber für business-Cost: Cloud SQL ist preisintensiv, Cloud Run minScale=1 always-on. Treiber für privat-Cost-Reduction: Neon Free Tier ersetzt Fly Postgres (~6 €/mo gespart vs vorhergesagte Variante).
 
 ## 8. Migration-Pfad privat → business
 
@@ -177,8 +177,8 @@ Wenn ein Pilot-Customer GCP-Compliance verlangt:
 3. **OAuth-Clients neu**: business-Workspace-restricted Clients in der Google Cloud Console + Doppler-Update.
 4. **`KEK_PROVIDER=cloud_kms` aktivieren**: requires `CloudKmsKekProvider`-Implementierung in `packages/adapters/src/kek/`. Skeleton existiert, business-Phase-Build.
 5. **Migrations laufen**: gleicher Code-Stand, Migrations werden auf der neuen Cloud-SQL-DB ausgeführt (`npm run db:migrate` via `release_command`).
-6. **Data-Migration**: einmaliger Postgres-Dump → Cloud SQL Restore + Bucket-Mirror (R2 → GCS via `rclone` oder Manual-Sync).
-7. **Cutover**: DNS umstellen (CF CNAME von `mcp-approval2.fly.dev` zu Cloud-Run-FQDN), OAuth-Redirect-URI in Console updaten, Fly-Apps `fly apps destroy` (oder pausieren via `fly scale count 0`).
+6. **Data-Migration**: einmaliger `pg_dump` aus Neon-Project → Cloud-SQL-Restore + Bucket-Mirror (R2 → GCS via `rclone` oder Manual-Sync). Neon-Pooled-Endpoint via PGBouncer macht den Dump unkompliziert (`pg_dump $DATABASE_ADMIN_URL > dump.sql`).
+7. **Cutover**: DNS umstellen (CF CNAME von `mcp-approval2.fly.dev` zu Cloud-Run-FQDN), OAuth-Redirect-URI in Console updaten, Fly-Apps `fly apps destroy` (oder pausieren via `fly scale count 0`), Neon-Projects löschen (oder als Read-Replica-Quelle behalten, wenn Dual-Sync nötig).
 
 **Was sich NICHT ändert**: Code, Migrations, Schema, App-Logik, Tests, Adapter-Factory-Pattern. **Same code-base, only Doppler-values + Terraform-environment-swap.**
 
@@ -268,13 +268,47 @@ Entscheidung dokumentiert in [ADR-0005](./adr/0005-cloud-kms-decision.md).
 **Operations-Reduktion: ~5-10h/Monat → ~1.5-2.5h/Monat.** Über 1 Jahr: ~40-90h Ersparnis.
 
 **Trade-offs akzeptiert:**
-- Vendor-Lock-In (Fly-spezifisch: flycast, 6PN, Fly-Postgres-Stolon)
+- Vendor-Lock-In (Fly-spezifisch: flycast, 6PN). Postgres-Layer ist via Neon abstrahiert → Cloud-Switch trifft nur Compute.
 - Outage-Risk während Fly-Incidents (2024 mehrere mehrstündige Total-Unavailable-Windows)
 - US-Owner-Jurisdiction (EU-Hosting, aber CLOUD-Act theoretisch relevant für Compliance-strict Customers — für privat-Mode unkritisch)
 
 **Hetzner-Pfad bleibt als Audit-Trail erhalten:** Code in `deploy/hetzner/`, Skripte in `scripts/vm-*`, Runbooks in `docs/runbooks/runbook-hetzner-*` werden als deprecated/archived markiert, nicht gelöscht. Historisches Reset-Material für Disaster-Recovery / Reactivation.
 
-### 9.5 Verworfene Alternativen
+### 9.5 Postgres-Hoster: **Neon (Free Tier, eu-central-1)** statt Fly MPG (User-Decision 2026-05-17)
+
+**Auslöser:** Fly Managed Postgres Basic-Plan kostet ~38 $/Monat (1 vCPU, 1 GB RAM, 10 GB Storage). Für Solo-Pilot mit ~3 Testern und <50 MB Daten massiv überdimensioniert. Neon Free Tier (0.5 GB Storage, 0.25 CU compute shared, pgvector + pg_trgm built-in, EU-Region Frankfurt) reicht jahrelang und kostet 0 €/Monat.
+
+**Was Neon out-of-box bringt:**
+- **pgvector 0.8.0** + **pg_trgm 1.6** als preinstalled extensions — kein Custom-Image, kein selbst-bauen wie bei Fly Postgres (dessen Flex-Image hat kein pgvector preinstalled)
+- **Pooled-Endpoint** via PGBouncer auto-managed (App-Connections via `DATABASE_URL`)
+- **Direct-Endpoint** für Migrations + Admin-Operations (`DATABASE_ADMIN_URL`)
+- **Auto-suspend** bei Idle, Cold-Start ~300ms (für Pilot-Traffic akzeptabel)
+- **EU-Region** Frankfurt (gleiche Region wie Fly `fra` + Vertex `europe-west4`) — Latenz unter 5 ms zur App
+- **History-Retention 6h** auf Free Tier (Point-in-Time-Restore innerhalb der letzten 6h)
+- **Backup automatisch** via Neon-Storage-Snapshot (kein eigener Cron nötig für daily backups; Cold-Offline-Backup wie unter 9.2 quartalsweise via `pg_dump` ergänzt)
+
+**Pro Service ein separates Neon-Project** (Crypto-Boundary, DSGVO-Isolation):
+- `mcp-approval2` (project-id im Doppler-Output `approval2_neon_project_id`)
+- `mcp-knowledge2` (project-id im Doppler-Output `knowledge2_neon_project_id`)
+- Roles pro DB: `<service>_app` (für App-Connections, RLS-bounded) + `<service>_admin` (für Migrations + GDPR-Erase, BYPASSRLS via neon_superuser group membership)
+
+**TF-managed:** [`terraform/environments/privat/neon-approval2.tf`](../terraform/environments/privat/neon-approval2.tf) + [`neon-knowledge2.tf`](../terraform/environments/privat/neon-knowledge2.tf) legen alles in einem Apply an:
+- `neon_project` mit `history_retention_seconds=21600` (6h max Free Tier)
+- `neon_database` als Owner-DB für die App-Role
+- `neon_role` für app + admin (Passwords landen via Resource-Output sofort in Doppler-Push, kein Copy-Paste)
+- `doppler_secret` für `DATABASE_URL`, `DATABASE_ADMIN_URL`, `DB_APP_PASSWORD`, `DB_ADMIN_PASSWORD` — pro Service in den jeweiligen Doppler-Project + Config `fly`
+- Hostnames aus `neon_project.<name>.database_host[_pooler]` (das `ep-<name>.c-N.<region>.aws.neon.tech` Pattern; **NICHT** das vom Provider-Doc suggerierte Branch-ID-Pattern — das produziert DNS-unauflösbare Hosts)
+
+**Bootstrap nach `terraform apply`:** einmalig `CREATE EXTENSION vector; CREATE EXTENSION pg_trgm;` via Direct-Endpoint (Neon-Free-Tier-Roles sind alle in der `neon_superuser`-Gruppe, können also Extensions installieren). Siehe [PLAN-installer.md §Bootstrap](./plans/active/PLAN-installer.md) für das exakte Snippet.
+
+**Wann reicht Neon Free Tier nicht mehr:**
+- Wenn der Daten-Stand 0.5 GB übersteigt (Postgres-DB-Size, nicht inkl. Blob/Objects in R2) → Upgrade zu Neon Launch ($19/Monat, 10 GB Storage, dedicated CU)
+- Wenn die App always-on braucht ohne 300ms Cold-Start → Neon Launch hat kein Auto-Suspend
+- Wenn >6h Point-in-Time-Restore nötig → Launch hat 7d Retention
+
+**Migration-Pfad zu business (Cloud SQL):** identisch zum bestehenden §8.6 (pg_dump → restore). Neon hat keinen Vendor-Lock-In auf SQL-Schema-Ebene, nur auf Admin-API-Ebene (Project-Management — irrelevant für Daten-Migration).
+
+### 9.6 Verworfene Alternativen
 
 - **Coolify auf Hetzner** (self-host PaaS): zwar günstiger als Fly, aber Operator-Verantwortung für die Coolify-Host-VM bleibt — verschiebt das Problem nicht
 - **Mini-PC zuhause + Cloudflare-Tunnel**: maximale Daten-Souveränität, aber Strom-Verbrauch + Hardware-Wartung + USV-Setup ist neue Operations-Surface
