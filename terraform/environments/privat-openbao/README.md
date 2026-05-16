@@ -1,5 +1,7 @@
 # `privat-openbao` — Post-Init OpenBao-Konfiguration
 
+> **⚠️ STATUS 2026-05-17: GEPARKT.** Nicht mehr Default-Pfad. [ADR-0011](../../../docs/adr/0011-cloud-kms-kek-provider.md) hat OpenBao durch Google Cloud KMS (multi-region `eu`) ersetzt — siehe [`gcp-kms.tf`](../privat/gcp-kms.tf) im Hauptmodul. Dieses Modul bleibt vollständig applybar, als alternative Selfhosting-Variante falls jemals der Switch zurück gewünscht ist. Voraussetzung dann: Operator hat Offline-Key-Storage (USB/Paper-Wallet) — das war der Auslöser für die Supersession.
+
 Eigenes TF-Modul mit eigenem State, weil dieses Modul nur appliebar ist
 **nachdem** OpenBao initialisiert + unsealed wurde. Der vault-Provider
 schlägt sonst hart fehl und blockt jeden plan/apply im Hauptmodul.

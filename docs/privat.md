@@ -1,9 +1,9 @@
 # privat.md — Private-Mode-Setup für mcp-approval2
 
-> **Status:** ✅ Aktiv 2026-05-17 (Fly.io-Switch von Hetzner)
+> **Status:** ✅ Aktiv 2026-05-17 (Fly.io-Switch von Hetzner + KMS-Switch auf Google Cloud KMS)
 > **Owner:** Axel
 > **Schwester-Doc:** [`mcp-knowledge2/docs/STRATEGIE-pilot.md`](https://github.com/axel-rogg/mcp-knowledge2/blob/main/docs/STRATEGIE-pilot.md)
-> **Auslöser:** User-Decision 2026-05-17 — Operations-Last bei Hetzner-Self-Host ist für Solo-Operator nicht durchhaltbar (OS-Patches, Reboots, SSH-Hygiene). Fly.io übernimmt diese Schicht. **GCP-Kompatibilität (business-Mode) bleibt Prio** — Adapter-Pattern + Provider-Switch-Matrix unverändert.
+> **Auslöser:** User-Decision 2026-05-17 — (1) Operations-Last bei Hetzner-Self-Host ist für Solo-Operator nicht durchhaltbar (OS-Patches, Reboots, SSH-Hygiene), Fly.io übernimmt diese Schicht; (2) OpenBao verlangt Offline-Key-Storage (USB/Paper-Wallet) den der Operator nicht hat — Google Cloud KMS multi-region `eu` ersetzt OpenBao als Default-KEK-Path, siehe [ADR-0005](./adr/0005-cloud-kms-decision.md). **GCP-Kompatibilität (business-Mode) bleibt Prio** — Adapter-Pattern + Provider-Switch-Matrix unverändert, KMS ist nur EIN-Knopf-Tausch zwischen privat und business.
 
 Diese Datei dokumentiert die ehrliche Pilot-Linie für mcp-approval2 im **privat-Modus** (Solo-User axelrogg@gmail.com + bis 2-5 Family/Friends), zeigt welche Ressourcen mit dem Schwester-Service mcp-knowledge2 geteilt werden können, und bewahrt die Provider-Switch-Matrix für eine spätere Migration in den **business-Modus** (Google Cloud) ohne Code-Refactor.
 
@@ -19,15 +19,18 @@ Diese Datei dokumentiert die ehrliche Pilot-Linie für mcp-approval2 im **privat
 
 | Service | Compute | Datenbank | KMS | Blob | Embeddings |
 |---|---|---|---|---|---|
-| **mcp-approval2** | **Fly.io App** (`mcp-approval2`, fra, shared-cpu-1x 512MB, auto-stop) — ~0-3 €/mo unter Free-Allowance | Fly Postgres (`mcp-approval2-pg`, shared-cpu-1x + 3GB) — ~3 €/mo | **OpenBao** als separate Fly-App (`mcp-approval2-openbao`, min=1, 1GB Volume) — ~2 €/mo | Cloudflare R2 EU (S3-API) | nicht benötigt heute |
-| **mcp-knowledge2** | **Fly.io App** (`mcp-knowledge2`, fra, shared-cpu-1x 512MB, min=1) — ~3 €/mo | Fly Postgres (`mcp-knowledge2-pg`, shared-cpu-1x + 3GB) — ~3 €/mo | **`hkdf_local`** (env-Master) — kein OpenBao | Cloudflare R2 EU (S3-API) | Vertex AI EU `text-embedding-005` |
+| **mcp-approval2** | **Fly.io App** (`mcp-approval2`, fra, shared-cpu-1x 512MB, auto-stop) — ~0-3 €/mo unter Free-Allowance | Fly Postgres (`mcp-approval2-pg`, shared-cpu-1x + 3GB) — ~3 €/mo | **Google Cloud KMS** multi-region `eu` (project `axelrogg-ai-tools`) — ~0,30 €/mo (1 Key + Ops) | Cloudflare R2 EU (S3-API) | nicht benötigt heute |
+| **mcp-knowledge2** | **Fly.io App** (`mcp-knowledge2`, fra, shared-cpu-1x 512MB, min=1) — ~3 €/mo | Fly Postgres (`mcp-knowledge2-pg`, shared-cpu-1x + 3GB) — ~3 €/mo | **Google Cloud KMS** (gleicher Master-Key, shared via 2. Service-Account) — ~0 €/mo zusätzlich | Cloudflare R2 EU (S3-API) | Vertex AI EU `text-embedding-005` |
 
 **Beide Services nutzen denselben Operations-Pfad (`flyctl`).** Stack-Unifizierung war der Haupt-Driver für den Switch von Hetzner-Self-Host (siehe §9.4).
 
-**Warum mcp-approval2 OpenBao behält, mcp-knowledge2 nicht:**
-- approval2 ist DEK-Authority für Cross-Service-Encryption — OpenBao Transit ist das audit-akzeptierte Werkzeug + Bridge zu Cloud-KMS (business-Mode)
-- knowledge2 ist DEK-Consumer (holt DEKs via approval2's `/internal/v1/dek/*` API) — braucht kein eigenes KMS-Layer
-- HKDF-local in knowledge2 reicht weil der Master-Key nur einen Backup-Master-Key-Wrap macht (keine DEK-Distribution)
+**Warum Cloud-KMS statt OpenBao (Entscheidung 2026-05-17):**
+- Solo-Operator hat keinen Offline-Key-Storage (USB/Paper-Wallet) — OpenBao verliert dann seinen Mehrwert (Unseal-Keys in Doppler = OpenBao-im-Doppler-Token, der Sinn fällt weg)
+- Cloud-KMS hat keine Init-Ceremony, kein Unseal nach Restart, keine offline-Keys zu lagern
+- GCP ist eh schon im Stack (Google OIDC für IdP, Vertex AI für Embeddings, business-Mode-Skeleton) — KMS dazuzunehmen erzeugt keine *neue* Abhängigkeit, vertieft eine bestehende
+- Multi-Region `eu` (Frankfurt + Niederlande + Belgien) gleich teuer wie Single-Region (~$0.06/Schlüssel/Monat bei Software-Tier), Failover automatisch
+- Beide Services teilen sich denselben CryptoKey (`projects/axelrogg-ai-tools/locations/eu/keyRings/mcp-approval2-privat/cryptoKeys/user-dek-master`) — Audit-Trail-Trennung via separate Service-Accounts (`mcp-approval2-fly` + `mcp-knowledge2-fly`)
+- OpenBao-TF-Modul bleibt unter [`terraform/environments/privat-openbao/`](../terraform/environments/privat-openbao/) als alternative Selfhosting-Variante dokumentiert, ist aber NICHT mehr Default-Pfad
 
 ## 3. Shared Resources (Cost-Saving)
 
@@ -204,18 +207,39 @@ Begründung (2026-05-16):
   - Token liegt NUR im Backup-Cron-Pfad, nicht in Worker-Runtime
   - **Quartalsweise Cold-Offline-Backup**: ein verschlüsselter pg_dump auf lokale Disk (externe SSD im Schrank) — das ist die echte 3-2-1-Air-Gap-Schicht
 
-### 9.3 KEK-Provider: **OpenBao bleibt — jetzt als separate Fly-App**
+### 9.3 KEK-Provider: **Google Cloud KMS** (Default seit 2026-05-17)
 
-Begründung (2026-05-16, angepasst 2026-05-17):
-- **Both providers fully implemented**: `LocalKekProvider` + `OpenBaoKekProvider` mit Auth-Helpers (`StaticTokenAuth`, `AppRoleAuth`), alle aus [`packages/adapters/src/index.ts`](../packages/adapters/src/index.ts) re-exportiert. Selection-Logic in [`apps/server/src/index.ts:121-175`](../apps/server/src/index.ts#L121-L175) wählt 4-stufig.
-- **Business-Mode-Konsistenz**: Cloud-KMS wäre die echte business-Linie (statt OpenBao); die Bridge dorthin ist konzeptionell näher an OpenBao (Wrapped-Master + Key-Versioning) als an in-process-HKDF
-- **Multi-User-Korrektheit** mit `hkdf_local` ist gegeben (HKDF mit Salt=`utf8(kekRef)` + AAD-Binding), aber OpenBao bietet zusätzlich persistente Crypto-Shred (`destroyKey`) + native Key-Versioning
-- **OpenBao als Fly-App**: `fly.openbao.toml` + `deploy/fly/Dockerfile.openbao` + `openbao-config.hcl` sind im Repo. Internal-DNS `mcp-approval2-openbao.internal:8200` resolved zwischen Fly-Apps in derselben Region
+Entscheidung dokumentiert in [ADR-0005](./adr/0005-cloud-kms-decision.md).
 
-**Operational-Trade-Off Fly-OpenBao:**
-- Nach jedem OpenBao-Machine-Restart muss manueller Unseal-Schritt erfolgen (`fly ssh console -a mcp-approval2-openbao` → `bao operator unseal` × 2 mit gespeicherten Keys)
-- Volume-Snapshot via `fly volumes snapshots create -a mcp-approval2-openbao` monatlich (Crypto-Shred-Backup)
-- Unseal-Keys **offline gespeichert** (Paper-Wallet / verschlüsselter USB) — diese sind das einzige Recovery-Material falls Volume verloren
+**Provider-Implementation:** [`CloudKmsKekProvider`](../packages/adapters/src/kek/cloud_kms.ts) (analog [KC2 `CloudKmsKms`](https://github.com/axel-rogg/mcp-knowledge2/blob/main/src/adapters/kms/cloud_kms.ts)):
+- Boot-Time-Single-Decrypt: `CLOUD_KMS_WRAPPED_MASTER_B64` (base64-ciphertext) wird via `KMS.decrypt(name=CLOUD_KMS_KEY_NAME)` entpackt — exakt einer Roundtrip pro Service-Start
+- Per-ref KEK via HKDF-SHA-256(master, salt=utf8(ref), info='mcp-approval2-kek-v1') — identisches Pattern wie `LocalKekProvider`, nur master-Quelle anders
+- AES-GCM mit AAD-Binding pro ref (wie LocalKek)
+- `destroyKey(ref)` simuliert Crypto-Shredding via in-memory Set — echtes Per-User-Crypto-Shredding würde per-user KMS-Keys verlangen (skaliert linear in $$$, für 3 Tester nicht nötig)
+
+**KEK-Provider-Selection** in [`apps/server/src/index.ts:121-175`](../apps/server/src/index.ts#L121-L175) ist jetzt 5-stufig (Reihenfolge ändert sich, Cloud-KMS hat Vorrang):
+1. `CLOUD_KMS_KEY_NAME` + `CLOUD_KMS_WRAPPED_MASTER_B64` → **CloudKmsKekProvider** (Default privat-Mode)
+2. `VAULT_ADDR` + `VAULT_APPROLE_ROLE_ID` + `VAULT_APPROLE_SECRET_ID` → **OpenBaoKekProvider mit AppRole** (alternative Selfhosting-Variante)
+3. `VAULT_ADDR` + `VAULT_TOKEN` → **OpenBaoKekProvider mit StaticToken** (dev/test)
+4. `MASTER_KEY_BASE64` → **LocalKekProvider** (in-process HKDF, nur dev/tests)
+5. (none) → kein KEK-Provider, Boot in no-credentials-mode (`KekRequiredError` bei Bedarf)
+
+**TF-managed:** [`terraform/environments/privat/gcp-kms.tf`](../terraform/environments/privat/gcp-kms.tf) legt alles in einem Apply an:
+- APIs aktiviert (cloudkms, iamcredentials, iam)
+- KeyRing in `eu` multi-region
+- CryptoKey ENCRYPT_DECRYPT, SOFTWARE-Protection, auto-rotate 90d, `prevent_destroy=true`
+- 32-byte random_bytes Master → KMS-gewrappt via `google_kms_secret_ciphertext` → in Doppler als `CLOUD_KMS_WRAPPED_MASTER_B64`
+- Service-Account `mcp-approval2-fly` + `mcp-knowledge2-fly` (separater Audit-Trail)
+- Beide SAs als `roles/cloudkms.cryptoKeyDecrypter` (nur Decrypt — Encrypt/Destroy bewusst ausgeschlossen)
+- SA-Keys (JSON) → Doppler als `GOOGLE_APPLICATION_CREDENTIALS_JSON`
+
+**Operations-Bilanz:**
+- Setup: 1× `terraform apply` (~3 Min). Kein Init-Ceremony, kein Unseal, kein Offline-Keys-Storage.
+- Ongoing: nichts. Auto-Rotation der KMS-Key-Version alle 90d wirkt transparent (alte Versions bleiben für Decrypt verfügbar, neue Operations nutzen aktuellste Version).
+- Rotation Master-Key (wenn nötig): `terraform apply -replace=random_bytes.user_dek_master_plaintext` → frischer Master, alle bestehenden Daten müssen re-wrapped werden (Migration-Script — bei 3 Testern ein 10-Sekunden-Job).
+- Rotation SA-Key: `terraform apply -replace=google_service_account_key.approval2` (alle 6-12 Monate als Hygiene-Cadence).
+
+**Selfhosted-Alternative bleibt im Repo:** [`terraform/environments/privat-openbao/`](../terraform/environments/privat-openbao/) — komplettes OpenBao-Setup (Transit, AppRoles, Doppler-Pipe) ist applybar, falls jemals ein Switch zurück zu Selfhost gewünscht ist. Dann braucht's aber Offline-Key-Storage.
 
 ### 9.4 Compute-Target: **Fly.io statt Hetzner-VM** (User-Decision 2026-05-17)
 

@@ -1,7 +1,7 @@
 # mcp-approval2 — Kontext für Claude Code
 
 > **Greenfield-Successor** zu [mcp-approval](https://github.com/axel-rogg/mcp-approval) (Cloudflare-Workers, single-user).
-> Multi-User von Tag 0 (5-15 User pro Pilot-Instance), Postgres + OpenBao, EU-Region, DSGVO-tauglich.
+> Multi-User von Tag 0 (5-15 User pro Pilot-Instance), Postgres + Google Cloud KMS (multi-region EU, ADR-0011), DSGVO-tauglich.
 > Schwester-Repo: [mcp-knowledge2](https://github.com/axel-rogg/mcp-knowledge2) (Storage + Search).
 >
 > **Status 2026-05-15:** AS-3-Code-Complete + **Generic-Object-Model** + **PWA-Subtype-Renderer** + **Tool-Wrapper-Familien (lists/notes/bookmarks/recipes)** + **Vulnerabilities-Fix** (`npm audit` = 0 Vulns) auf Branch `feat/as3-cutover`. Cutover-Day pending — Runbook im Schwester-Repo:
@@ -21,7 +21,7 @@
    │  • Auth / Sessions / WebAuthn / PRF            │
    │  • Approval-Flow (WYSIWYS + IPI-Filter)        │
    │  • Tool-Surface (native + Sub-MCP-Gateways)    │
-   │  • Credentials-Vault (OpenBao Transit)         │
+   │  • KEK-Provider (Google Cloud KMS, ADR-0011)   │
    │  • PWA (Approval-Display, Storage-Tab)         │
    │  • DCR-OAuth-Facade für MCP-Clients            │
    └─────────────────────┬──────────────────────────┘
@@ -57,7 +57,7 @@ Status-Banner oben in jedem PLAN-File.
 
 **Deploy-Pfade — Realitäts-Check (Stand 2026-05-17):**
 
-- **Fly.io (privat-Mode) — primär.** Code-Ready: `apps/server/src/index.ts:121-175` hat die 4-stufige KEK-Provider-Selection (AppRole > StaticToken > LocalKek > none), Auth-Helpers re-exportiert aus `packages/adapters/src/index.ts`. Fly-Configs in `fly.toml` + `fly.openbao.toml` + `deploy/fly/Dockerfile.server` + `deploy/fly/Dockerfile.openbao` + `deploy/fly/deploy.sh` (8-Schritt-Interactive-Deploy). Doppler-Werte aus [docs/privat.md §6](docs/privat.md) als Source-of-Truth.
+- **Fly.io (privat-Mode) — primär.** Code-Ready: `apps/server/src/index.ts:121-175` hat die **5-stufige KEK-Provider-Selection** (CloudKms > AppRole > StaticToken > LocalKek > none — Cloud-KMS ist Default seit 2026-05-17, siehe ADR-0011 + [docs/privat.md §9.3](docs/privat.md)), Auth-Helpers re-exportiert aus `packages/adapters/src/index.ts`. Fly-Configs in `fly.toml` + `deploy/fly/Dockerfile.server` + `deploy/fly/deploy.sh`. **Cloud-KMS-Setup ist 100% TF-managed:** [terraform/environments/privat/gcp-kms.tf](terraform/environments/privat/gcp-kms.tf) legt KeyRing + CryptoKey + Service-Accounts + Doppler-Pipe in einem Apply an (Projekt `axelrogg-ai-tools`, Location `eu` multi-region). OpenBao-Path (`fly.openbao.toml` + `deploy/fly/Dockerfile.openbao` + `terraform/environments/privat-openbao/`) bleibt als alternative Selfhosting-Variante dokumentiert, ist aber nicht aktiv im Default-Plan. Doppler-Werte aus [docs/privat.md §6](docs/privat.md) als Source-of-Truth.
 - **GCP Cloud Run (business-Mode) — sekundär, Skeleton-Phase.** `terraform/environments/business/` und `terraform/modules/gcp-mcp-instance/` existieren. Migration Fly→GCP via Doppler-Config-Werte tauschen + redeploy, kein Code-Refactor (Adapter-Factory-Pattern). `CloudKmsKekProvider` ist noch zu implementieren wenn business-Mode angegangen wird.
 - **Hetzner-VM (historischer Pfad) — deprecated.** Code in `deploy/hetzner/`, Skripte in `scripts/vm-*`, Runbooks in `docs/runbooks/runbook-hetzner-*` bleiben als Audit-Trail / Notfall-Reset-Material. Switch-Begründung in [docs/privat.md §9.4](docs/privat.md): Solo-Operator-Realismus bei Security-Wartung (OS-Patches, SSH-Hygiene, Reboots) — Fly.io übernimmt die Infrastructure-Layer-Security.
 - **Cloudflare Workers — sekundär, ~50% bereit, NICHT für AS-3 deploybar.** [cf/README.md](apps/server/src/cf/README.md) ist ehrlich über die Gaps: D1-Migrations 0002–0010 noch nicht portiert (nur 0001 da, d.h. kein OAuth-DCR, **kein Approval-Flow**, kein Sub-MCP-Gateway), [cf/app-factory-cf.ts:149-161](apps/server/src/cf/app-factory-cf.ts#L149-L161) verkabelt weder `knowledge` noch `kcProxy` (kc_wrappers + PWA-Proxy laufen nicht), R2-BlobAdapter fehlt komplett, keine CF-spezifischen Tests. Nur als Solo-Operator-Pfad ohne KC2 theoretisch wieder-aktivierbar.
@@ -103,7 +103,7 @@ mcp-approval2/
 - **ORM:** Drizzle mit Postgres-RLS
 - **Auth:** OAuth-2.1 + PKCE + DCR, WebAuthn mit PRF-Extension
 - **IdP:** Google OIDC (AS-3, siehe oben)
-- **Crypto:** AES-256-GCM, HKDF, OpenBao Transit-Engine
+- **Crypto:** AES-256-GCM, HKDF, Google Cloud KMS (multi-region EU, Master-wrapped-Pattern) — OpenBao bleibt als alternative Selfhosting-Variante im Repo, nicht Default-Pfad seit ADR-0011 (2026-05-17)
 - **AI:** Vertex AI (Gemini + text-embedding-005, EU)
 - **Lang:** TypeScript strict, `noUncheckedIndexedAccess`
 

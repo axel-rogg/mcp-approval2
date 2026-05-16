@@ -25,5 +25,21 @@ terraform {
       source  = "fly-apps/fly"
       version = "~> 0.0.23"
     }
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 6.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
+}
+
+# Google Cloud KMS-Provider — fuer das gcp-kms.tf-Modul.
+# Auth via ADC: GOOGLE_APPLICATION_CREDENTIALS (file path) ODER
+# GOOGLE_APPLICATION_CREDENTIALS_JSON (inline JSON) ODER gcloud-CLI login.
+provider "google" {
+  project = var.gcp_project_id
+  region  = var.gcp_default_region
 }

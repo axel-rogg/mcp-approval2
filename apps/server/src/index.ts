@@ -16,6 +16,7 @@
 import { serve } from '@hono/node-server';
 import {
   AppRoleAuth,
+  CloudKmsKekProvider,
   LocalKekProvider,
   OpenBaoKekProvider,
   StaticTokenAuth,
@@ -96,6 +97,15 @@ interface BootEnv {
   readonly VAULT_APPROLE_ROLE_ID?: string;
   readonly VAULT_APPROLE_SECRET_ID?: string;
   /**
+   * Cloud-KMS-KEK-Pfad (Privat-Mode Default seit 2026-05-17 — Google-Cloud-
+   * Switch wegen Operator-Realismus, siehe docs/privat.md §9 + ADR-0005).
+   * CLOUD_KMS_KEY_NAME ist der voll-qualifizierte Resource-Name
+   * (`projects/.../cryptoKeys/...`), CLOUD_KMS_WRAPPED_MASTER_B64 ist die
+   * base64-encoded ciphertext des 32-byte Master-Keys.
+   */
+  readonly CLOUD_KMS_KEY_NAME?: string;
+  readonly CLOUD_KMS_WRAPPED_MASTER_B64?: string;
+  /**
    * KC2-Base-URL. AS-3-kanonischer Name ist `MCP_KNOWLEDGE_URL`; der
    * Legacy-Name `KNOWLEDGE_URL` wird weiter akzeptiert. Boot-Code waehlt
    * den ersten gesetzten Wert (MCP_KNOWLEDGE_URL bevorzugt).
@@ -121,19 +131,28 @@ async function buildOptionalDeps(
   // ─── KEK-Provider ─────────────────────────────────────────────────────
   //
   // Selection precedence (highest first):
-  //   1. VAULT_ADDR + VAULT_APPROLE_ROLE_ID + VAULT_APPROLE_SECRET_ID
-  //      → OpenBaoKekProvider with AppRoleAuth (production path with
-  //        token-lease management + automatic renewal).
-  //   2. VAULT_ADDR + VAULT_TOKEN
-  //      → OpenBaoKekProvider with StaticTokenAuth (Solo-Pilot path; the
-  //        token is the OpenBao root-token from the VM setup, rotated
-  //        out-of-band).
-  //   3. MASTER_KEY_BASE64
+  //   1. CLOUD_KMS_KEY_NAME + CLOUD_KMS_WRAPPED_MASTER_B64
+  //      → CloudKmsKekProvider (privat-Mode Default seit 2026-05-17 —
+  //        Google-Cloud-KMS multi-region `eu`. Master wird beim Boot via
+  //        KMS.decrypt entpackt, danach in-process HKDF). Auth via ADC
+  //        (GOOGLE_APPLICATION_CREDENTIALS_JSON in Doppler/env).
+  //   2. VAULT_ADDR + VAULT_APPROLE_ROLE_ID + VAULT_APPROLE_SECRET_ID
+  //      → OpenBaoKekProvider with AppRoleAuth (selfhosted-Variante; parkt
+  //        seit Cloud-KMS-Default).
+  //   3. VAULT_ADDR + VAULT_TOKEN
+  //      → OpenBaoKekProvider with StaticTokenAuth (Solo-Pilot Bao-Path).
+  //   4. MASTER_KEY_BASE64
   //      → LocalKekProvider (dev fallback; in-process HKDF derivation,
   //        no external dependency). Multi-User-safe via per-user salt.
-  //   4. (none of the above) → no kekProvider, app boots in
+  //   5. (none of the above) → no kekProvider, app boots in
   //      no-credentials-mode (KekRequiredError on any path that needs it).
-  if (bootEnv.VAULT_ADDR) {
+  if (bootEnv.CLOUD_KMS_KEY_NAME && bootEnv.CLOUD_KMS_WRAPPED_MASTER_B64) {
+    deps.kekProvider = new CloudKmsKekProvider({
+      keyName: bootEnv.CLOUD_KMS_KEY_NAME,
+      wrappedMasterB64: bootEnv.CLOUD_KMS_WRAPPED_MASTER_B64,
+    });
+  }
+  if (!deps.kekProvider && bootEnv.VAULT_ADDR) {
     const transitMount = bootEnv.VAULT_TRANSIT_PATH ?? 'transit';
     if (bootEnv.VAULT_APPROLE_ROLE_ID && bootEnv.VAULT_APPROLE_SECRET_ID) {
       // Production path — AppRoleAuth handles login + lease renewal.

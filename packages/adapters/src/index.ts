@@ -46,6 +46,11 @@ export { OpenBaoKekProvider } from './kek/openbao.js';
 export type { OpenBaoKekProviderOptions } from './kek/openbao.js';
 export { StaticTokenAuth, AppRoleAuth, VaultAuthError } from './kek/openbao-auth.js';
 export type { OpenBaoAuth, AppRoleAuthOptions } from './kek/openbao-auth.js';
+export { CloudKmsKekProvider } from './kek/cloud_kms.js';
+export type {
+  CloudKmsDecryptClient,
+  CloudKmsKekProviderOptions,
+} from './kek/cloud_kms.js';
 
 // AI
 export type {

@@ -97,3 +97,51 @@ variable "fly_org" {
   default     = "personal"
   description = "Fly.io org slug. `personal` für Free-Tier-Accounts. Bei Paid-Accounts der named-org-slug aus `fly orgs list`."
 }
+
+# --- GCP-Inputs (für Cloud-KMS-KEK-Path) ----------------------------------
+#
+# Cloud KMS ist der Default-KEK-Provider im privat-Mode (siehe
+# docs/privat.md §9 + docs/adr/0005-cloud-kms-decision.md). OpenBao bleibt
+# als Alternative im Repo dokumentiert, ist aber NICHT mehr Default-Pfad.
+#
+# Auth: google-Provider liest GOOGLE_APPLICATION_CREDENTIALS (file) oder
+# GOOGLE_APPLICATION_CREDENTIALS_JSON (inline) aus dem env. Der TF-Operator
+# braucht für den ersten Apply einmalig einen User-OAuth-Login (`gcloud
+# auth application-default login`); Service-Account-Key wird DANN von TF
+# selbst generiert und in Doppler eingetragen.
+
+variable "gcp_project_id" {
+  type        = string
+  default     = "axelrogg-ai-tools"
+  description = "GCP-Project-ID. Single-Tenant: 1 Projekt pro Instance (privat-Mode hat sein eigenes, business-Mode pro Kunde eines)."
+}
+
+variable "gcp_project_number" {
+  type        = string
+  default     = ""
+  description = "GCP-Project-Number (numeric, NICHT der Projekt-Slug). Wird für Workload-Identity-Federation-URIs gebraucht. Falls leer: TF resolved es zur Laufzeit via data.google_project."
+}
+
+variable "gcp_default_region" {
+  type        = string
+  default     = "europe-west3"
+  description = "Default-GCP-Region für non-KMS-Resources (Cloud Run Skeleton, IAM-Policies-Storage etc.). KMS-Location ist separat — gcp_kms_location."
+}
+
+variable "gcp_kms_location" {
+  type        = string
+  default     = "eu"
+  description = "Cloud-KMS-Location. `eu` = multi-region EU (default; gleiche Software-Tarife wie single-region, plus Region-Failover). Single-region-Alternative: `europe-west3` (Frankfurt), `europe-west6` (Zürich)."
+}
+
+variable "gcp_kms_key_ring_name" {
+  type        = string
+  default     = "mcp-approval2-privat"
+  description = "Cloud-KMS-KeyRing-Name. Single Ring shared zwischen approval2 + knowledge2 — beide Services derivieren ihren Master via HKDF, sehen den unwrapped Master nie im Plaintext außerhalb Boot-Moment."
+}
+
+variable "gcp_kms_key_name" {
+  type        = string
+  default     = "user-dek-master"
+  description = "Cloud-KMS-CryptoKey-Name. Auto-rotate 90 Tage (rotation_period=7776000s). Single Master-Key, unwrapped einmal beim Service-Boot, danach HKDF-deriviert per User."
+}
