@@ -152,3 +152,21 @@ mcp_approval_internal_token = "REPLACE_ME_HEX_64"
 # Leer lassen wenn keine privaten Container-Images.
 # ---------------------------------------------------------------------------
 ghcr_token = ""
+
+# ---------------------------------------------------------------------------
+# Fly.io (NEU — mcp-knowledge2 Pilot-Compute-Target via knowledge2-fly.tf)
+# ---------------------------------------------------------------------------
+#
+# Token-Quelle: `fly auth token` mintet einen User-Scope-Token. Setze ihn
+# vor `terraform plan/apply` als Env-Variable:
+#   export FLY_API_TOKEN=$(fly auth token)
+# Der Provider liest ihn aus der Umgebung — bewusst NICHT als Variable in
+# diesem File, damit er nicht in terraform.tfvars landet.
+#
+# Bei Doppler-driven Apply (scripts/doppler-run-terraform.sh): Token unter
+# Doppler-Key `FLY_API_TOKEN` im Workspace mcp-approval2/privat ablegen;
+# das Wrapper-Script injectet ihn als TF_VAR / env automatisch.
+
+# fly_org default ist "personal" (Free-Tier-Account). Bei Paid-Account mit
+# dedicated org den Slug aus `fly orgs list` einsetzen.
+# fly_org = "personal"

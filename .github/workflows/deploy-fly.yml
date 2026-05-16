@@ -1,0 +1,108 @@
+name: Deploy to Fly.io
+
+# ════════════════════════════════════════════════════════════════════════════
+# Primärer Deploy-Workflow für privat-Mode (Stand 2026-05-17).
+# Architektur-Wahrheit: docs/privat.md
+#
+# Triggert:
+#   - workflow_dispatch (manuell)
+#   - push.main mit [deploy] in der Commit-Subject
+#
+# Voraussetzungen (vor erstem Run):
+#   1. Fly-Apps existieren: `bash deploy/fly/deploy.sh` (initial-setup einmalig)
+#   2. GH-Secret FLY_API_TOKEN gesetzt (via `gh secret set FLY_API_TOKEN`,
+#      Wert aus `fly tokens create deploy`)
+#   3. Secrets in Fly hinterlegt via Doppler→`fly secrets set` (siehe deploy.sh)
+# ════════════════════════════════════════════════════════════════════════════
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: 'Branch to deploy (default: main)'
+        type: string
+        default: 'main'
+
+  push:
+    branches: [main]
+    paths:
+      - 'apps/server/**'
+      - 'apps/web/**'
+      - 'packages/**'
+      - 'deploy/fly/**'
+      - 'fly.toml'
+      - 'fly.openbao.toml'
+      - '.github/workflows/deploy-fly.yml'
+
+# Concurrency: ein Deploy gleichzeitig pro Branch
+concurrency:
+  group: deploy-fly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: fly deploy
+    runs-on: ubuntu-latest
+    # Skip wenn push-Event UND [deploy] nicht in commit-msg
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[deploy]')
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.target_branch || github.ref }}
+
+      - name: Setup flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Verify Fly auth
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          fly auth whoami
+          fly apps list
+
+      - name: Deploy mcp-approval2
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          fly deploy --config fly.toml --remote-only --strategy rolling
+
+      - name: Post-deploy health check
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          # Wait for the rolling deploy to settle, then probe /health.
+          # Custom-Domain mcp2.ai-toolhub.org wird verwendet wenn `fly certs`
+          # gesetzt; sonst Fallback auf *.fly.dev.
+          sleep 10
+          for i in 1 2 3 4 5; do
+            if curl -fsS --max-time 10 https://mcp2.ai-toolhub.org/health > /dev/null 2>&1; then
+              echo "✓ /health 200 on mcp2.ai-toolhub.org"
+              exit 0
+            elif curl -fsS --max-time 10 https://mcp-approval2.fly.dev/health > /dev/null 2>&1; then
+              echo "✓ /health 200 on mcp-approval2.fly.dev (Custom-Domain noch nicht aktiv)"
+              exit 0
+            fi
+            echo "  retry ${i}/5..."
+            sleep 5
+          done
+          echo "::error::Post-deploy health-check FAILED"
+          exit 1
+
+      - name: Notify on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              title: 'Fly-Deploy FAILED',
+              body:  `Run [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) failed. Check fly logs: \`fly logs -a mcp-approval2\``,
+              labels: ['deploy-failure']
+            })

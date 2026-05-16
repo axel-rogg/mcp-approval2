@@ -14,7 +14,12 @@
  * from './index.js'` weiterhin durchlaufen (Backward-Compat zur Burst-2-Phase).
  */
 import { serve } from '@hono/node-server';
-import { LocalKekProvider } from '@mcp-approval2/adapters';
+import {
+  AppRoleAuth,
+  LocalKekProvider,
+  OpenBaoKekProvider,
+  StaticTokenAuth,
+} from '@mcp-approval2/adapters';
 import { loadConfig, type AppConfig } from './lib/config.js';
 import { createDbAdapter } from './lib/db.js';
 import type { ServerContext } from './lib/context.js';
@@ -86,6 +91,10 @@ interface BootEnv {
   readonly VAULT_ADDR?: string;
   readonly VAULT_TOKEN?: string;
   readonly VAULT_TRANSIT_PATH?: string;
+  /** AppRoleAuth credentials (production path). When both are set, takes
+   *  precedence over VAULT_TOKEN (which is the Solo-Pilot static-token path). */
+  readonly VAULT_APPROLE_ROLE_ID?: string;
+  readonly VAULT_APPROLE_SECRET_ID?: string;
   /**
    * KC2-Base-URL. AS-3-kanonischer Name ist `MCP_KNOWLEDGE_URL`; der
    * Legacy-Name `KNOWLEDGE_URL` wird weiter akzeptiert. Boot-Code waehlt
@@ -110,22 +119,54 @@ async function buildOptionalDeps(
   const deps: Mutable<CreateAppDeps> = {};
 
   // ─── KEK-Provider ─────────────────────────────────────────────────────
-  // Dev-Pfad: LocalKekProvider mit MASTER_KEY_BASE64.
-  // Production-Pfad (OpenBao via AppRoleAuth) wird im naechsten Burst-Schritt
-  // verkabelt — der OpenBao-Provider liegt in @mcp-approval2/adapters bereit,
-  // aber der `StaticTokenAuth`/`AppRoleAuth`-Helper ist noch nicht ueber den
-  // Package-Index exportiert. Aktuell: wenn VAULT_ADDR gesetzt aber kein
-  // MASTER_KEY_BASE64 → Warnung loggen, sonst Local-Provider.
-  if (bootEnv.VAULT_ADDR && !bootEnv.MASTER_KEY_BASE64) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      '[mcp-approval2] VAULT_ADDR set but OpenBao boot-path is not yet wired ' +
-        'through @mcp-approval2/adapters (need StaticTokenAuth re-export). ' +
-        'Falling back to no-credentials-mode. Set MASTER_KEY_BASE64 for dev or ' +
-        'inject kekProvider via createApp() directly.',
-    );
+  //
+  // Selection precedence (highest first):
+  //   1. VAULT_ADDR + VAULT_APPROLE_ROLE_ID + VAULT_APPROLE_SECRET_ID
+  //      → OpenBaoKekProvider with AppRoleAuth (production path with
+  //        token-lease management + automatic renewal).
+  //   2. VAULT_ADDR + VAULT_TOKEN
+  //      → OpenBaoKekProvider with StaticTokenAuth (Solo-Pilot path; the
+  //        token is the OpenBao root-token from the VM setup, rotated
+  //        out-of-band).
+  //   3. MASTER_KEY_BASE64
+  //      → LocalKekProvider (dev fallback; in-process HKDF derivation,
+  //        no external dependency). Multi-User-safe via per-user salt.
+  //   4. (none of the above) → no kekProvider, app boots in
+  //      no-credentials-mode (KekRequiredError on any path that needs it).
+  if (bootEnv.VAULT_ADDR) {
+    const transitMount = bootEnv.VAULT_TRANSIT_PATH ?? 'transit';
+    if (bootEnv.VAULT_APPROLE_ROLE_ID && bootEnv.VAULT_APPROLE_SECRET_ID) {
+      // Production path — AppRoleAuth handles login + lease renewal.
+      const auth = new AppRoleAuth({
+        addr: bootEnv.VAULT_ADDR,
+        roleId: bootEnv.VAULT_APPROLE_ROLE_ID,
+        secretId: bootEnv.VAULT_APPROLE_SECRET_ID,
+      });
+      deps.kekProvider = new OpenBaoKekProvider({
+        addr: bootEnv.VAULT_ADDR,
+        auth,
+        transitMount,
+      });
+    } else if (bootEnv.VAULT_TOKEN) {
+      // Solo-Pilot / dev path — static token. Rotation is operator's job.
+      const auth = new StaticTokenAuth(bootEnv.VAULT_TOKEN);
+      deps.kekProvider = new OpenBaoKekProvider({
+        addr: bootEnv.VAULT_ADDR,
+        auth,
+        transitMount,
+      });
+    } else {
+      // VAULT_ADDR set but no token/approle → operator error; warn and
+      // fall through to MASTER_KEY_BASE64.
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[mcp-approval2] VAULT_ADDR set but neither VAULT_TOKEN nor ' +
+          'VAULT_APPROLE_ROLE_ID/SECRET_ID provided. Falling back to ' +
+          'MASTER_KEY_BASE64 (LocalKekProvider).',
+      );
+    }
   }
-  if (bootEnv.MASTER_KEY_BASE64) {
+  if (!deps.kekProvider && bootEnv.MASTER_KEY_BASE64) {
     const masterKey = decodeBase64(bootEnv.MASTER_KEY_BASE64);
     if (masterKey.byteLength !== 32) {
       throw new Error('MASTER_KEY_BASE64 must decode to 32 bytes');
@@ -200,6 +241,8 @@ function pickBootEnv(env: NodeJS.ProcessEnv): BootEnv {
   if (env['VAULT_ADDR']) out.VAULT_ADDR = env['VAULT_ADDR'];
   if (env['VAULT_TOKEN']) out.VAULT_TOKEN = env['VAULT_TOKEN'];
   if (env['VAULT_TRANSIT_PATH']) out.VAULT_TRANSIT_PATH = env['VAULT_TRANSIT_PATH'];
+  if (env['VAULT_APPROLE_ROLE_ID']) out.VAULT_APPROLE_ROLE_ID = env['VAULT_APPROLE_ROLE_ID'];
+  if (env['VAULT_APPROLE_SECRET_ID']) out.VAULT_APPROLE_SECRET_ID = env['VAULT_APPROLE_SECRET_ID'];
   // AS-3-naming bevorzugt; Legacy-Fallback.
   const kcUrl = env['MCP_KNOWLEDGE_URL'] ?? env['KNOWLEDGE_URL'];
   if (kcUrl) out.KNOWLEDGE_URL = kcUrl;

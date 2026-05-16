@@ -1,6 +1,12 @@
 # Fly.io Deployment — mcp-approval2
 
-Private/hobby deploy of `mcp-approval2` on Fly.io. Target footprint: **~5–10 €/month**.
+> **Status (2026-05-17):** primärer Deploy-Pfad für privat-Mode.
+> Architektur-Wahrheit: [docs/privat.md](../../docs/privat.md) (Fly.io-Switch vom
+> Hetzner-Self-Host wegen Operations-Last-Realismus bei Solo-Operator).
+> GCP-business-Mode-Pfad bleibt vollständig erhalten via Adapter-Factory-Pattern
+> + Provider-Switch-Matrix in privat.md §5.
+
+Private/family deploy of `mcp-approval2` on Fly.io für **2-5 User**. Target footprint: **~5–10 €/month**.
 
 ## Architecture (3 Fly resources)
 
@@ -73,19 +79,40 @@ fly secrets set --app mcp-approval2 \
   GOOGLE_OAUTH_CLIENT_ID="…" \
   GOOGLE_OAUTH_CLIENT_SECRET="…"
 
-# OpenBao AppRole (after enabling AppRole auth in OpenBao itself)
+# OpenBao Static-Token (Solo-Pilot-Pfad; AppRole für production-mode)
 fly secrets set --app mcp-approval2 \
-  VAULT_TOKEN="…"          # or VAULT_APPROLE_ROLE_ID + VAULT_APPROLE_SECRET_ID
+  VAULT_TOKEN="…"          # ODER VAULT_APPROLE_ROLE_ID + VAULT_APPROLE_SECRET_ID
 
-# Knowledge-Service URL (once mcp-knowledge2 is deployed)
+# Knowledge-Service URL (Schwester-Repo mcp-knowledge2)
 fly secrets set --app mcp-approval2 \
-  KNOWLEDGE_URL="https://mcp-knowledge2.fly.dev"
+  MCP_KNOWLEDGE_URL="https://knowledge2.ai-toolhub.org"
 
-# S3-compatible blob (e.g. Backblaze B2, or skip if not using yet)
+# Cross-Service-Bridge (gleicher Wert wie in mcp-knowledge2 / privat)
 fly secrets set --app mcp-approval2 \
-  S3_ENDPOINT="…" S3_ACCESS_KEY_ID="…" S3_SECRET_ACCESS_KEY="…" \
-  S3_BUCKET="mcp-approval2" S3_REGION="eu-central-1"
+  SERVICE_TOKEN="$(openssl rand -hex 32)" \
+  MCP_APPROVAL_INTERNAL_TOKEN="$(openssl rand -hex 32)"
+
+# Cloudflare R2 für Blob + Backup (privat.md §9.1 + §9.2)
+fly secrets set --app mcp-approval2 \
+  BLOB_ENDPOINT="https://<account-id>.r2.cloudflarestorage.com" \
+  BLOB_ACCESS_KEY="…" BLOB_SECRET_KEY="…" \
+  BLOB_BUCKET="mcp-approval2-blob" \
+  BACKUP_BUCKET="mcp-approval2-backup" \
+  BACKUP_MASTER_KEY="$(openssl rand -base64 32)"
+
+# JWT für OBO-Token-Signing
+fly secrets set --app mcp-approval2 \
+  JWT_RS256_PRIVATE_KEY_PEM="$(cat priv.pem)" \
+  JWT_RS256_PUBLIC_KEY_PEM="$(cat pub.pem)" \
+  JWT_KID="key-$(date -u +%Y-%m-%d)" \
+  JWT_SECRET="$(openssl rand -hex 32)"
+
+# Allowlist
+fly secrets set --app mcp-approval2 \
+  ALLOWED_EMAILS="axelrogg@gmail.com,manuelrogg1@gmail.com"
 ```
+
+**Vollständige Doppler-Werte-Spec:** [docs/privat.md §6](../../docs/privat.md). Doppler `mcp-approval2 / privat` ist die kanonische Quelle — der Workflow ist Doppler → `fly secrets set` (per Hand oder via Doppler-Fly-Integration).
 
 A new deploy is triggered automatically when secrets are pushed without `--stage`.
 

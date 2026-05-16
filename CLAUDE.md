@@ -49,10 +49,20 @@ Status-Banner oben in jedem PLAN-File.
 | **[PLAN-vulnerabilities-2026-05-15.md](docs/plans/active/PLAN-vulnerabilities-2026-05-15.md)** | ✅ **Live 2026-05-15** | npm audit 0 Vulnerabilities. drizzle-orm@0.45.2 (HIGH-Fix GHSA-gpj5-g38j-94v9) + vite@8 + vitest@4 + esbuild-override. |
 | Master-Cutover-Plan (cross-repo) | ✅ TIER 0-3 CODE-COMPLETE | [knowledge2/docs/plans/active/PLAN-as3-bigbang.md](https://github.com/axel-rogg/mcp-knowledge2/blob/main/docs/plans/active/PLAN-as3-bigbang.md) — Tier 4 (Cutover-Window) pending |
 | Operator-Runbook | ✅ Live | [knowledge2/docs/runbooks/runbook-as3-cutover.md](https://github.com/axel-rogg/mcp-knowledge2/blob/main/docs/runbooks/runbook-as3-cutover.md) — Step-by-Step T-7 bis T+7d |
+| **[privat.md](docs/privat.md)** | ✅ **Aktiv 2026-05-17 (Fly-Switch)** | Private-Mode-Setup für approval2 auf **Fly.io** (statt Hetzner) + Shared-Resource-Strategie mit knowledge2, Provider-Switch-Matrix zu Google Cloud (business-mode), Cost-Estimate ~10-13 €/mo vs ~120 €/mo. |
 
 ## Was bei Arbeit beachten
 
 **Welcher Branch?** Pre-Cutover ist `main` der V1-Stand und `feat/as3-cutover` der AS-3-Stand. Code-Änderungen die AS-3 anfassen: auf dem Branch. Reine Doc-Änderungen: nach `main`.
+
+**Deploy-Pfade — Realitäts-Check (Stand 2026-05-17):**
+
+- **Fly.io (privat-Mode) — primär.** Code-Ready: `apps/server/src/index.ts:121-175` hat die 4-stufige KEK-Provider-Selection (AppRole > StaticToken > LocalKek > none), Auth-Helpers re-exportiert aus `packages/adapters/src/index.ts`. Fly-Configs in `fly.toml` + `fly.openbao.toml` + `deploy/fly/Dockerfile.server` + `deploy/fly/Dockerfile.openbao` + `deploy/fly/deploy.sh` (8-Schritt-Interactive-Deploy). Doppler-Werte aus [docs/privat.md §6](docs/privat.md) als Source-of-Truth.
+- **GCP Cloud Run (business-Mode) — sekundär, Skeleton-Phase.** `terraform/environments/business/` und `terraform/modules/gcp-mcp-instance/` existieren. Migration Fly→GCP via Doppler-Config-Werte tauschen + redeploy, kein Code-Refactor (Adapter-Factory-Pattern). `CloudKmsKekProvider` ist noch zu implementieren wenn business-Mode angegangen wird.
+- **Hetzner-VM (historischer Pfad) — deprecated.** Code in `deploy/hetzner/`, Skripte in `scripts/vm-*`, Runbooks in `docs/runbooks/runbook-hetzner-*` bleiben als Audit-Trail / Notfall-Reset-Material. Switch-Begründung in [docs/privat.md §9.4](docs/privat.md): Solo-Operator-Realismus bei Security-Wartung (OS-Patches, SSH-Hygiene, Reboots) — Fly.io übernimmt die Infrastructure-Layer-Security.
+- **Cloudflare Workers — sekundär, ~50% bereit, NICHT für AS-3 deploybar.** [cf/README.md](apps/server/src/cf/README.md) ist ehrlich über die Gaps: D1-Migrations 0002–0010 noch nicht portiert (nur 0001 da, d.h. kein OAuth-DCR, **kein Approval-Flow**, kein Sub-MCP-Gateway), [cf/app-factory-cf.ts:149-161](apps/server/src/cf/app-factory-cf.ts#L149-L161) verkabelt weder `knowledge` noch `kcProxy` (kc_wrappers + PWA-Proxy laufen nicht), R2-BlobAdapter fehlt komplett, keine CF-spezifischen Tests. Nur als Solo-Operator-Pfad ohne KC2 theoretisch wieder-aktivierbar.
+
+Detail-Status in [docs/STATUS.md](docs/STATUS.md).
 
 - **KnowledgeAdapter-Code** (`packages/adapters/src/knowledge/`): auf `feat/as3-cutover` von Bearer-JWT auf OBO + `SERVICE_TOKEN` umgestellt. Neue Methode: `signOBO()` im `JwtSigner`-Interface. `syncUser()` ist neu für UserSync-Push. **ADR-0004 (2026-05-15)**: `ObjectKind` raus. Adapter exportiert `KnowledgeObject.subtype?: string | null`, `CreateObjectArgs.subtype?: string`, `SearchArgs.subtypes?: ReadonlyArray<string>`. Keine `kind`-Werte in Body/Query mehr. Scope ist `objects:read/write` (kind-agnostisch). Wire-Format-Drift gegen KC2 wird durch `tests/contract/manifest-roundtrip.test.ts` + `kc-tools-call.test.ts` fixiert.
 - **Apps-Subsystem** (`apps/server/src/apps/api.ts`): **Subtype-Namespacing** `app:<typ>` (z.B. `app:composable`). Helpers `appSubtype()`/`appTypeFromSubtype()`/`isAppObject()` kapseln die Konvention. Read-Guards via `isAppObject(obj)`. **listApps nutzt serverseitig `subtypePrefix='app:'`** (2026-05-15) — kein client-side filter mehr.
@@ -99,10 +109,10 @@ mcp-approval2/
 
 ## Test-Strategie
 
-- `npm run test` — alle Workspaces (148+ Tests grün als Baseline aus PLAN v1)
-- `npm run typecheck` — strict + `noUncheckedIndexedAccess`
-- `bash scripts/smoke.sh` — Layer-2 E2E (siehe scripts/)
-- Pilot-Smoke: 3/3 grün am 2026-05-14 (VM später destroyed, Doppler+GH intakt)
+- `npm run test` — alle Workspaces. **Stand 2026-05-16: 711 passed / 1 skipped** (adapters 129+1skip, core 47, server 519, web 16).
+- `npm run typecheck` — strict + `noUncheckedIndexedAccess`, clean über alle 4 Workspaces.
+- Pilot-Smoke: `bash scripts/pilot-smoke.sh` (lokal gegen `npm run dev`) bzw. `pilot-smoke-hetzner-{local,remote}.sh` gegen Compose-Stack. 3/3 grün am 2026-05-14 vor VM-Destroy.
+- **Kein `smoke.sh`-Skript existiert** — Runbook verweist auf das pilot-smoke-Tooling. Ein Pendant zu mcp-approval's `scripts/smoke-prod.sh` (mit Throttle/Retry gegen CF-Rate-Limits) ist offen.
 
 ## Branch / Push
 
