@@ -27,8 +27,19 @@ terraform/
 │
 └── environments/                       — terraform root modules (one per workspace)
     ├── privat/                         — ACTIVE
+    │   ├── main.tf                     — Hetzner VM + DNS-Records (approval2)
+    │   ├── doppler.tf                  — Doppler-Project mcp-approval2
+    │   ├── knowledge2-doppler.tf       — Doppler-Project mcp-knowledge2 (sister-service)
+    │   ├── knowledge2-cloudflare.tf    — cloudflare_ai_gateway "mcp-knowledge2"
+    │   │                                 (Workers AI bge-m3 embedding endpoint)
+    │   └── github.tf                   — GH-Actions secret-sync
     └── business/                       — STUB (Phase 2)
 ```
+
+**Cross-Service-Scope:** `environments/privat/` provisioniert Infrastruktur für
+**beide** Repos — approval2 **und** knowledge2. KC2 hat keinen eigenen TF-State.
+Das matched die Single-VM-Compose-Topologie (Hetzner) und vereinfacht die
+Schwester-Service-Koordination (gemeinsame DNS-Zone, gemeinsamer R2-State).
 
 ## Workspace pattern
 
