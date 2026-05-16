@@ -101,6 +101,40 @@ bash healthcheck.sh || {
   echo "WARN: healthcheck reported failures. Investigate above." >&2
 }
 
+# ── Step 9: backup infra (idempotent) ────────────────────────────────
+# Pre-create the backup root with the right ownership. backup.sh writes
+# /var/backups/mcp-approval2/<date>/... — needs deploy:deploy to write.
+echo "→ Ensuring /var/backups/mcp-approval2 exists (deploy-owned)..."
+sudo install -d -o deploy -g deploy -m 0750 /var/backups/mcp-approval2
+
+# Install the systemd timer + service unit for daily 03:00 UTC backups.
+# Idempotent: re-running just rewrites the unit files and triggers a daemon-reload.
+echo "→ Installing systemd backup timer..."
+sudo install -o root -g root -m 0644 \
+  systemd/mcp-backup.service /etc/systemd/system/mcp-backup.service
+sudo install -o root -g root -m 0644 \
+  systemd/mcp-backup.timer   /etc/systemd/system/mcp-backup.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now mcp-backup.timer
+echo "  ✓ mcp-backup.timer enabled — first run: $(systemctl show mcp-backup.timer -p NextElapseUSecRealtime --value || echo unknown)"
+
+# Surface the .backup-key requirement loud and early. backup.sh refuses
+# to run without it; better to warn at setup time than at 03:00 UTC.
+if [[ ! -f /opt/mcp-approval2/.backup-key ]]; then
+  cat <<'WARN'
+
+  ⚠  /opt/mcp-approval2/.backup-key is missing.
+  ⚠  Daily backups will fail until you generate it:
+  ⚠
+  ⚠    sudo install -o deploy -g deploy -m 600 /dev/null /opt/mcp-approval2/.backup-key
+  ⚠    openssl rand -base64 48 > /opt/mcp-approval2/.backup-key
+  ⚠    cat /opt/mcp-approval2/.backup-key   # COPY OFFLINE NOW
+  ⚠
+  ⚠  Losing this key means losing every encrypted backup forever.
+
+WARN
+fi
+
 # ── Final message ─────────────────────────────────────────────────────
 # shellcheck disable=SC1091
 source .env
@@ -114,10 +148,11 @@ Setup complete.
   PWA:           https://${DOMAIN_APP}
 
 Next:
-  1. Visit https://${DOMAIN_APP} in your browser.
-  2. Log in with the Google account configured in GOOGLE_OAUTH_*.
-  3. Enroll a passkey.
-  4. Run: bash healthcheck.sh   (anytime, for status)
-  5. Run: bash backup.sh        (set up as a cron / systemd-timer)
+  1. If you saw the .backup-key warning above, generate it now.
+  2. Visit https://${DOMAIN_APP} in your browser.
+  3. Log in with the Google account configured in GOOGLE_OAUTH_*.
+  4. Enroll a passkey.
+  5. Run: bash healthcheck.sh             (anytime, for status)
+  6. Verify backup timer: systemctl list-timers mcp-backup.timer
 ────────────────────────────────────────────────────────────────────────
 EOF

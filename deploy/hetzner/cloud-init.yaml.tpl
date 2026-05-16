@@ -80,15 +80,18 @@ runcmd:
   # ── Sysctl reload ───────────────────────────────────────────────────
   - sysctl --system
 
-  # ── 2GB swap (CX21 only has 8 GB RAM — Postgres + containers benefit) ──
-  - |
-    if ! swapon --show | grep -q swapfile; then
-      fallocate -l 2G /swapfile
-      chmod 600 /swapfile
-      mkswap /swapfile
-      swapon /swapfile
-      echo '/swapfile none swap sw 0 0' >> /etc/fstab
-    fi
+  # ── NO swapfile ─────────────────────────────────────────────────────
+  # OpenBao requires mlock to keep secret material from being paged out
+  # (disable_mlock was removed from the OpenBao config schema in late 2026).
+  # A swapfile + mlock-pinned memory is a known crash-vector under memory
+  # pressure, and the CPX22 (4 GB RAM) easily fits the 5-container working
+  # set: caddy ~80 MB, postgres ~400 MB, openbao ~150 MB, approval2 ~200 MB,
+  # knowledge2 ~200 MB → headroom ≈ 3 GB. Adding swap buys us nothing and
+  # weakens the vault. If you ever upgrade the OS image on an existing VM
+  # that still has /swapfile from an older template, remediate manually:
+  #
+  #   sudo swapoff /swapfile && sudo rm /swapfile && \
+  #     sudo sed -i '/swapfile/d' /etc/fstab
 
   # ── Repo clone (read-only public URL; private repos need an SSH key) ──
   - mkdir -p /opt/mcp-approval2
