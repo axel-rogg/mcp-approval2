@@ -102,6 +102,48 @@ Option B (Filter-Pills) kann später kommen wenn ein Tester sagt "ich will
 nur die expired sehen". Option D wenn ein Tester sagt "ich finde meinen
 gestrigen call nicht". Option C verwerfen — zu viel Vertikal-Klau.
 
+### Zusatz-Anforderungen (User 2026-05-17)
+
+> "Es muss kompakt sein und auch klarkommen wenn man lange Dokument wie sql
+> oder Markdown übergibt und diese per popup oder ähnlichem aufklappen und
+> lesen will. Und auch pausieren wäre gut wenn das geht."
+
+**Check bestehendes Long-Content-Handling**:
+
+| State | Detail | Verbesserungspotenzial |
+|---|---|---|
+| `approval-sections.ts:shouldCollapse()` | Schwelle 200 chars ODER 3 Zeilen → `<details>` | ok |
+| `<details>` Body | `<pre class="sec-body mono">` mit voller Hoehe | ⚠️ kein max-height → 1000-Zeilen-SQL spreizt die ganze Seite |
+| Popup / Fullscreen-Modus | fehlt | ⚠️ keine Lupe-Ansicht fuer voll-confined-lesbar |
+| Polling-Pause | beim Wechsel zu Detail-View existiert (`stopApprovalPolling`) | ⚠️ keine explizite Pause in der Inbox-View selber (z.B. wenn User in Inbox-Card lange liest oder ein modal offen ist) |
+
+**Phasen-Erweiterung**:
+
+**Phase 2 — Long-Content readability**:
+- `.sec-body` bekommt `max-height: 60vh; overflow-y: auto;` in der CSS
+- Pro `<details>`-Section ein "🔍 Im Popup öffnen"-Button rechts neben dem Summary
+- Modal: dark-overlay, fullscreen `<pre>` mit eigenem Scroll, ESC + Outside-Click + Close-Button schließen
+- Im Modal: Mono-Font, line-break-handling fuer Markdown/SQL/code lesbar
+- Klein nice-to-have: "📋 Kopieren"-Button im Modal
+
+**Phase 3 — Polling-Pause-Toggle**:
+- Inbox-Header bekommt einen "⏸ Pause"-Button neben dem Titel
+- Klick: pollTimer wird gestoppt, Button wird zu "▶ Resume"
+- State in `sessionStorage('approvals.pollingPaused')` damit's nach Reload erhalten bleibt
+- TTL-Anzeige in der Inbox-Card laeuft trotzdem weiter (client-side Date.now())
+- Visual-Hint: kleines "polling pausiert"-Badge im Header wenn aktiv
+
+**Phase 2 + 3 sind beide ergaenzend zu Phase 1** (Option A). Phase 2 betrifft
+die Detail-View (gilt fuer Pending UND Archive), Phase 3 betrifft nur die
+Inbox-View.
+
+### Empfehlung final
+
+Alle drei Phasen jetzt umsetzen — ein Push:
+- Phase 1 (~25 min): Archive-Card v1-konform
+- Phase 2 (~30 min): Popup-Modal fuer lange Section-Bodies
+- Phase 3 (~10 min): Polling-Pause-Toggle
+
 ### Slice-Aufteilung Option A
 
 | # | Datei | Änderung | Aufwand |

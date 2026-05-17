@@ -15,10 +15,11 @@ import { ApiError } from './api.js';
 import { logout, renderSessionExpired } from './auth.js';
 import { renderHeader } from './components/header.js';
 import { renderEmptyState } from './components/empty-state.js';
-import { renderQuickCard } from './approval-quick.js';
+import { renderQuickCard, shortDisplay } from './approval-quick.js';
 
 const POLL_INTERVAL_MS = 5_000;
 const ARCHIVE_WINDOW_MS = 24 * 3600 * 1000;
+const POLL_PAUSE_KEY = 'approvals.pollingPaused';
 
 let pollTimer: number | undefined;
 let active = false;
@@ -30,6 +31,23 @@ export function stopApprovalPolling(): void {
   if (pollTimer !== undefined) {
     window.clearTimeout(pollTimer);
     pollTimer = undefined;
+  }
+}
+
+function isPollingPaused(): boolean {
+  try {
+    return sessionStorage.getItem(POLL_PAUSE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function setPollingPaused(paused: boolean): void {
+  try {
+    if (paused) sessionStorage.setItem(POLL_PAUSE_KEY, '1');
+    else sessionStorage.removeItem(POLL_PAUSE_KEY);
+  } catch {
+    /* private mode etc. — ignore */
   }
 }
 
@@ -71,10 +89,49 @@ export async function renderApproval(
   }
   main.appendChild(subNav);
 
+  // Title-Row mit optionalem Pause-Toggle (nur in Inbox-View).
+  const titleRow = document.createElement('div');
+  titleRow.className = 'approvals-title-row';
+  titleRow.style.display = 'flex';
+  titleRow.style.alignItems = 'center';
+  titleRow.style.gap = '0.5rem';
+
   const h1 = document.createElement('h1');
   h1.id = 'approvals-title';
+  h1.style.margin = '0';
   h1.textContent = view === 'archive' ? 'Archiv (letzte 24h)' : 'Approval queue';
-  main.appendChild(h1);
+  titleRow.appendChild(h1);
+
+  if (view === 'inbox') {
+    const pauseBtn = document.createElement('button');
+    pauseBtn.type = 'button';
+    pauseBtn.id = 'approvals-pause-btn';
+    pauseBtn.className = 'btn-small';
+    pauseBtn.style.marginLeft = 'auto';
+    pauseBtn.textContent = isPollingPaused() ? '▶ Resume' : '⏸ Pause';
+    pauseBtn.setAttribute(
+      'title',
+      'Auto-Refresh pausieren (laeuft lokaler Countdown weiter)',
+    );
+    pauseBtn.addEventListener('click', () => {
+      const wasPaused = isPollingPaused();
+      setPollingPaused(!wasPaused);
+      pauseBtn.textContent = !wasPaused ? '▶ Resume' : '⏸ Pause';
+      if (wasPaused) {
+        // Resume → sofort refreshen + scheduler neu starten
+        void refreshAndSchedule(api, session);
+      } else {
+        // Pause → laufenden Timer stoppen (active bleibt true!)
+        if (pollTimer !== undefined) {
+          window.clearTimeout(pollTimer);
+          pollTimer = undefined;
+        }
+      }
+    });
+    titleRow.appendChild(pauseBtn);
+  }
+
+  main.appendChild(titleRow);
 
   const status = document.createElement('p');
   status.className = 'muted';
@@ -102,6 +159,7 @@ async function refreshAndSchedule(api: ApiClient, session: Session): Promise<voi
   if (!active) return;
   await refreshInbox(api, session);
   if (!active) return;
+  if (isPollingPaused()) return; // User-Pause respektieren
   pollTimer = window.setTimeout(() => void refreshAndSchedule(api, session), POLL_INTERVAL_MS);
 }
 
@@ -210,84 +268,75 @@ function renderArchiveList(host: HTMLElement, items: ReadonlyArray<PendingApprov
   }
 }
 
-function fmtTime(ms: number | null | undefined): string {
-  if (!ms) return '?';
+function fmtDecidedAt(ms: number | null | undefined): string {
+  if (!ms) return '';
   const d = new Date(ms);
-  return d.toLocaleString('de-DE', {
+  const sameDay = d.toDateString() === new Date().toDateString();
+  if (sameDay) {
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  return d.toLocaleString([], {
+    month: 'short',
+    day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
-    day: '2-digit',
-    month: '2-digit',
   });
 }
 
-function statusBadge(status: PendingApproval['status']): {
-  label: string;
-  bg: string;
-  fg: string;
+function statusGlyph(status: PendingApproval['status']): {
+  icon: string;
+  cls: string;
 } {
   switch (status) {
     case 'approved':
-      return { label: '✓ approved', bg: '#dcfce7', fg: '#166534' };
+      return { icon: '✓', cls: 'st-approved' };
     case 'rejected':
-      return { label: '✗ rejected', bg: '#fee2e2', fg: '#991b1b' };
+      return { icon: '✗', cls: 'st-rejected' };
     case 'expired':
-      return { label: '⏱ expired', bg: '#f3f4f6', fg: '#4b5563' };
-    case 'pending':
-      return { label: 'pending', bg: '#fef3c7', fg: '#92400e' };
+      return { icon: '⌛', cls: 'st-expired' };
     default:
-      return { label: String(status), bg: '#e5e7eb', fg: '#1f2937' };
+      return { icon: '·', cls: 'st-other' };
   }
 }
 
+function decidedAtOf(a: PendingApproval): number | null | undefined {
+  if (a.status === 'approved') return a.approvedAt;
+  if (a.status === 'rejected') return a.rejectedAt;
+  if (a.status === 'expired') return a.expiredAt ?? a.expiresAt;
+  return null;
+}
+
 function renderArchiveCard(a: PendingApproval): HTMLElement {
+  const g = statusGlyph(a.status);
   const link = document.createElement('a');
   link.href = `#/approvals/${encodeURIComponent(a.id)}`;
-  link.className = `approval-card archive ${a.status}`;
-  link.style.display = 'block';
-  link.style.padding = '0.5rem 0.75rem';
-  link.style.borderBottom = '1px solid var(--border, #e5e7eb)';
-  link.style.color = 'inherit';
-  link.style.textDecoration = 'none';
+  link.className = `approval-card history ${g.cls}`;
 
+  // row1: icon + tool-name + decided-at (rechts)
   const row1 = document.createElement('div');
-  row1.style.display = 'flex';
-  row1.style.justifyContent = 'space-between';
-  row1.style.alignItems = 'center';
-  row1.style.gap = '0.5rem';
+  row1.className = 'card-row1';
 
-  const left = document.createElement('span');
-  left.style.fontWeight = '600';
-  left.textContent = a.toolName;
-  row1.appendChild(left);
+  const icon = document.createElement('span');
+  icon.className = 'st-icon';
+  icon.textContent = g.icon;
+  row1.appendChild(icon);
 
-  const b = statusBadge(a.status);
-  const badge = document.createElement('span');
-  badge.textContent = b.label;
-  badge.style.background = b.bg;
-  badge.style.color = b.fg;
-  badge.style.padding = '2px 8px';
-  badge.style.borderRadius = '10px';
-  badge.style.fontSize = '0.75rem';
-  badge.style.fontWeight = '600';
-  row1.appendChild(badge);
+  const name = document.createElement('span');
+  name.className = 'tool-name';
+  name.textContent = a.toolName;
+  row1.appendChild(name);
+
+  const when = document.createElement('span');
+  when.className = 'when';
+  when.textContent = fmtDecidedAt(decidedAtOf(a));
+  row1.appendChild(when);
 
   link.appendChild(row1);
 
+  // row2: mono ellipsis-truncated display
   const row2 = document.createElement('div');
-  row2.className = 'muted';
-  row2.style.fontSize = '0.85rem';
-  row2.style.marginTop = '2px';
-  row2.style.fontFamily = 'var(--font-mono, monospace)';
-  const decidedMs =
-    a.status === 'approved'
-      ? a.approvedAt
-      : a.status === 'rejected'
-        ? a.rejectedAt
-        : a.status === 'expired'
-          ? a.expiredAt ?? a.expiresAt
-          : null;
-  row2.textContent = `${fmtTime(decidedMs)} · ${a.displayRendered ?? ''}`;
+  row2.className = 'card-row2 mono muted';
+  row2.textContent = shortDisplay(a);
   link.appendChild(row2);
 
   return link;

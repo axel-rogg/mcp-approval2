@@ -1931,6 +1931,90 @@ code {
 .sec-details[open] > summary { color: var(--fg-muted); font-size: 0.78rem; margin-bottom: 0.25rem; }
 .sec-details > .sec-body { margin-top: 0.25rem; }
 
+/* Long-content readability: confined sec-body in collapsed details bekommt
+ * eigenen Scroll-Container damit 1000-Zeilen-SQL nicht die ganze Seite
+ * sprengt. Klick auf "Im Popup oeffnen" oeffnet full-screen modal. */
+.sec-body-confined {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-card, transparent);
+  border: 1px solid var(--border, transparent);
+  border-radius: var(--radius-sm, 4px);
+}
+.sec-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+.sec-popup-btn {
+  font-size: 0.78rem;
+  color: var(--fg-muted);
+  background: transparent;
+  border: 1px solid var(--border, #d4d4d8);
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.sec-popup-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Section-Content-Modal — full-screen overlay fuer SQL/Markdown lesen. */
+.sec-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  z-index: 1000;
+}
+.sec-modal {
+  background: var(--bg, #fff);
+  color: var(--fg, #000);
+  width: min(900px, 100%);
+  height: min(85vh, 100%);
+  display: flex;
+  flex-direction: column;
+  border-radius: 8px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+.sec-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 0.9rem;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  background: var(--bg-card, #f9fafb);
+}
+.sec-modal-title {
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+}
+.sec-modal-actions {
+  display: flex;
+  gap: 0.4rem;
+}
+.sec-modal-body {
+  margin: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 1rem;
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--bg, #fff);
+}
+
 /* Live-TTL Countdown in Detail-View */
 .approval-ttl {
   margin: 0.75rem 0 0.25rem;

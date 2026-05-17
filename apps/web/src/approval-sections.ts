@@ -89,9 +89,24 @@ function renderSectionCard(section: Section): HTMLElement {
     details.appendChild(summary);
 
     const body = document.createElement('pre');
-    body.className = 'sec-body mono';
+    body.className = 'sec-body mono sec-body-confined';
     body.textContent = section.body;
     details.appendChild(body);
+
+    // "Im Popup oeffnen"-Button fuer voll-confined Reading.
+    const actions = document.createElement('div');
+    actions.className = 'sec-actions';
+    const popupBtn = document.createElement('button');
+    popupBtn.type = 'button';
+    popupBtn.className = 'btn-small btn-link sec-popup-btn';
+    popupBtn.textContent = '🔍 Im Popup oeffnen';
+    popupBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openContentModal(section.label, section.body);
+    });
+    actions.appendChild(popupBtn);
+    details.appendChild(actions);
 
     card.appendChild(details);
   } else {
@@ -102,6 +117,89 @@ function renderSectionCard(section: Section): HTMLElement {
   }
 
   return card;
+}
+
+/**
+ * Modal-Lightbox fuer lange Section-Bodies (SQL/Markdown/etc.). ESC oder
+ * Outside-Click schliessen. Mono-Pre mit internem Scroll, Copy-Button.
+ *
+ * WYSIWYS: das modal zeigt EXAKT denselben Body-Inhalt — keine zusaetzliche
+ * Information.
+ */
+export function openContentModal(label: string, body: string): void {
+  const overlay = document.createElement('div');
+  overlay.className = 'sec-modal-overlay';
+
+  const dialog = document.createElement('div');
+  dialog.className = 'sec-modal';
+  dialog.setAttribute('role', 'dialog');
+  dialog.setAttribute('aria-modal', 'true');
+
+  const header = document.createElement('div');
+  header.className = 'sec-modal-header';
+
+  const title = document.createElement('span');
+  title.className = 'sec-modal-title';
+  title.textContent = label;
+  header.appendChild(title);
+
+  const right = document.createElement('div');
+  right.className = 'sec-modal-actions';
+
+  const copyBtn = document.createElement('button');
+  copyBtn.type = 'button';
+  copyBtn.className = 'btn-small';
+  copyBtn.textContent = '📋 Kopieren';
+  copyBtn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    try {
+      await navigator.clipboard.writeText(body);
+      copyBtn.textContent = '✓ Kopiert';
+      window.setTimeout(() => {
+        copyBtn.textContent = '📋 Kopieren';
+      }, 1500);
+    } catch {
+      copyBtn.textContent = '✗ Fehler';
+    }
+  });
+  right.appendChild(copyBtn);
+
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'btn-small';
+  closeBtn.setAttribute('aria-label', 'Schliessen');
+  closeBtn.textContent = '✕';
+  closeBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    close();
+  });
+  right.appendChild(closeBtn);
+
+  header.appendChild(right);
+  dialog.appendChild(header);
+
+  const pre = document.createElement('pre');
+  pre.className = 'sec-modal-body mono';
+  pre.textContent = body;
+  dialog.appendChild(pre);
+
+  overlay.appendChild(dialog);
+
+  function close(): void {
+    overlay.remove();
+    document.removeEventListener('keydown', onKey);
+  }
+  function onKey(e: KeyboardEvent): void {
+    if (e.key === 'Escape') close();
+  }
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
+  document.addEventListener('keydown', onKey);
+
+  document.body.appendChild(overlay);
+  // Focus-trap-light: Close-Button kriegt den Focus
+  closeBtn.focus();
 }
 
 function shouldCollapse(body: string): boolean {

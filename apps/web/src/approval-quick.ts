@@ -50,7 +50,7 @@ export function renderQuickCard(approval: PendingApproval): HTMLElement {
   return link;
 }
 
-function shortDisplay(approval: PendingApproval): string {
+export function shortDisplay(approval: PendingApproval): string {
   const rendered = renderDisplay(approval);
   if (rendered) {
     // sectioned strings haben "=== Label ===" Marker — strippen fuer 1-Zeile
