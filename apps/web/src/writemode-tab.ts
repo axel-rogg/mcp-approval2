@@ -16,7 +16,7 @@
 import { authedFetch } from './auth-token.js';
 import { logout, renderSessionExpired } from './auth.js';
 import type { ApiClient, Session } from './api.js';
-import { renderHeader } from './components/header.js';
+import { renderHeader, refreshWritemodeIndicator } from './components/header.js';
 import { showToast } from './components/toast.js';
 
 interface StatusResponse {
@@ -278,6 +278,7 @@ export async function renderWritemodeTab(
         stopBtn.disabled = true;
         try {
           await postDeactivate();
+          refreshWritemodeIndicator();
           showToast('Write-Mode deaktiviert.', 'success');
           await refresh();
         } catch (err) {
@@ -308,6 +309,7 @@ export async function renderWritemodeTab(
         const assertion = await signActivation(duration, ts);
         status.textContent = 'Aktiviere …';
         await postActivate({ duration, ts, assertion });
+        refreshWritemodeIndicator();
         showToast('Write-Mode aktiv.', 'success');
         await refresh();
       } catch (err) {

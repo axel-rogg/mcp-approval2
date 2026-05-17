@@ -8,6 +8,103 @@
  * via `aria-current="page"` (gleichzeitig CSS-Hook + Screen-Reader-Hint).
  */
 import type { Session } from '../api.js';
+import { authedFetch } from '../auth-token.js';
+
+// Globaler Singleton-Tick fuer das Write-Mode-Countdown-Pill. Erste
+// renderHeader()-Aufruf startet einen einzigen setInterval, alle weiteren
+// Header-Renders pluggen sich in dasselbe Update-Loop ein. Verhindert dass
+// nach jedem Route-Wechsel (renderHeader wird oft neu aufgerufen) mehrere
+// Tick-Loops parallel laufen und CPU verbrennen.
+let wmExpiresAt: number | null = null;
+let wmTickHandle: number | null = null;
+let wmLastFetch = 0;
+const WM_FETCH_INTERVAL_MS = 30_000;
+const wmListeners: Array<(remainingMs: number | null) => void> = [];
+
+async function fetchWritemodeStatus(): Promise<number | null> {
+  try {
+    const base =
+      typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8787';
+    const res = await authedFetch(
+      new URL('/v1/writemode/status', base).toString(),
+      { method: 'GET', headers: { accept: 'application/json' } },
+      base,
+    );
+    if (!res.ok) return null;
+    const body = (await res.json()) as {
+      active?: boolean;
+      sessions?: Array<{ expires_at?: number }>;
+    };
+    if (!body.active || !body.sessions || body.sessions.length === 0) return null;
+    const first = body.sessions[0]!;
+    return typeof first.expires_at === 'number' ? first.expires_at : null;
+  } catch {
+    return null;
+  }
+}
+
+function notifyWmListeners(): void {
+  const remaining = wmExpiresAt === null ? null : wmExpiresAt - Date.now();
+  for (const l of wmListeners) {
+    try {
+      l(remaining);
+    } catch {
+      /* listener errors are not fatal */
+    }
+  }
+}
+
+function ensureWmLoop(): void {
+  if (wmTickHandle !== null) return;
+  // Erste Fetch wenn noch nichts bekannt oder beim Start eines neuen Loops.
+  if (Date.now() - wmLastFetch > WM_FETCH_INTERVAL_MS) {
+    wmLastFetch = Date.now();
+    void fetchWritemodeStatus().then((exp) => {
+      wmExpiresAt = exp;
+      notifyWmListeners();
+    });
+  }
+  wmTickHandle = window.setInterval(() => {
+    const now = Date.now();
+    // Periodisch re-fetchen (Server-side Deaktivierung mitkriegen).
+    if (now - wmLastFetch > WM_FETCH_INTERVAL_MS) {
+      wmLastFetch = now;
+      void fetchWritemodeStatus().then((exp) => {
+        wmExpiresAt = exp;
+        notifyWmListeners();
+      });
+    }
+    // Wenn aktiv: Countdown jede Sekunde pingen. Wenn abgelaufen: ausblenden.
+    if (wmExpiresAt !== null && wmExpiresAt <= now) {
+      wmExpiresAt = null;
+    }
+    notifyWmListeners();
+  }, 1000);
+}
+
+/**
+ * Forciert ein sofortiges Refetch des Write-Mode-Status. Wird vom writemode-
+ * tab nach activate/deactivate aufgerufen, damit das Header-Pill ohne
+ * 30s-Latenz updated.
+ */
+export function refreshWritemodeIndicator(): void {
+  wmLastFetch = 0; // forciert next-tick-fetch
+  void fetchWritemodeStatus().then((exp) => {
+    wmExpiresAt = exp;
+    notifyWmListeners();
+  });
+}
+
+function formatRemaining(ms: number): string {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  }
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
 
 interface NavItem {
   readonly href: string;
@@ -92,6 +189,52 @@ export function renderHeader(root: HTMLElement, session: Session, onLogout: () =
 
   const actions = document.createElement('div');
   actions.className = 'topbar-actions';
+
+  // ── Write-Mode-Countdown-Pill ──────────────────────────────────────
+  // Zeigt verbleibende Auto-Approve-Zeit wenn Session aktiv. Klick fuehrt
+  // direkt in den Write-Mode-Tab (Deaktivieren / Verlaengern).
+  const wmPill = document.createElement('a');
+  wmPill.href = '#/writemode';
+  wmPill.className = 'wm-pill';
+  wmPill.setAttribute('aria-label', 'Write-Mode aktiv — Klick fuer Details');
+  wmPill.style.display = 'none';
+  wmPill.style.padding = '2px 8px';
+  wmPill.style.marginRight = '0.5rem';
+  wmPill.style.borderRadius = '12px';
+  wmPill.style.background = '#facc15'; // gelb-warning
+  wmPill.style.color = '#000';
+  wmPill.style.fontSize = '0.75rem';
+  wmPill.style.fontWeight = '600';
+  wmPill.style.fontVariantNumeric = 'tabular-nums';
+  wmPill.style.textDecoration = 'none';
+  wmPill.style.alignSelf = 'center';
+  actions.appendChild(wmPill);
+
+  // Listener registrieren + globalen Loop starten (idempotent).
+  const wmListener = (remainingMs: number | null): void => {
+    if (remainingMs === null || remainingMs <= 0) {
+      wmPill.style.display = 'none';
+      return;
+    }
+    wmPill.style.display = 'inline-flex';
+    wmPill.textContent = `⚡ ${formatRemaining(remainingMs)}`;
+  };
+  wmListeners.push(wmListener);
+  // Wenn header re-rendered wird (Route-Wechsel), den alten Listener
+  // entfernen sobald das Element aus dem DOM verschwunden ist.
+  const cleanup = (): void => {
+    if (!document.body.contains(wmPill)) {
+      const idx = wmListeners.indexOf(wmListener);
+      if (idx >= 0) wmListeners.splice(idx, 1);
+      window.removeEventListener('hashchange', cleanup);
+    }
+  };
+  window.addEventListener('hashchange', cleanup);
+  ensureWmLoop();
+  // Sofort initial einmal triggern damit der Pill nicht erst nach 1s erscheint.
+  if (wmExpiresAt !== null) {
+    wmListener(wmExpiresAt - Date.now());
+  }
 
   // Admin-Icon nur fuer admins anzeigen. Wir spleißen es VOR dem
   // Settings-Icon, damit es ein "Owner-Tools"-Cluster gibt.
