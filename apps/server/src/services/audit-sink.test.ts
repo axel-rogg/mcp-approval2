@@ -103,16 +103,20 @@ describe('PostgresAuditSink', () => {
     expect(db._inserts).toHaveLength(1);
     const row = db._inserts[0]!;
     expect(row.sql).toMatch(/INSERT INTO audit_log/);
-    const [action, actor, target, result, requestId, ip, ua, details, createdAt] = row.params;
+    // Column order matches audit_log schema (migration 0001_initial.sql):
+    //   ts, actor_user_id, actor_type, action, request_id, ip, user_agent,
+    //   result, details
+    // target_user_id existiert NICHT in der Tabelle — wandert in details.targetUserId.
+    const [ts, actor, actorType, action, requestId, ip, ua, result, details] = row.params;
+    expect(typeof ts).toBe('number');
     expect(action).toBe('user.login.success');
     expect(actor).toBe('user-1');
-    expect(target).toBeNull();
-    expect(result).toBe('success');
+    expect(actorType).toBe('user'); // actorUserId gesetzt -> 'user'
+    expect(result).toBe('success'); // mapResult: 'success' -> 'success'
     expect(requestId).toBe('req-abc');
     expect(ip).toBe('127.0.0.1');
     expect(ua).toBe('vitest/1.0');
     expect(details).toBe(JSON.stringify({ method: 'password' }));
-    expect(typeof createdAt).toBe('number');
   });
 
   it('schluckt DB-Fehler still (fail-soft)', async () => {
