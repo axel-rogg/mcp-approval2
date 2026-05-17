@@ -40,6 +40,7 @@ import { renderAppsTab } from './apps-tab.js';
 import { renderAppDetail } from './apps-detail.js';
 import { renderDefaultsTab } from './defaults-tab.js';
 import { renderSettings } from './settings-tab.js';
+import { renderToolsTab } from './tools-tab.js';
 import { subscribePush } from './push.js';
 import { renderDebugLog, debug } from './debug-log.js';
 
@@ -74,6 +75,7 @@ type Route =
   | 'storage-detail'
   | 'apps'
   | 'apps-detail'
+  | 'tools'
   | 'debug';
 
 function parseRoute(): Route {
@@ -86,6 +88,7 @@ function parseRoute(): Route {
     return 'settings';
   }
   if (hash.startsWith('settings')) return 'settings';
+  if (hash.startsWith('tools')) return 'tools';
   if (hash.startsWith('defaults')) return 'defaults';
   if (hash.startsWith('enroll-passkey')) return 'enroll-passkey';
   if (hash.startsWith('storage/')) return 'storage-detail';
@@ -173,6 +176,9 @@ async function boot(): Promise<void> {
       return;
     case 'settings':
       await renderSettingsSafe(root, session);
+      return;
+    case 'tools':
+      await renderToolsSafe(root, session);
       return;
     case 'storage':
       await renderStorageSafe(root, session);
@@ -293,6 +299,15 @@ async function renderSettingsSafe(root: HTMLElement, s: Session): Promise<void> 
     await renderSettings(root, api, s);
   } catch (err) {
     console.error('settings render failed', err);
+    renderSessionExpired(root);
+  }
+}
+
+async function renderToolsSafe(root: HTMLElement, s: Session): Promise<void> {
+  try {
+    await renderToolsTab(root, api, s);
+  } catch (err) {
+    console.error('tools render failed', err);
     renderSessionExpired(root);
   }
 }

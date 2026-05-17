@@ -28,6 +28,12 @@ const NAV_ITEMS: ReadonlyArray<NavItem> = [
 // SVGs portiert aus v1 — feather-style outline, 18×18, stroke=currentColor.
 const ICON_ACTIONS: ReadonlyArray<IconAction> = [
   {
+    href: '#/tools',
+    label: 'Tools',
+    // v1 'Tools'-Icon: Schraubenschluessel (wrench) — Server/Tool-Inventar
+    svg: `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>`,
+  },
+  {
     href: '#/storage',
     label: 'Storage',
     svg: `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 11v6c0 1.66 4 3 9 3s9-1.34 9-3v-6"/></svg>`,
