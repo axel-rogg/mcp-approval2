@@ -4,10 +4,15 @@
  * Plan-Ref: PWA-Tools-Surface (analog v1-mcp-approval `#/servers`-Route).
  *
  * Liefert:
- *   - Native Tools aus der `ToolRegistry` (alphabetisch sortiert, mit
- *     Description + Sensitivity-Hint)
+ *   - Native Tools aus der `ToolRegistry` (hub-eigene + system-Tools)
+ *   - mcp-knowledge2 als EIGENER Gateway-Eintrag (`name='knowledge2'`) mit
+ *     allen kc_wrapper-Tools. Architektur-Wahrheit: KC2 ist ein
+ *     unabhaengiger MCP-Server — er soll im UI als solcher erscheinen,
+ *     nicht als interne wrapper-tools im native-Bucket. Die Wrapper-Tools
+ *     der ToolRegistry werden hierfuer aus `native` ausgeschlossen +
+ *     synthetisch zu einem Gateway-Eintrag umgehaengt.
  *   - Sub-MCP-Gateways aus dem `SubMcpRegistry` mit deren cached `tools/list`-
- *     Output (jeder Tool-Entry: Name, Description, ggf. annotations.sensitivity)
+ *     Output (utils / gws / gcloud — opt-in via SUB_MCP_TOKEN_*-Doppler).
  *
  * Auth: authenticated User reicht (kein admin-only). Die Liste enthaelt keine
  * Operator-Secrets (kein baseUrl, kein authMode, kein serviceToken). Sensitivity-
@@ -20,10 +25,30 @@ import { auth } from '../middleware/auth.js';
 import type { ToolRegistry } from '../mcp/protocol/registry.js';
 import type { SubMcpRegistry } from '../mcp/gateway/registry.js';
 
+/**
+ * Liefert die Tool-Namen die zu mcp-knowledge2 gehoeren. Wird in app-factory.ts
+ * aus dem module-scoped `kcWrappersCache` befuellt — Default ist eine leere
+ * Snapshot wenn KC2 nicht verkabelt ist.
+ */
+export interface KcWrapperSnapshot {
+  /** Namen der kc_wrapper-Tools die unter `native` registriert sind. */
+  readonly toolNames: ReadonlySet<string>;
+  /** Optional: letzter erfolgreicher Refresh-Zeitpunkt (UNIX-ms). */
+  readonly refreshedAt: number | null;
+  /** Optional: Display-Name (Default "Knowledge Core (mcp-knowledge2)"). */
+  readonly displayName?: string;
+}
+
 export interface InventoryRouteDeps {
   readonly server: ServerContext;
   readonly registry: ToolRegistry;
   readonly subMcpRegistry?: SubMcpRegistry;
+  /**
+   * KC2-Tool-Snapshot-Getter. Wird pro-Request aufgerufen damit sich
+   * KC-Manifest-Refresh-Changes propagieren ohne dass dieser Endpoint
+   * neu gemountet werden muesste.
+   */
+  readonly kcSnapshot?: () => KcWrapperSnapshot;
 }
 
 interface NativeToolEntry {
@@ -65,17 +90,48 @@ function sensitivityFromAnnotations(annotations: unknown): 'read' | 'write' | 'd
   return 'write';
 }
 
-function mapNative(registry: ToolRegistry): NativeToolEntry[] {
-  return registry.list().map((meta) => {
-    const sens = sensitivityFromAnnotations(meta.annotations);
-    return {
+function mapNative(
+  registry: ToolRegistry,
+  excludeNames: ReadonlySet<string>,
+): NativeToolEntry[] {
+  return registry
+    .list()
+    .filter((meta) => !excludeNames.has(meta.name))
+    .map((meta) => {
+      const sens = sensitivityFromAnnotations(meta.annotations);
+      return {
+        name: meta.name,
+        description: meta.description,
+        sensitivity: sens,
+        readOnlyHint: sens === 'read',
+        destructiveHint: sens === 'danger',
+      };
+    });
+}
+
+function mapKnowledge2Gateway(
+  registry: ToolRegistry,
+  snapshot: KcWrapperSnapshot,
+): GatewayEntry | null {
+  if (snapshot.toolNames.size === 0) return null;
+  const tools: GatewayToolEntry[] = [];
+  for (const name of snapshot.toolNames) {
+    const meta = registry.get(name);
+    if (!meta) continue;
+    tools.push({
       name: meta.name,
-      description: meta.description,
-      sensitivity: sens,
-      readOnlyHint: sens === 'read',
-      destructiveHint: sens === 'danger',
-    };
-  });
+      description: meta.description ?? null,
+      sensitivity: sensitivityFromAnnotations(meta.annotations),
+    });
+  }
+  tools.sort((a, b) => a.name.localeCompare(b.name));
+  return {
+    name: 'knowledge2',
+    displayName: snapshot.displayName ?? 'Knowledge Core (mcp-knowledge2)',
+    enabled: tools.length > 0,
+    toolsCachedAt: snapshot.refreshedAt,
+    tools,
+  };
 }
 
 async function mapGateways(
@@ -102,13 +158,21 @@ async function mapGateways(
 }
 
 export function inventoryRoutes(deps: InventoryRouteDeps): Hono<AppBindings> {
-  const { server, registry, subMcpRegistry } = deps;
+  const { server, registry, subMcpRegistry, kcSnapshot } = deps;
   const app = new Hono<AppBindings>();
   const guard = auth(server);
 
   app.get('/v1/inventory', guard, async (c) => {
-    const native = mapNative(registry);
-    const gateways = subMcpRegistry ? await mapGateways(subMcpRegistry) : [];
+    const kc = kcSnapshot
+      ? kcSnapshot()
+      : ({ toolNames: new Set<string>(), refreshedAt: null } satisfies KcWrapperSnapshot);
+    const native = mapNative(registry, kc.toolNames);
+    const subMcpGateways = subMcpRegistry ? await mapGateways(subMcpRegistry) : [];
+    const knowledge2Entry = mapKnowledge2Gateway(registry, kc);
+    // knowledge2 erscheint zuerst, dann sub-mcp-gateways alphabetisch.
+    const gateways: GatewayEntry[] = [];
+    if (knowledge2Entry) gateways.push(knowledge2Entry);
+    gateways.push(...subMcpGateways);
     const body: InventoryResponse = { native, gateways };
     return c.json(body);
   });
