@@ -181,13 +181,31 @@ function aggregateRequiredCredentials(
   return [...byProvider.values()].sort((a, b) => a.provider.localeCompare(b.provider));
 }
 
-function mapNative(
+/**
+ * mapNativeFiltered — prueft Prefix-Match gegen Gateway-Namen. So fallen
+ * `gws.*`, `gcloud.*`, `utils.*` aus dem Native-Bucket SELBST WENN ihre
+ * toolsCache temporaer leer war.
+ *
+ * Sonderfall `util.now` / `util.uuid` (native single-tools) vs `utils.*`
+ * (utils-Gateway): unterschiedliche Namen (util vs utils), Prefix-Match
+ * verwechselt sie nicht.
+ */
+function mapNativeFiltered(
   registry: ToolRegistry,
-  excludeNames: ReadonlySet<string>,
+  kcExclude: ReadonlySet<string>,
+  gatewayToolExclude: ReadonlySet<string>,
+  gatewayPrefixes: ReadonlySet<string>,
 ): NativeToolEntry[] {
   return registry
     .list()
-    .filter((meta) => !excludeNames.has(meta.name))
+    .filter((meta) => {
+      if (kcExclude.has(meta.name)) return false;
+      if (gatewayToolExclude.has(meta.name)) return false;
+      for (const prefix of gatewayPrefixes) {
+        if (meta.name.startsWith(prefix)) return false;
+      }
+      return true;
+    })
     .map((meta) => {
       const sens = sensitivityFromAnnotations(meta.annotations);
       return {
@@ -335,12 +353,20 @@ export function inventoryRoutes(deps: InventoryRouteDeps): Hono<AppBindings> {
       : [];
 
     // Union aller Gateway-Tool-Namen für Native-Exclude.
+    // PLUS defensive Prefix-Filter (User-Wunsch 2026-05-17): selbst wenn
+    // toolsCache leer ist (Boot-Zeit, OAuth-Re-Auth pending, ...), schliesse
+    // alles aus was wie `<gatewayName>.<rest>` aussieht. allRaw listet ALLE
+    // registrierten Sub-MCP-Server (catalog + user-owned), unabhängig von
+    // ihrer aktuellen Tool-Cache-Population.
     const gatewayToolNames = new Set<string>();
     for (const g of allSubMcpGateways) {
       for (const t of g.tools) gatewayToolNames.add(t.name);
     }
-    const nativeExcludes = new Set<string>([...kcToolNames, ...gatewayToolNames]);
-    const native = mapNative(registry, nativeExcludes);
+    const gatewayPrefixes = new Set<string>();
+    for (const s of allRaw) gatewayPrefixes.add(`${s.name}.`);
+    // Build a name-filter callback statt nur Set — Prefix-Match braucht
+    // iteration. Wir wrappen das in eine erweiterte mapNative-Signature.
+    const native = mapNativeFiltered(registry, kcToolNames, gatewayToolNames, gatewayPrefixes);
 
     // Per-User-Subscription-Filter (Phase 1). Wenn subscriptions verkabelt:
     // - seed catalog-rows lazy beim first read
