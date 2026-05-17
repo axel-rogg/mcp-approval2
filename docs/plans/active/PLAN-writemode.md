@@ -1,6 +1,10 @@
 ## PLAN-writemode — User-facing Write-Mode in approval2
 
-⚠️ **Status: Draft** (2026-05-17)
+✅ **Status: LIVE** (2026-05-17, prod auf mcp-approval2.fly.dev)
+
+End-to-End verifiziert: Passkey-Enrollment + Write-Mode-Aktivierung + Auto-Bypass
+fuer write-Tools + Header-Countdown-Pill. Alle 6 Slices + 4 Hot-Fixes (siehe
+unten "Deployment Lessons") sind in main.
 
 ### Ziel
 
@@ -100,9 +104,44 @@ Slice 5 + 6 mit `[deploy]`-Tag — vorher Vitest lokal grün, sonst kein Push.
 
 ### Akzeptanzkriterien
 
-- [ ] User klickt im PWA-Tab "Write-Mode" auf "1 h" → Passkey-Prompt → Session aktiv
-- [ ] Countdown zählt runter, `status.textContent` ist grün, "Jetzt deaktivieren"-Button da
-- [ ] Während aktiv: ein `docs.put` (sensitivity=write) Tool-Call vom MCP-Client geht durch ohne approval_required-Response
-- [ ] Während aktiv: ein `docs.delete` (sensitivity=danger) Tool-Call wirft immer noch ApprovalRequiredError
-- [ ] Session-Ablauf in DB + UI synchron
-- [ ] User B kann User A's Write-Mode nicht missbrauchen (RLS-Test)
+- [x] User klickt im PWA-Tab "Write-Mode" auf "1 h" → Passkey-Prompt → Session aktiv
+- [x] Countdown zählt runter, `status.textContent` ist grün, "Jetzt deaktivieren"-Button da
+- [x] Während aktiv: ein `docs.put` (sensitivity=write) Tool-Call geht durch ohne approval_required-Response
+- [x] Während aktiv: ein `docs.delete` (sensitivity=danger) Tool-Call wirft immer noch ApprovalRequiredError
+- [x] Session-Ablauf in DB + UI synchron
+- [x] User B kann User A's Write-Mode nicht missbrauchen (RLS-Test)
+- [x] Topbar-Countdown-Pill (gelb, klickbar) zeigt verbleibende Zeit
+- [x] Per-Origin-Passkey-Binding (PWA auf fly.dev + ai-toolhub-Subdomains funktionieren separat)
+
+### Deployment Lessons (2026-05-17)
+
+Beim Live-Rollout sind acht versteckte Bugs explodiert, die nichts mit dem
+Write-Mode-Code selbst zu tun hatten — sondern mit dem WebAuthn-Plumbing
+generell. Festhalten damit die Wiederholung morgen 5min statt 3h dauert:
+
+| # | Symptom | Root-Cause | Fix |
+|---|---|---|---|
+| 1 | `column "counter" does not exist` | Migration 0001 hatte `sign_count INTEGER`, Runtime-Code (registration/auth/approval-verify) liest `counter`. Drift seit Phase 1. | Migration `0015_webauthn_counter_rename.sql` idempotenter ALTER COLUMN RENAME |
+| 2 | Migration-Apply blockiert (drift) | Parallel-Agent committed `0015_user_sub_mcp_*.sql` neben meinem `0015_webauthn_*.sql` → Runner sieht zwei Files mit selber Version-Nummer, refuses apply | Renumber 0015→0018, 0016→0019, 0017→0020 (Content unverändert) |
+| 3 | "Passkey-enrollment finish failed: HTTP 400" (alle Versionen) | PWA call ging an `/auth/webauthn/enroll/start` aber Server-Route heißt `/begin`. Body-Shape stimmte auch nicht. Plus: Bearer fehlte (cookie-only-fetch). | `apps/web/src/auth.ts` enrollPasskey() komplett überarbeitet: `/begin`, `authedFetch`, korrektes `{challengeId, response:RegistrationResponseJSON}`-Body |
+| 4 | "RP-ID nicht ein registrable suffix" | PWA auf `app2.ai-toolhub.org`, RP-ID auf `mcp2.ai-toolhub.org` — Geschwister-Subdomains, keine Suffix-Relation. Apex `ai-toolhub.org` als Workaround: Apex hat **keinen A-Record** → Related-Origin-Fallback `/.well-known/webauthn` failt. | Dynamic RP-ID pro Request: `resolveRpId(origin, config)` returnt `config.RP_ID` wenn es Suffix der Request-Host ist, sonst Host-FQDN. Challenge-Store hält rpId+origin zusammen mit Challenge. Konsequenz: jede Origin == eigene Passkey-Domain. |
+| 5 | `webauthn_challenge_mismatch` beim Enroll-Finish | In-Memory-Map als Challenge-Store, Fly hat 2 Machines mit auto-stop → Begin Machine A, Finish Machine B → Challenge unbekannt. War schon als TODO im Code markiert. | Migration `0022_webauthn_challenges.sql` (Postgres-Tabelle). putChallenge/takeChallenge async + DB-backed, atomic DELETE…RETURNING gegen TOCTOU. |
+| 6 | `webauthn_credential_unknown` trotz erfolgreichem Enroll (silent) | `db.scoped(userId)` öffnet `BEGIN`, macht **kein automatisches COMMIT** — Caller muss `release()` aufrufen. registration.ts hat das nicht gemacht, INSERT verschwand in Orphan-Transaction, server returnte 200, PWA + iCloud sahen Passkey, Postgres rollbacked die Transaktion beim Connection-Idle. Code-Comment in `packages/adapters/src/db/postgres.ts:75-82` hatte das explizit gewarnt. | 4 Write-Sites (registration + 3 counter-UPDATEs) auf `db.transaction(userId, async (scoped) => …)` umgestellt — committed automatisch beim Callback-Resolve. |
+| 7 | `Unexpected token 'h', "hybrid,internal" is not valid JSON` | `transports` ist JSONB-Spalte, postgres-js parsed JSONB automatisch zurück zu JS-Array. Verifier rief `JSON.parse(cred.transports)` → array.toString() = `"hybrid,internal"` → JSON.parse failt. | Defensive Helper in 3 Verifiern: Array → direkt, String → JSON.parse, sonst undefined. |
+| 8 | `Credential response authenticatorData was not a base64url string` | PWA encoded authenticatorData/signature/clientDataJSON mit plain `bytesToB64` (`+/=` chars). simplewebauthn-server akzeptiert nur base64url (`-_`, no padding). | `bytesToB64Url` für alle assertion-Felder in writemode-tab.ts + approval-decision.ts. |
+
+Plus eine Pipeline-Härtung weil 2x in 10min Fly-Health-Check-Timeout passiert
+ist (transient): `grace_period` 10s→60s, `--wait-timeout 10m`, automatischer
+1-fach Retry im Workflow.
+
+### Folgearbeit
+
+- **Schema-Cleanup**: `credential_id` ist BYTEA mit Dual-Encoding-Fallback im
+  Code. Sauberer Pfad: TEXT-Spalte mit base64url-String, eine einzige Lookup-
+  Form. Migration: `ALTER COLUMN credential_id TYPE TEXT USING encode(...)`.
+- **Related-Origin-Requests**: aktuell muss man pro Domain einen separaten
+  Passkey enrollen. Für 1-Passkey-für-alle-Domains: Cloudflare-Worker am Apex
+  `ai-toolhub.org/.well-known/webauthn` mit JSON `{"origins":[…]}` + RP-ID
+  zurück auf `ai-toolhub.org`. Optional, nur wenn UX-Problem spürbar wird.
+- **DB-backed Audit-Log** für `tool.invoke.bypassed_via_writemode` ist implementiert,
+  noch kein UI-Filter. PWA "Audit-Log"-Sub-Tab unter Settings könnte das zeigen.
