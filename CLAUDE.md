@@ -7,6 +7,16 @@
 > **Status 2026-05-15:** AS-3-Code-Complete + **Generic-Object-Model** + **PWA-Subtype-Renderer** + **Tool-Wrapper-Familien (lists/notes/bookmarks/recipes)** + **Vulnerabilities-Fix** (`npm audit` = 0 Vulns) auf Branch `feat/as3-cutover`. Cutover-Day pending — Runbook im Schwester-Repo:
 > [knowledge2/docs/runbooks/runbook-as3-cutover.md](https://github.com/axel-rogg/mcp-knowledge2/blob/main/docs/runbooks/runbook-as3-cutover.md).
 >
+> **Update 2026-05-17 (Pilot-Deploy-Day):** Beide Services sind erstmals end-to-end live auf Fly.io:
+> - `https://mcp2.ai-toolhub.org/health` → `{"status":"ok"}` (2 Machines fra, shared-IPv4 + dediziertes IPv6, TLS-Cert validiert)
+> - `https://mcp-knowledge2.fly.dev/health/ready` → `{"status":"ready","checks":{"db":"ok","blob":"ok"}}`
+> - **MCP-Protokoll-Smoke:** DCR-Registration → HTTP 201, `/.well-known/oauth-authorization-server` korrekt, JWKS live (kid `key-2026-05-14`), `/oauth/authorize` redirected Browser zu Google-OIDC, `/mcp` gibt 401 ohne Bearer.
+> - **Postgres:** Neon Free Tier (eu-central-1 Frankfurt) statt Fly MPG, 10 Migrations (0001-0010) auf approval2 + 12 auf knowledge2 angewendet. `release_command` in `fly.toml` lässt Migrations automatisch beim Deploy laufen (idempotent via `_migrations`-Tracking-Tabelle).
+> - **KEK-Provider:** Google Cloud KMS (**single-region `europe-west3`** statt `eu` multi-region — bekannter google-Provider-6.x-Bug `KMS_RESOURCE_NOT_FOUND_IN_LOCATION`, Cost-identisch, Failover für 1 Solo-Key überdimensioniert). KeyRing `mcp-approval2-privat` + CryptoKey `user-dek-master` (90d auto-rotate) + 3 SAs.
+> - **R2:** EU-Jurisdiction-Buckets, `BLOB_ENDPOINT` MUSS `.eu.r2.cloudflarestorage.com` enthalten (sonst 403). Drift-Bug behoben in [terraform/environments/privat/r2-blob.tf](terraform/environments/privat/r2-blob.tf) + Doppler-Wert.
+>
+> Token-Rotation (wegen Doppler-Leak 2026-05-16) + GCP-Console-Redirect-URI-Fix (`knowledge.` → `knowledge2.`) noch offen für 2026-05-18.
+>
 > **Generic-Object-Model (ADR-0004 in knowledge2, 2026-05-15)**: KC2-API spricht nicht mehr `kind` sondern free-form `subtype: string`. Adapter (`packages/adapters/src/knowledge/`) + Apps-Subsystem + Service+Tool-Layer + PWA komplett umgestellt. Apps nutzen Subtype-Namespacing `app:<typ>` (z.B. `app:composable`, `app:shopping-list`). Siehe Brief im Schwester-Repo: [knowledge2/GENERIC-DATA-MODEL.md](https://github.com/axel-rogg/mcp-knowledge2/blob/feat/as3-cutover/GENERIC-DATA-MODEL.md) + lokal [docs/plans/active/PLAN-wrapper-conventions.md](docs/plans/active/PLAN-wrapper-conventions.md).
 
 ## Architektur (Stand 2026-05-15)

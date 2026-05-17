@@ -1,7 +1,15 @@
-# Status: mcp-approval2 (2026-05-17, Fly.io-Switch von Hetzner)
+# Status: mcp-approval2 (2026-05-17, Pilot-Deploy LIVE)
 
-> Snapshot vor dem Fly-Erst-Deploy. Branch `feat/as3-cutover` enthält die
-> letzten Wellen seit dem 14.05. Pilot-Destroy:
+> **🚀 Pilot-Live 2026-05-17:** Beide Services erstmals end-to-end auf Fly.io
+> erreichbar. `https://mcp2.ai-toolhub.org/health` → `{"status":"ok"}` (2 Machines fra),
+> `https://mcp-knowledge2.fly.dev/health/ready` → `{"status":"ready","checks":{"db":"ok","blob":"ok"}}`.
+> MCP-Protokoll-Smoke grün: DCR-Registration HTTP 201, OAuth-AS-Metadata + JWKS
+> (`kid=key-2026-05-14`) korrekt, `/oauth/authorize` redirected Browser zu
+> Google-OIDC (AS-3-Flow), `/mcp` ohne Bearer → HTTP 401. Token-Rotation + GCP-
+> Console-Redirect-URI-Fix offen für 2026-05-18, sonst Pilot-Service-Live.
+>
+> Snapshot. Branch `feat/as3-cutover` enthält die letzten Wellen seit dem 14.05.
+> Pilot-Destroy:
 >
 > 1. **AS-3 Code-Complete** (PLAN-as3-autonomous): KC2 wird autonom, approval2
 >    läuft als optionaler Approval-Proxy davor. OBO-JWT + Shared `SERVICE_TOKEN`,
@@ -40,37 +48,40 @@
 | `apps/web` | 16 passed | PWA-Renderer-Dispatch + WebAuthn-PRF-Service |
 | **Total** | **711 passed, 1 skipped** | `npm run typecheck` clean über alle Workspaces |
 
-## Deploy-Status (2026-05-17, pre-Fly-Deploy)
+## Deploy-Status (2026-05-17, Pilot LIVE)
 
-**Aktuell:** Hetzner-VM destroyed seit 2026-05-14, Fly.io-Stack vorbereitet
-aber noch nicht deployed. Cost-aktuell **0 EUR/Tag**.
+**Aktuell:** Beide Services produktiv auf Fly.io erreichbar. Cost-aktuell
+~3-7 EUR/Monat erwartet (Free-Tier-Allowances + Vertex hobby-load).
 
 | Komponente | Status | Anmerkung |
 |---|---|---|
-| Terraform-State (R2-Backend EU) | ✅ intakt | module.doppler + module.github + cloudflare_zone bleibt; Hetzner-Module wird in Phase 6 entfernt |
-| Fly.io-Apps (`mcp-approval2`, `mcp-approval2-pg`, `mcp-approval2-openbao`) | ⏳ vorbereitet, nicht deployed | `fly.toml` + `fly.openbao.toml` + `deploy/fly/deploy.sh` ready. Aktivierung via `bash deploy/fly/deploy.sh`. |
-| Hetzner-VM `privat-mcp` | ❌ destroyed (historisch) | seit 2026-05-14 |
-| Cloudflare-DNS-Records (mcp2/app2 A+AAAA) | ❌ destroyed | wird durch CNAME → `mcp-approval2.fly.dev` ersetzt (via `fly certs add` + manuell in CF Dashboard oder terraform) |
+| Terraform-State (R2-Backend EU) | ✅ intakt | module.doppler + module.github + cloudflare_zone bleibt; Hetzner-Module ist entfernt |
+| Fly.io-Apps (`mcp-approval2`, `mcp-knowledge2`, optional `mcp-approval2-openbao`) | ✅ **live 2026-05-17** | approval2: 2 Machines `fra`, shared-IPv4 + dediziertes IPv6. knowledge2: 1 Machine `fra`. OpenBao-App gate-flagged off (`enable_openbao_fly=false`) — Cloud-KMS ist Default-KEK. |
+| Hetzner-VM `privat-mcp` | ❌ destroyed (historisch) | seit 2026-05-14, Pfad deprecated |
+| Cloudflare-DNS-Records (mcp2/app2 CNAME → fly.dev) | ✅ **live 2026-05-17** | TLS-Cert via `fly certs add` validiert, Custom-Domain `mcp2.ai-toolhub.org` antwortet |
 | Cloudflare-Zone `ai-toolhub.org` | ✅ intakt | data-block-Reference, war nie terraform-owned |
 | Cloudflare AI Gateway `knowledge2-kc2` | ✅ live | seit 2026-05-14, EU-Region |
-| Cloudflare R2 Buckets (4 stück) | ⏳ zu erstellen | `mcp-approval2-blob` + `mcp-approval2-backup` (+ knowledge2 Pendants) via Terraform |
-| Doppler-Project `mcp-approval2/privat` | ⏳ Werte umzustellen | Hetzner-spezifische Werte (VAULT_ADDR Compose-DNS, BASE_URL mcp2-A-record) auf Fly-Werte (.internal-DNS, fly.dev-URL bzw. Custom-Domain) |
+| Cloudflare R2 Buckets (4 stück) | ✅ **live** | `mcp-approval2-blob` + `mcp-approval2-backup` (+ knowledge2 Pendants) via Terraform. **Wichtig:** EU-Jurisdiction → `BLOB_ENDPOINT` muss `<account>.eu.r2.cloudflarestorage.com` enthalten (sonst 403). Fixed in `terraform/environments/privat/r2-blob.tf` outputs. |
+| Cloudflare Zone-Ratelimit-Ruleset (knowledge2) | ⏸ gate-flagged off | `enable_cf_zone_ratelimit=false` — CF Free-Plan max 1 zone-ruleset per phase, v1-Worker hat den Slot |
+| Google Cloud KMS (privat) | ✅ **live 2026-05-17** | **single-region `europe-west3`** (statt `eu` multi-region — `hashicorp/google` 6.x Provider-Bug `KMS_RESOURCE_NOT_FOUND_IN_LOCATION, request misrouted to global`). KeyRing `mcp-approval2-privat`, CryptoKey `user-dek-master` (90d auto-rotate), 3 SAs (approval2, knowledge2, knowledge2-vertex). Cost-identisch, Failover für 1 Solo-Key überdimensioniert. |
+| Neon-Postgres-Projects (approval2 + knowledge2) | ✅ **live 2026-05-17** | beide eu-central-1 Frankfurt, Free Tier. 10 Migrations auf approval2 (0001-0010) + 12 auf knowledge2 angewendet. `release_command` in `fly.toml` lässt Migrations bei jedem Deploy idempotent laufen (via `_migrations`-Tracking-Tabelle). |
+| Doppler-Project `mcp-approval2/fly` (privat) | ✅ **live 2026-05-17** | Werte auf Fly + Neon + Cloud-KMS umgestellt, Drift-Bug bei `BLOB_ENDPOINT` (`.eu.`-Prefix) gefixt |
 | Doppler-Project `mcp-approval2/business` (GCP-Phase-2) | ⚠️ Stub | TF-Module liegt, GCP-Resources sind Placeholder |
-| Doppler-Service-Tokens (VM + GH-Actions) | ✅ intakt | weiter gültig für neue VM |
-| GitHub-Repo Settings + Branch-Protection | ✅ intakt | DOPPLER_TOKEN_GHA + hetzner-production env unangetastet |
-| Docker-Volumes auf der VM | ❌ destroyed | pgdata, vault-data, caddy-data alle weg (Pilot war leer, kein Daten-Verlust) |
-| OpenBao Root-Token + Unseal-Keys (alte) | ⚠ unbrauchbar | Vault-Daten weg → alte Keys können nichts mehr entschlüsseln. Beim Re-Provisioning werden NEUE generiert. |
+| Doppler-Service-Tokens (Fly + GH-Actions) | ✅ intakt | weiter gültig |
+| GitHub-Repo Settings + Branch-Protection | ✅ intakt | DOPPLER_TOKEN_GHA + fly-production env aktiv |
 
-**Restart-Pfad:** [runbook-vm-destroy-recreate.md](runbooks/runbook-vm-destroy-recreate.md) +
-[scripts/vm-destroy-recreate.sh](../scripts/vm-destroy-recreate.sh) ohne
-`destroy`-Phase (= Steps 5–17). Geschätzte Restart-Zeit: 15–22 min
-inklusive Let's-Encrypt-Cert-Issuance.
+**MCP-Protokoll-Smoke (2026-05-17, alle grün):**
+- `GET /.well-known/oauth-authorization-server` → OAuth-AS-Metadata korrekt (issuer, endpoints, scopes `mcp:tools`/`mcp:resources`, PKCE-S256, DCR enabled, grant_types `authorization_code`+`refresh_token`)
+- `GET /.well-known/jwks.json` → RSA RS256 mit `kid=key-2026-05-14`
+- `POST /oauth/register` (DCR) → HTTP 201 mit `client_id` + `registration_access_token`
+- `GET /oauth/authorize?...` (Browser Accept) → HTTP 302 zu `/auth/google/start?return=...` (AS-3-Flow)
+- `GET /mcp` ohne Bearer → HTTP 401 `{"error":{"code":"unauthorized","message":"missing bearer token"}}`
 
 ## Deploy-Pfade — Realitäts-Check
 
-### Self-Host (Hetzner + Postgres + OpenBao) — primär, ~95% bereit
+### Fly.io (privat-Mode) — primär, ✅ LIVE seit 2026-05-17
 
-Verkabelt + gegen den Pilot getestet (14.05.):
+Verkabelt + smoke-tested gegen Production:
 
 - [fly.toml](../fly.toml) (primärer Deploy-Pfad seit Fly-Switch 2026-05-17) + [fly.openbao.toml](../fly.openbao.toml) (deprecated; OpenBao-Pfad ersetzt durch Cloud-KMS) — Fly-App `mcp-approval2` (TF-managed via `fly_app.approval2`), Postgres als **Neon Free Tier** (TF-managed in `terraform/environments/privat/neon-approval2.tf`, Connection-Strings landen automatisch in Doppler).
 - [deploy/hetzner/docker-compose.yml](../deploy/hetzner/docker-compose.yml) — 5 Services im `internal` Bridge-Netz: `postgres` (pgvector/pg16), `openbao`, `mcp-approval2`, `mcp-knowledge2`, `caddy`, plus `watchtower` für Auto-Update.
@@ -78,12 +89,11 @@ Verkabelt + gegen den Pilot getestet (14.05.):
 - 10 Postgres-Migrations (0001-0010) komplett.
 - Cron-Architektur: **External-Scheduler-Pattern** ([cron/index.ts](../apps/server/src/cron/index.ts)) — keine in-process-Cron, statt-dessen HTTP-POST `/internal/v1/cron/:task`. systemd-timer / k8s-CronJob / GH-Actions triggert.
 
-**Verbleibender Code-Gap (~5%, OpenBao-Wiring):**
-
-- [apps/server/src/index.ts:119-127](../apps/server/src/index.ts#L119-L127) warnt noch: `"VAULT_ADDR set but OpenBao boot-path is not yet wired through @mcp-approval2/adapters (need StaticTokenAuth re-export). Falling back to no-credentials-mode."`
-- Reality: `StaticTokenAuth`, `AppRoleAuth`, `VaultAuthError` existieren in [packages/adapters/src/kek/openbao-auth.ts](../packages/adapters/src/kek/openbao-auth.ts) und sind voll getestet (`packages/adapters/src/kek/openbao.test.ts` — 26 Tests). Sie werden nur nicht aus [packages/adapters/src/index.ts](../packages/adapters/src/index.ts) re-exportiert.
-- **Workaround (aktueller Pilot-Pfad):** `MASTER_KEY_BASE64` in Doppler → `LocalKekProvider`-Branch greift. Funktional, aber das Threat-Model verschiebt sich (Master-Key liegt in Doppler statt in Vault).
-- **One-Liner-Fix:** 3 Re-Exports im Adapter-Index + Wiring-Branch im Boot.
+**Pilot-Code-Stand:** Cloud-KMS-Default greift, OpenBao-Pfad ist alternative
+Selfhosting-Variante (gate-flagged off). OpenBao-Auth-Re-Export-Gap (Adapter-Index
++ Boot-Wiring-Branch) ist nur noch für eine spätere Selfhost-Aktivierung
+relevant, nicht für den Pilot — Cloud-KMS hat Vorrang in der 5-stufigen
+KEK-Provider-Selection (siehe [`apps/server/src/index.ts:121-175`](../apps/server/src/index.ts#L121-L175) + [docs/privat.md §9.3](privat.md)).
 
 ### Cloudflare Workers — sekundär, ~50% bereit, NICHT für AS-3 deploybar
 
@@ -102,29 +112,42 @@ Architektonisch sauber strukturiert ([cf/README.md](../apps/server/src/cf/README
 
 **Fazit CF-Pfad:** für Solo-Operator-Use-Case ohne KC2-Anbindung und ohne Approval-Flow theoretisch wieder-aktivierbar — aber für den AS-3-Pilot ist Hetzner/Fly der einzige Weg.
 
-## Security-Follow-Ups (Pflicht vor Re-Production)
+## Security-Follow-Ups (offen für 2026-05-18)
 
-Im aktuellen Session-Transcript exponierte Tokens. Müssen rotiert werden
-**bevor** das System wieder produktiv genutzt wird:
+Doppler-Leak-Hygiene aus 2026-05-16: Tokens müssen rotiert werden, sind aktuell
+noch live aber im Session-Transcript gesehen worden. Mostly external-console-
+work (~5 Minuten pro Service):
 
 | Token | Wo | Rotation |
 |---|---|---|
-| Vault Root-Token `s.DGRR2JbFZneufIjHEQZJFZ1r` | `/opt/mcp-approval2/.vault-init-output.json` (VM, chmod 600) + Doppler `VAULT_TOKEN` — VM gerade weg, Token aber im Transcript erhalten. Beim Re-Provisioning neu erzeugt. | `bao token create -policy=root` → neuer Token, alter via `bao token revoke` |
-| 3 Vault Unseal-Keys | gleiches File | `bao operator rekey -init -key-shares=3 -key-threshold=2`, neue Keys offline, alte vernichten |
+| R2 API-Tokens (BLOB + BACKUP) | Doppler `mcp-approval2/fly` + `mcp-knowledge2/fly` | CF-Dashboard → R2 → API Tokens → revoke + new (Tokens an sich waren OK — nur `BLOB_ENDPOINT`-Drift) |
+| FLY_API_TOKEN | Doppler + GH-Actions | `fly tokens create org -o personal -x 8760h`, alte via Dashboard revoke |
+| GITHUB_TOKEN (GH-Actions PAT für Doppler-Push) | GH-Repo-Secrets | Personal-Tokens-Page → revoke + new |
+| Google-OAuth-Client-Secrets (2× — approval2 + knowledge2) | Doppler | GCP-Console → APIs & Services → Credentials → reset secret pro Client |
+| NEON_API_KEY | Doppler (TF-Provider) | Neon-Console → Account-Settings → API-Keys |
+| HCLOUD_TOKEN + Hetzner-SSH-Key | Doppler (historisch, Hetzner deprecated) | Hetzner-Console → Security → revoke. Low-Prio weil Pfad deprecated. |
+| JWT-Keys (RS256 priv/pub + JWT_SECRET + JWT_KID) | Doppler | `openssl genpkey` neu, `JWT_KID=key-<YYYY-MM-DD>`, deploy triggert JWKS-Rotation |
+| MASTER_KEY_BASE64 (Fallback) | Doppler | `openssl rand -base64 32`, deploy — affects nur Fallback-Pfad (Cloud-KMS ist Default) |
+| Internal-Tokens (`SERVICE_TOKEN`, `MCP_APPROVAL_INTERNAL_TOKEN`) | Doppler (beide Services!) | `openssl rand -hex 32`, gleicher Wert in beiden Doppler-Configs |
 | Doppler Personal-Token (`dp.pt....`) | `.dev.vars` lokal | Dashboard → Profile → Tokens → revoke + new |
 
-## Roadmap bis Pilot-Production
+**GCP-Console-Edit (1 Klick, offen für 2026-05-18):** knowledge2-OAuth-Client
+Redirect-URI von `https://knowledge.ai-toolhub.org/auth/google/callback` auf
+`https://knowledge2.ai-toolhub.org/auth/google/callback` umstellen. console.cloud.google.com
+→ APIs & Services → Credentials.
 
-### P0 — Blocker für einen Re-Deploy
+## Roadmap
 
-1. **AS-3-Cutover-Day** im Schwester-Repo durchziehen — Operator-Runbook `knowledge2/docs/runbooks/runbook-as3-cutover.md`. Tier 4 (Cutover-Window) ist der letzte verbleibende Schritt.
-2. **VM-Re-Provisioning** wenn der Pilot wieder live soll: `terraform apply` aus `terraform/environments/privat/` → 11 Ressourcen werden re-created. Restart-Steps in [runbook-vm-destroy-recreate.md](runbooks/runbook-vm-destroy-recreate.md).
+### P0 — Offen für 2026-05-18
 
-### P1 — Code-Gaps für saubere Self-Host-Production
+1. **Token-Rotation** durchziehen (siehe §Security-Follow-Ups).
+2. **GCP-Console-Edit:** knowledge2-OAuth-Client Redirect-URI auf `knowledge2.ai-toolhub.org` umstellen.
+3. **End-to-End-MCP-Test:** Claude.ai gegen `https://mcp2.ai-toolhub.org/mcp` verbinden, DCR + OAuth durchspielen, Tool-Liste sehen.
 
-3. **OpenBao-Auth-Export.** [packages/adapters/src/index.ts](../packages/adapters/src/index.ts) muss `StaticTokenAuth`, `AppRoleAuth`, `VaultAuthError` re-exportieren, und [apps/server/src/index.ts:119-134](../apps/server/src/index.ts#L119) muss den OpenBao-Branch aktivieren statt nur zu warnen. **Bis dahin:** Pilot läuft mit `MASTER_KEY_BASE64` in Doppler (Workaround dokumentiert in `deploy/hetzner/setup.sh`).
-4. **Token-Rotation** vor dem nächsten Apply (siehe §Security-Follow-Ups).
-5. **`smoke.sh`-Pendant für Production** (gibt es nur als `pilot-smoke-hetzner-{local,remote}.sh` + `pilot-smoke.sh`/`pilot-smoke.test.ts` — Pendant zu mcp-approval's `scripts/smoke-prod.sh` mit Throttle-/Retry-Logik fehlt).
+### P1 — Code- und Ops-Polish
+
+4. **OpenBao-Auth-Export** (nur falls je Selfhost-Switch zurück): [packages/adapters/src/index.ts](../packages/adapters/src/index.ts) muss `StaticTokenAuth`, `AppRoleAuth`, `VaultAuthError` re-exportieren, [apps/server/src/index.ts:121-175](../apps/server/src/index.ts#L121-L175) hat den OpenBao-Branch bereits — Pilot läuft mit Cloud-KMS, nicht load-bearing.
+5. **`smoke.sh`-Pendant für Production** (gibt es nur als `pilot-smoke.sh`/`pilot-smoke.test.ts` — Pendant zu mcp-approval's `scripts/smoke-prod.sh` mit Throttle-/Retry-Logik fehlt).
 
 ### P2 — wenn CF-Pfad ernsthaft Production wird
 

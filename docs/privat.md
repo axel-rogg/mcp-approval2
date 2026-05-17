@@ -19,8 +19,8 @@ Diese Datei dokumentiert die ehrliche Pilot-Linie für mcp-approval2 im **privat
 
 | Service | Compute | Datenbank | KMS | Blob | Embeddings |
 |---|---|---|---|---|---|
-| **mcp-approval2** | **Fly.io App** (`mcp-approval2`, fra, shared-cpu-1x 512MB, auto-stop) — ~0-3 €/mo unter Free-Allowance | **Neon Postgres** (project `mcp-approval2`, eu-central-1 Frankfurt, Free Tier, 0.5 GB, 0.25 CU shared) — **0 €/mo** | **Google Cloud KMS** multi-region `eu` (project `axelrogg-ai-tools`) — ~0,30 €/mo (1 Key + Ops) | Cloudflare R2 EU (S3-API) | nicht benötigt heute |
-| **mcp-knowledge2** | **Fly.io App** (`mcp-knowledge2`, fra, shared-cpu-1x 512MB, min=1) — ~3 €/mo | **Neon Postgres** (project `mcp-knowledge2`, eu-central-1 Frankfurt, Free Tier, 0.5 GB, **pgvector 0.8.0 built-in**) — **0 €/mo** | **Google Cloud KMS** (gleicher Master-Key, shared via 2. Service-Account) — ~0 €/mo zusätzlich | Cloudflare R2 EU (S3-API) | Vertex AI EU `text-embedding-005` |
+| **mcp-approval2** | **Fly.io App** (`mcp-approval2`, fra, shared-cpu-1x 512MB, auto-stop) — ~0-3 €/mo unter Free-Allowance | **Neon Postgres** (project `mcp-approval2`, eu-central-1 Frankfurt, Free Tier, 0.5 GB, 0.25 CU shared) — **0 €/mo** | **Google Cloud KMS** single-region `europe-west3` (project `axelrogg-ai-tools`) — ~0,30 €/mo (1 Key + Ops) | Cloudflare R2 EU (S3-API) | nicht benötigt heute |
+| **mcp-knowledge2** | **Fly.io App** (`mcp-knowledge2`, fra, shared-cpu-1x 512MB, min=1) — ~3 €/mo | **Neon Postgres** (project `mcp-knowledge2`, eu-central-1 Frankfurt, Free Tier, 0.5 GB, **pgvector 0.8.0 built-in**) — **0 €/mo** | **Google Cloud KMS** (gleicher Master-Key in `europe-west3`, shared via 2. Service-Account) — ~0 €/mo zusätzlich | Cloudflare R2 EU (S3-API) | Vertex AI EU `text-embedding-005` |
 
 **Beide Services nutzen denselben Operations-Pfad (`flyctl`).** Stack-Unifizierung war der Haupt-Driver für den Switch von Hetzner-Self-Host (siehe §9.4).
 
@@ -28,8 +28,8 @@ Diese Datei dokumentiert die ehrliche Pilot-Linie für mcp-approval2 im **privat
 - Solo-Operator hat keinen Offline-Key-Storage (USB/Paper-Wallet) — OpenBao verliert dann seinen Mehrwert (Unseal-Keys in Doppler = OpenBao-im-Doppler-Token, der Sinn fällt weg)
 - Cloud-KMS hat keine Init-Ceremony, kein Unseal nach Restart, keine offline-Keys zu lagern
 - GCP ist eh schon im Stack (Google OIDC für IdP, Vertex AI für Embeddings, business-Mode-Skeleton) — KMS dazuzunehmen erzeugt keine *neue* Abhängigkeit, vertieft eine bestehende
-- Multi-Region `eu` (Frankfurt + Niederlande + Belgien) gleich teuer wie Single-Region (~$0.06/Schlüssel/Monat bei Software-Tier), Failover automatisch
-- Beide Services teilen sich denselben CryptoKey (`projects/axelrogg-ai-tools/locations/eu/keyRings/mcp-approval2-privat/cryptoKeys/user-dek-master`) — Audit-Trail-Trennung via separate Service-Accounts (`mcp-approval2-fly` + `mcp-knowledge2-fly`)
+- Single-Region `europe-west3` (Frankfurt) statt ursprünglich geplanter Multi-Region `eu` — `hashicorp/google` Provider 6.x hatte einen Bug `KMS_RESOURCE_NOT_FOUND_IN_LOCATION, request misrouted to global` für multi-region KMS-Resources. Cost ist identisch (~$0.06/Schlüssel/Monat bei Software-Tier), Multi-Region-Failover für 1 Solo-CryptoKey ist überdimensioniert. Switch zurück auf `eu` möglich sobald Provider-Bug gefixt ist.
+- Beide Services teilen sich denselben CryptoKey (`projects/axelrogg-ai-tools/locations/europe-west3/keyRings/mcp-approval2-privat/cryptoKeys/user-dek-master`) — Audit-Trail-Trennung via separate Service-Accounts (`mcp-approval2-fly` + `mcp-knowledge2-fly`)
 - OpenBao-TF-Modul bleibt unter [`terraform/environments/privat-openbao/`](../terraform/environments/privat-openbao/) als alternative Selfhosting-Variante dokumentiert, ist aber NICHT mehr Default-Pfad
 
 ## 3. Shared Resources (Cost-Saving)
@@ -226,7 +226,7 @@ Entscheidung dokumentiert in [ADR-0005](./adr/0005-cloud-kms-decision.md).
 
 **TF-managed:** [`terraform/environments/privat/gcp-kms.tf`](../terraform/environments/privat/gcp-kms.tf) (KMS) + [`gcp-vertex.tf`](../terraform/environments/privat/gcp-vertex.tf) (Vertex) legen in einem Apply an:
 - APIs aktiviert (`cloudkms`, `iamcredentials`, `iam`, `aiplatform`)
-- KeyRing in `eu` multi-region
+- KeyRing in **single-region `europe-west3`** (Frankfurt). Ursprünglich war `eu` multi-region geplant (Failover Frankfurt + Niederlande + Belgien), `hashicorp/google` Provider 6.x hat aber einen Bug `KMS_RESOURCE_NOT_FOUND_IN_LOCATION, request misrouted to global` für multi-region KMS — Single-Region `europe-west3` umgeht das, ist Cost-identisch (~0.30 €/mo bei Software-Tier), Multi-Region-Failover für 1 Solo-CryptoKey ist überdimensioniert. Switch zurück auf `eu` möglich sobald Provider-Bug gefixt ist.
 - CryptoKey ENCRYPT_DECRYPT, SOFTWARE-Protection, auto-rotate 90d, `prevent_destroy=true`
 - 32-byte random_bytes Master → KMS-gewrappt via `google_kms_secret_ciphertext` → in Doppler als `CLOUD_KMS_WRAPPED_MASTER_B64`
 - **Drei Service-Accounts mit isoliertem Blast-Radius:**

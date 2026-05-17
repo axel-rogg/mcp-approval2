@@ -62,12 +62,24 @@ The script walks through these steps (Postgres-Steps 2/4/5 sind seit 2026-05-17 
 2. ~~Create Fly Postgres cluster~~ → **Neon-Project ist TF-managed** in `terraform/environments/privat/neon-approval2.tf`. Verifikation: `doppler secrets get DATABASE_URL --plain --project mcp-approval2 --config fly | grep -q neon.tech`.
 3. Create app shell (`mcp-approval2`) — TF-managed via `fly_app.approval2`
 4. ~~`fly postgres attach`~~ → entfällt; Doppler→Fly-Secrets-Sync pusht `DATABASE_URL`+`DATABASE_ADMIN_URL` direkt
-5. ~~Run `postgres-init.sql`~~ → einmaliges `psql "$DATABASE_ADMIN_URL" -c "CREATE EXTENSION pg_trgm"` (kein pgvector für approval2)
+5. ~~Run `postgres-init.sql`~~ → Bootstrap-Block einmalig gegen frische Neon-DB. Als **DB-Owner-Role** (`approval_app`, nicht `approval_admin`) ausführen, weil Postgres 15+ den `public`-Schema dem `pg_database_owner` zuweist und nur der explizit granten kann:
+
+   ```sql
+   -- Als approval_app (DB-Owner) verbinden:
+   CREATE EXTENSION IF NOT EXISTS pg_trgm;  -- kein pgvector für approval2
+   GRANT ALL ON SCHEMA public TO approval_admin;
+   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO approval_admin;
+   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO approval_admin;
+   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO approval_admin;
+   ```
+
+   Ohne diesen Step scheitern die Migrations (laufen als `approval_admin`) mit `permission denied for schema public`.
+
 6. Deploy OpenBao app (`mcp-approval2-openbao`) — *optional, deprecated path*; Cloud-KMS-Pfad (Default) braucht stattdessen TF-Apply von `gcp-kms.tf`
    - *Wenn OpenBao gewählt:* `fly ssh console -a mcp-approval2-openbao` → `bao operator init` → save unseal keys + root token **out-of-band** → unseal → `bao secrets enable -path=transit transit` → `bao write -f transit/keys/mcp-approval2-kek`
 7. Generate + push secrets (RSA-2048 JWT keypair, bearer, session HMAC, internal-token)
-8. `fly deploy --config fly.toml`
-9. Run migrations via `fly ssh console` — falls release_command nicht reicht
+8. `fly deploy --config fly.toml` — `fly.toml` hat `[deploy] release_command = "sh -c 'DATABASE_URL=$DATABASE_ADMIN_URL npm run db:migrate'"`, das pro Deploy idempotent die ausstehenden Migrations einspielt (Tracking via `_migrations`-Tabelle). **Pflicht** — ohne `release_command` werden Migrations nie ausgeführt, App antwortet auf `/health` 200, jeder DB-schreibende Endpoint (z.B. `/oauth/register`) wirft 500 weil Tabellen fehlen.
+9. Run migrations manuell via `fly ssh console` — nur falls `release_command` mal ausnahmsweise nicht durchgelaufen ist
 
 ### 3. Set remaining secrets (manual)
 
@@ -93,8 +105,10 @@ fly secrets set --app mcp-approval2 \
   MCP_APPROVAL_INTERNAL_TOKEN="$(openssl rand -hex 32)"
 
 # Cloudflare R2 für Blob + Backup (privat.md §9.1 + §9.2)
+# WICHTIG: EU-Jurisdiction-Buckets verlangen `.eu.r2.cloudflarestorage.com` (mit `.eu.`).
+# Ohne `.eu.` antwortet R2 mit 403 "Bucket not found".
 fly secrets set --app mcp-approval2 \
-  BLOB_ENDPOINT="https://<account-id>.r2.cloudflarestorage.com" \
+  BLOB_ENDPOINT="https://<account-id>.eu.r2.cloudflarestorage.com" \
   BLOB_ACCESS_KEY="…" BLOB_SECRET_KEY="…" \
   BLOB_BUCKET="mcp-approval2-blob" \
   BACKUP_BUCKET="mcp-approval2-backup" \
