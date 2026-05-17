@@ -173,16 +173,28 @@ export async function renderStorageTab(
   search.className = 'storage-search';
   search.value = filters.q ?? '';
 
+  // Search-Input: 350ms-Debounce, dann nur die LISTE neu laden — NICHT
+  // window.location.hash setzen (das wuerde hashchange triggern, boot()
+  // wuerde das ganze PWA re-rendern, Input-Element wuerde zerstoert,
+  // Focus geht verloren, User kann nicht weiterscheiben).
+  //
+  // Stattdessen: history.replaceState() updated die URL still (kein
+  // hashchange-Event), und loadAndRender(api, ...) refreshed nur die
+  // <ul.storage-list>. Das Input bleibt fokussiert.
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   search.addEventListener('input', () => {
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-      const next: StorageFilters = {
-        subtype: filters.subtype,
-        q: search.value.trim() === '' ? undefined : search.value.trim(),
-      };
-      window.location.hash = buildHash(next);
-    }, 250);
+      const q = search.value.trim() === '' ? undefined : search.value.trim();
+      const next: StorageFilters = { subtype: filters.subtype, q };
+      // Mutate filters in-place damit der Caller im naechsten loadAndRender
+      // den aktuellen Stand bekommt. Plus URL still updaten als Bookmark-
+      // State (kein Re-Render).
+      (filters as { q: string | undefined }).q = q;
+      const newHash = buildHash(next);
+      history.replaceState(null, '', newHash);
+      void loadAndRender(api, filters, listEl, footer, false);
+    }, 350);
   });
   searchRow.appendChild(search);
 
