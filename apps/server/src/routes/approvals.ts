@@ -152,13 +152,46 @@ async function loadAllowCredentialIds(
   userId: string,
 ): Promise<string[]> {
   const scoped = await server.db.scoped(userId);
-  const rows = await scoped.query<{ credentialId: string }>(
+  const rows = await scoped.query<{ credentialId: string | Uint8Array | Buffer }>(
     `SELECT credential_id AS "credentialId"
        FROM webauthn_credentials
       WHERE user_id = $1 AND invalidated_at IS NULL`,
     [userId],
   );
-  return rows.map((r) => r.credentialId);
+  // BYTEA-Spalte: postgres-js liefert Uint8Array. JSON.stringify wuerde das
+  // als {0:n,1:n,...} serialisieren — die PWA bekommt damit kein b64url
+  // sondern ein Object und schmiert beim atob() ab.
+  //
+  // Dual-encoding-Fallback: alte Inserts haben den b64url-String als ASCII-
+  // Bytes gespeichert (siehe authentication.ts dual-lookup-Kommentar). Neue
+  // Inserts haben die binaer-decodierten credential-bytes. Heuristik: wenn
+  // alle Bytes im b64url-Alphabet liegen, geben wir den ASCII-decoded String
+  // direkt zurueck; sonst encoden wir die Binaer-Bytes nach b64url.
+  return rows.map((r) => normalizeCredIdToB64Url(r.credentialId));
+}
+
+const B64URL_RE = /^[A-Za-z0-9_-]+$/;
+
+function normalizeCredIdToB64Url(raw: string | Uint8Array | Buffer): string {
+  if (typeof raw === 'string') return raw;
+  // postgres-js BYTEA → Uint8Array. Falls Node-Buffer (Hono/JSON-Roundtrip),
+  // ist es bereits Uint8Array-subtype.
+  const bytes = raw as Uint8Array;
+  // ASCII-decode probieren — wenn das Ergebnis im b64url-Alphabet liegt,
+  // war's eine alte ASCII-Insert; sonst neuer Binaer-Insert.
+  try {
+    const ascii = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    if (B64URL_RE.test(ascii)) return ascii;
+  } catch {
+    /* fall through to binary path */
+  }
+  return bytesToB64Url(bytes);
+}
+
+function bytesToB64Url(bytes: Uint8Array): string {
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i] ?? 0);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 // ---------------------------------------------------------------------------

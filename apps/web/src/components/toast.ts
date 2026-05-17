@@ -13,6 +13,10 @@ export type ToastKind = 'info' | 'success' | 'error';
 
 const HOST_ID = 'toast-host';
 const DEFAULT_TTL_MS = 3_000;
+// Fehler stehen laenger sichtbar — der User muss sie lesen koennen (oft
+// enthalten sie technische Hinweise wie 'atob: invalid string'). Click auf
+// den Toast schliesst ihn sofort, daher kein Pflicht-User-Action.
+const ERROR_TTL_MS = 15_000;
 
 function ensureHost(): HTMLElement {
   let host = document.getElementById(HOST_ID);
@@ -42,7 +46,7 @@ export function showToast(
   el.textContent = message;
   host.appendChild(el);
 
-  const ttl = opts.ttlMs ?? DEFAULT_TTL_MS;
+  const ttl = opts.ttlMs ?? (kind === 'error' ? ERROR_TTL_MS : DEFAULT_TTL_MS);
   const dismiss = () => {
     if (!el.isConnected) return;
     el.classList.add('toast-leaving');

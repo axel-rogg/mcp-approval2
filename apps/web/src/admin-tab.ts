@@ -4,11 +4,12 @@
  * Route: #/admin
  * Auth: requires session.role === 'admin' (Server enforct adminOnly).
  *
- * 4 Sub-Tabs:
- *   Users    — Liste + Suspend/Unsuspend + Role-Change + Delete
- *   Invites  — Form (Email) + Liste der letzten Invites mit acceptUrl-Copy
- *   Outbox   — Liste der Email-Outbox (insb. fuer console-Mode-Fallback)
- *   Audit    — Letzte 100 Audit-Events (admin-only view)
+ * 5 Sub-Tabs:
+ *   Users      — Liste + Suspend/Unsuspend + Role-Change + Delete
+ *   Invites    — Form (Email) + Liste der letzten Invites mit acceptUrl-Copy
+ *   Outbox     — Liste der Email-Outbox (insb. fuer console-Mode-Fallback)
+ *   Audit      — Letzte 100 Audit-Events (admin-only view)
+ *   Diagnostic — Synthetische Test-Approval-Erzeugung (Visual-/Push-/Flow-Smoke)
  *
  * Bewusst minimal — keine Pagination, kein deep-link-state, kein optimistic-UI.
  * 2-3 Pilot-Tester rechtfertigen kein Framework.
@@ -25,7 +26,7 @@ import {
 import { logout } from './auth.js';
 import type { ApiClient } from './api.js';
 
-type SubTab = 'users' | 'invites' | 'outbox' | 'audit';
+type SubTab = 'users' | 'invites' | 'outbox' | 'audit' | 'diagnostic';
 
 function fmtDate(raw: number | string | null | undefined): string {
   if (raw === null || raw === undefined || raw === '' || raw === 0) return '—';
@@ -65,12 +66,6 @@ export async function renderAdminTab(
   h1.textContent = 'Admin';
   main.appendChild(h1);
 
-  // Diagnostic-Toolbar (Test-Approval) — sichtbar von jeder Admin-Subpage.
-  // Erzeugt ein synthetisches Approval mit sectioned displayTemplate damit der
-  // Operator den Visual-Look der Detail-View live verifizieren kann (Badge,
-  // sec-cards, TTL, btn-row). Sicher: es wird kein Tool dispatched.
-  main.appendChild(buildDiagnosticToolbar());
-
   // Sub-Tab-Navigation — Tools-Tab-Pattern (anchor-basiert + settings-subnav
   // CSS-Classes, statt selbst-gebauter button-pills).
   const subtabs: ReadonlyArray<{ id: SubTab; label: string }> = [
@@ -78,6 +73,7 @@ export async function renderAdminTab(
     { id: 'invites', label: 'Invites' },
     { id: 'outbox', label: 'Outbox' },
     { id: 'audit', label: 'Audit' },
+    { id: 'diagnostic', label: 'Diagnostic' },
   ];
   const subnav = document.createElement('nav');
   subnav.className = 'settings-subnav admin-subnav';
@@ -105,6 +101,7 @@ export async function renderAdminTab(
       else if (tab === 'invites') await renderInvitesSubtab(contentEl, adminApi);
       else if (tab === 'outbox') await renderOutboxSubtab(contentEl, adminApi);
       else if (tab === 'audit') await renderAuditSubtab(contentEl, adminApi);
+      else if (tab === 'diagnostic') renderDiagnosticSubtab(contentEl);
     } catch (err) {
       contentEl.innerHTML = `<div class="card err"><strong>Fehler:</strong> ${escapeHtml((err as Error).message)}</div>`;
     }
@@ -547,19 +544,21 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
-// ─── Diagnostic Toolbar ──────────────────────────────────────────────────────
+// ─── Diagnostic Subtab ──────────────────────────────────────────────────────
 
-function buildDiagnosticToolbar(): HTMLElement {
+function renderDiagnosticSubtab(root: HTMLElement): void {
+  root.innerHTML = '';
   const card = document.createElement('div');
   card.className = 'card admin-diagnostic';
 
-  const title = document.createElement('strong');
-  title.textContent = 'Diagnostic ';
-  card.appendChild(title);
+  const h2 = document.createElement('h2');
+  h2.textContent = 'Test-Approval';
+  card.appendChild(h2);
 
-  const hint = document.createElement('span');
+  const hint = document.createElement('p');
   hint.className = 'muted small';
-  hint.textContent = ' — erzeugt ein synthetisches Approval (kein echter Tool-Call) damit du Display, Push-Notification und Approve/Reject-Flow live testen kannst.';
+  hint.textContent =
+    'Erzeugt ein synthetisches Approval (kein echter Tool-Call) damit du Display, Push-Notification und Approve/Reject-Flow live testen kannst. Nach dem Klick navigiert die PWA direkt zur Detail-View der frisch erzeugten Approval.';
   card.appendChild(hint);
 
   const row = document.createElement('div');
@@ -606,5 +605,5 @@ function buildDiagnosticToolbar(): HTMLElement {
   writeBtn.addEventListener('click', () => void trigger('write'));
   dangerBtn.addEventListener('click', () => void trigger('danger'));
 
-  return card;
+  root.appendChild(card);
 }
