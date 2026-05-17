@@ -294,6 +294,7 @@ Findings sind innerhalb der Severity nach **Schweregrad/Wahrscheinlichkeit** sor
 - **Fix:**
   - JSON-Body-Cap am Transport-Layer (32 KB pro tool-call params, in `transport.ts`).
   - Pre-fetch der JSON-Schemas aus KC2's Manifest → Konvertierung in Zod ODER `ajv`-validation vor Approval-Enqueue.
+- **Status:** ✅ FIXED 2026-05-17 (Phase B, Teil 1) — Body-Cap + Prototype-Pollution-Strip umgesetzt. [transport.ts handleToolsCall](../../apps/server/src/mcp/protocol/transport.ts) prueft `byteSizeOfJson(parsed.data.arguments) > 32 KB` → `InvalidParams`. Plus `stripDangerousKeys()` entfernt `__proto__`/`constructor`/`prototype` Top-Level + nested aus den Args, BEVOR sie als pending_approval.tool_input persistiert werden. 3 neue Tests in [transport.test.ts](../../apps/server/src/mcp/protocol/transport.test.ts). Teil 2 (JSON-Schema → Zod-Konvertierung pro Tool) ist Backlog — derzeit lebt mit `z.unknown()` + KC2-side-Validierung als Fallback, der Body-Cap verhindert den Worst-Case Storage-Abuse-Vektor.
 
 ### SEC-020 — Approval-displayTemplate zeigt Payload-Body nicht (WYSIWYS-Vagueness)
 

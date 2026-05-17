@@ -615,6 +615,85 @@ describe('POST /mcp tools/call — approval-resume (SEC-004/SEC-018)', () => {
   });
 });
 
+// SEC-019: tools/call body-cap + prototype-pollution-strip.
+describe('POST /mcp tools/call — SEC-019 input hardening', () => {
+  function makeReadTool(): Tool<{ q?: string }, string> {
+    return {
+      name: 'read.echo',
+      description: 'echo',
+      inputSchema: z.object({ q: z.string().optional() }),
+      sensitivity: 'read',
+      async execute(_ctx, input) {
+        return `echo:${(input as { q?: string }).q ?? ''}`;
+      },
+    };
+  }
+
+  it('rejects oversized arguments (> 32 KB) with InvalidParams', async () => {
+    const reg = new ToolRegistry();
+    reg.register(makeReadTool());
+    const app = makeApp(reg);
+    const huge = 'x'.repeat(40_000);
+    const res = await call(
+      app,
+      jsonRpcReq('tools/call', { name: 'read.echo', arguments: { q: huge } }, 200),
+      bearer,
+    );
+    const body = (await res.json()) as JsonRpcError;
+    expect(body.error.code).toBe(JsonRpcErrorCode.InvalidParams);
+    expect(body.error.message).toMatch(/arguments too large/i);
+  });
+
+  it('akzeptiert Args knapp unterhalb 32 KB', async () => {
+    const reg = new ToolRegistry();
+    reg.register(makeReadTool());
+    const app = makeApp(reg);
+    // ~30 KB sicher unter dem Cap inkl. JSON-Quoting-Overhead.
+    const big = 'x'.repeat(30_000);
+    const res = await call(
+      app,
+      jsonRpcReq('tools/call', { name: 'read.echo', arguments: { q: big } }, 201),
+      bearer,
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it('strippt __proto__ + constructor + prototype Keys aus Args', async () => {
+    const reg = new ToolRegistry();
+    let captured: unknown = null;
+    reg.register({
+      name: 'read.capture',
+      description: 'captures input',
+      inputSchema: z.record(z.string(), z.unknown()),
+      sensitivity: 'read',
+      async execute(_ctx, input) {
+        captured = input;
+        return 'ok';
+      },
+    });
+    const app = makeApp(reg);
+    const res = await call(
+      app,
+      jsonRpcReq(
+        'tools/call',
+        {
+          name: 'read.capture',
+          arguments: {
+            normal: 'kept',
+            __proto__: { polluted: true },
+            constructor: 'evil',
+            nested: { __proto__: { also_polluted: true }, ok: 1 },
+          },
+        },
+        202,
+      ),
+      bearer,
+    );
+    expect(res.status).toBe(200);
+    expect(captured).toEqual({ normal: 'kept', nested: { ok: 1 } });
+  });
+});
+
 describe('GET /mcp/sse', () => {
   it('streams 200 with text/event-stream', async () => {
     const reg = new ToolRegistry();

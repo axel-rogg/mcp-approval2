@@ -321,6 +321,30 @@ async function handleToolsCall(
       })),
     });
   }
+
+  // SEC-019: Body-Cap fuer tools/call params. kc_wrappers nutzen z.unknown()
+  // ohne tiefe JSON-Schema-Validierung — ohne Cap kann ein Caller hier
+  // multi-MB-Payloads schicken, die als pending_approval-Row persistiert
+  // werden + danach an KC2 forwarded. 32 KB ist hoch genug fuer realistische
+  // Tool-Calls (doc-bodies sind separat als R2-blob in KC2, hier kommt nur
+  // JSON-meta + summary). Sanitization: __proto__/constructor/prototype
+  // Top-Level-Keys werden gestripped (Prototype-Pollution-Defense in der
+  // Wire-Schicht, zusaetzlich zu resolvePath-Schutz im Display-Renderer).
+  if (parsed.data.arguments !== undefined) {
+    const argBytes = byteSizeOfJson(parsed.data.arguments);
+    if (argBytes > 32 * 1024) {
+      return rpcError(
+        req.id,
+        JsonRpcErrorCode.InvalidParams,
+        `tools/call arguments too large (${argBytes} bytes, max 32768)`,
+      );
+    }
+    const cleaned = stripDangerousKeys(parsed.data.arguments);
+    if (cleaned !== parsed.data.arguments) {
+      parsed.data.arguments = cleaned as Record<string, unknown>;
+    }
+  }
+
   const params: ToolsCallParams = {
     name: parsed.data.name,
     ...(parsed.data.arguments ? { arguments: parsed.data.arguments } : {}),
@@ -466,6 +490,55 @@ async function handleToolsCall(
 
   const ok: JsonRpcSuccess = rpcSuccess(req.id, dispatchResult.result);
   return ok;
+}
+
+/**
+ * SEC-019: byte-size eines JSON-serialisierbaren Werts. Schnell + ohne
+ * extra Encoder — TextEncoder gibt UTF-8-Length, was die exakte Wire-Size
+ * approximiert.
+ */
+function byteSizeOfJson(v: unknown): number {
+  try {
+    return new TextEncoder().encode(JSON.stringify(v)).length;
+  } catch {
+    // JSON.stringify wirft bei BigInt/Cycles. Wir wollen das aber gar
+    // nicht zur Approval-Persist lassen → behandeln als infinity um den
+    // Cap zu triggern.
+    return Number.MAX_SAFE_INTEGER;
+  }
+}
+
+/**
+ * SEC-019: stripped Prototype-Pollution-Keys aus dem Object-Tree.
+ * Top-level + nested. Akzeptiert non-objects unveraendert. Returnt das
+ * urspruengliche Object wenn nichts entfernt wurde — sonst eine fresh
+ * geclonte version ohne die dangerous keys.
+ */
+function stripDangerousKeys(v: unknown): unknown {
+  if (v === null || v === undefined) return v;
+  if (Array.isArray(v)) {
+    let changed = false;
+    const out = v.map((x) => {
+      const cleaned = stripDangerousKeys(x);
+      if (cleaned !== x) changed = true;
+      return cleaned;
+    });
+    return changed ? out : v;
+  }
+  if (typeof v !== 'object') return v;
+  const obj = v as Record<string, unknown>;
+  let changed = false;
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(obj)) {
+    if (k === '__proto__' || k === 'constructor' || k === 'prototype') {
+      changed = true;
+      continue;
+    }
+    const cleaned = stripDangerousKeys(obj[k]);
+    if (cleaned !== obj[k]) changed = true;
+    out[k] = cleaned;
+  }
+  return changed ? out : v;
 }
 
 /**
