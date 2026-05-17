@@ -807,6 +807,35 @@ code {
   margin: 0;
 }
 
+/* App-Detail-Topbar (replaces global topbar fuer #/apps/:id) */
+.app-detail-topbar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.5rem 1rem 0.75rem;
+}
+
+.app-back-link {
+  font-size: 0.85rem;
+  color: var(--fg-muted);
+  align-self: flex-start;
+  text-decoration: none;
+}
+
+.app-back-link:hover {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.app-detail-title {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
 /* Block-Wrap -------------------------------------------------------- */
 .block-wrap {
   padding: 0.85rem 1rem;

@@ -12,20 +12,9 @@
  *   - After invoke, re-fetch + re-render (eventually-consistent UI)
  */
 import { ApiError } from './api.js';
-import type { ApiAppsClient, AppInstance, AppRead, LayoutDoc } from './api-apps.js';
+import type { ApiAppsClient, AppRead, LayoutDoc } from './api-apps.js';
 import { getRenderer } from './blocks/registry.js';
 import { el } from './blocks/types.js';
-
-function topbar(): HTMLElement {
-  return el('nav', { class: 'topbar' }, [
-    el('div', { class: 'topbar-brand' }, [el('a', { href: '#/approvals', text: 'mcp-approval2' })]),
-    el('div', { class: 'topbar-nav' }, [
-      el('a', { href: '#/approvals', text: 'Approvals' }),
-      el('a', { href: '#/apps', class: 'active', text: 'Apps' }),
-      el('a', { href: '#/credentials', text: 'Credentials' }),
-    ]),
-  ]);
-}
 
 function isLayoutDoc(v: unknown): v is LayoutDoc {
   if (!v || typeof v !== 'object') return false;
@@ -33,17 +22,21 @@ function isLayoutDoc(v: unknown): v is LayoutDoc {
   return Array.isArray(o['components']) && typeof o['state'] === 'object' && o['state'] !== null;
 }
 
-function renderHeader(app: AppInstance): HTMLElement {
-  return el('header', { class: 'app-detail-header' }, [
-    el('div', { class: 'row' }, [
-      el('a', { href: '#/apps', class: 'btn btn-secondary btn-small', text: '← Apps' }),
-      el('h1', { text: app.title || app.id }),
-    ]),
-    el('div', { class: 'muted small' }, [
-      el('span', { class: 'pill', text: app.type }),
-      el('span', { text: ` v${app.state_version}` }),
-    ]),
+// App-Detail hat einen eigenen Topbar: keine globalen Tabs/Brand, stattdessen
+// "← Apps"-Back-Link + grosser App-Titel. Tech-Meta ('composable v1') wird
+// bewusst NICHT angezeigt — der User braucht keine Schema-Internals.
+function buildAppTopbar(): { host: HTMLElement; setTitle: (title: string) => void } {
+  const titleEl = el('h1', { class: 'app-detail-title', text: '' });
+  const host = el('header', { class: 'topbar app-detail-topbar' }, [
+    el('a', { href: '#/apps', class: 'app-back-link', text: '← Apps' }),
+    titleEl,
   ]);
+  return {
+    host,
+    setTitle(t: string) {
+      titleEl.textContent = t;
+    },
+  };
 }
 
 function renderEmptyLayout(): HTMLElement {
@@ -63,13 +56,15 @@ function renderBlock(
   blockState: unknown,
   config: Record<string, unknown>,
   reload: () => Promise<void>,
-): HTMLElement {
+): HTMLElement | null {
   const renderer = getRenderer(blockType);
   if (!renderer) {
-    return el('div', { class: 'card block-unknown' }, [
-      el('p', { class: 'err', text: `Unknown block type: ${blockType}` }),
-      el('p', { class: 'muted small', text: `Block id: ${blockId}` }),
-    ]);
+    // Silent skip — Block-Type ist noch nicht im PWA-Renderer-Registry
+    // (z.B. neue Server-side Block-Defs die der Client noch nicht kennt).
+    // Server-side Validation hat den Block akzeptiert, aber wir koennen
+    // ihn lokal nicht zeichnen. Console-Hinweis fuer Devs.
+    console.warn('apps-detail: renderer missing for block', { blockId, blockType });
+    return null;
   }
 
   const onAction = async (
@@ -119,10 +114,11 @@ export async function renderAppDetail(
   appId: string,
 ): Promise<void> {
   const main = el('main', { class: 'app-detail' });
-  root.replaceChildren(topbar(), main);
+  const { host: topbarHost, setTitle } = buildAppTopbar();
+  root.replaceChildren(topbarHost, main);
 
   async function reload(): Promise<void> {
-    main.replaceChildren(el('p', { class: 'muted', text: 'Loading app…' }));
+    main.replaceChildren(el('p', { class: 'muted', text: 'Lade App…' }));
     let read: AppRead;
     try {
       read = await api.getApp(appId);
@@ -130,15 +126,15 @@ export async function renderAppDetail(
       const msg = err instanceof ApiError ? `${err.code}: ${err.message}` : String(err);
       main.replaceChildren(
         el('div', { class: 'card' }, [
-          el('p', { class: 'err', text: 'Failed to load app: ' + msg }),
-          el('a', { href: '#/apps', class: 'btn btn-secondary', text: '← Back to apps' }),
+          el('p', { class: 'err', text: 'App konnte nicht geladen werden: ' + msg }),
+          el('a', { href: '#/apps', class: 'btn btn-secondary', text: '← Zurueck zu Apps' }),
         ]),
       );
       return;
     }
 
+    setTitle(read.app.title || read.app.id);
     main.replaceChildren();
-    main.appendChild(renderHeader(read.app));
 
     if (!isLayoutDoc(read.state)) {
       main.appendChild(renderEmptyLayout());
@@ -152,9 +148,8 @@ export async function renderAppDetail(
     for (const comp of layout.components) {
       const blockState = (layout.state as Record<string, unknown>)[comp.id];
       const config = comp.config ?? {};
-      main.appendChild(
-        renderBlock(api, appId, comp.id, comp.block, blockState, config, reload),
-      );
+      const node = renderBlock(api, appId, comp.id, comp.block, blockState, config, reload);
+      if (node) main.appendChild(node);
     }
   }
 
