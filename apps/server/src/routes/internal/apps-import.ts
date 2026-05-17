@@ -91,6 +91,10 @@ export function internalAppsImportRoutes(deps: InternalAppsImportDeps): Hono<App
       try {
         const inst: AppInstance = await apps.createApp({
           userId: user.id,
+          // OBO-Propagation: KC2 resolved subject via email → user-row.
+          // Ohne userEmail wuerde der OBO-JWT die UUID als on_behalf_of haben
+          // und KC2 lehnt mit "OBO subject not provisioned" ab.
+          userEmail: user.email,
           appType: a.appType,
           title: a.title,
           initialState: a.initialState,

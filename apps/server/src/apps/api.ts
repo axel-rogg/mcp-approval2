@@ -95,6 +95,8 @@ export interface InvokeResult {
 export interface AppsService {
   createApp(args: {
     userId: string;
+    /** AS-3 OBO-Propagation: email als on_behalf_of-Subject fuer KC2-Resolve. */
+    userEmail?: string;
     appType: string;
     slug?: string;
     title?: string;
@@ -210,6 +212,7 @@ class AppsServiceImpl implements AppsService {
 
   async createApp(args: {
     userId: string;
+    userEmail?: string;
     appType: string;
     slug?: string;
     title?: string;
@@ -248,6 +251,7 @@ class AppsServiceImpl implements AppsService {
 
     const createArgs: CreateObjectArgs = {
       userId: args.userId,
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
       subtype: appSubtype(args.appType),
       title,
       description,
