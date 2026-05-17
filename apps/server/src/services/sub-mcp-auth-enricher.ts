@@ -373,7 +373,12 @@ export function createSubMcpAuthEnricher(opts: SubMcpAuthEnricherOpts): SubMcpAu
           return {};
         }
         const responseText = await resp.text();
-        let json: { access_token?: string; expires_in?: number; error?: string };
+        let json: {
+          access_token?: string;
+          expires_in?: number;
+          refresh_token?: string;
+          error?: string;
+        };
         try {
           json = JSON.parse(responseText);
         } catch {
@@ -393,10 +398,36 @@ export function createSubMcpAuthEnricher(opts: SubMcpAuthEnricherOpts): SubMcpAu
           });
           return {};
         }
+        // GitHub macht ROTATING refresh-tokens: jede /access_token-Response
+        // enthaelt ein neues refresh_token, der alte wird nach 5min-Overlap
+        // invalidated. Ohne Persistenz: erster Refresh klappt, zweiter
+        // failed mit bad_refresh_token. Drum: immer das neue refresh_token
+        // zurueck in user_sub_mcp_config schreiben.
+        if (typeof json.refresh_token === 'string' && json.refresh_token.length > 0
+            && json.refresh_token !== refreshToken) {
+          try {
+            await opts.config.set(userId, subMcpName, '_oauth_refresh_token', json.refresh_token);
+            // eslint-disable-next-line no-console
+            console.info('[enricher] oauth-bearer rotated refresh_token persisted', {
+              subMcpName,
+              userId,
+            });
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error('[enricher] oauth-bearer failed to persist rotated refresh_token', {
+              subMcpName,
+              userId,
+              error: err instanceof Error ? err.message : 'unknown',
+            });
+            // Wir geben den access_token trotzdem zurueck — der ist 8h gueltig,
+            // damit hat der User Zeit fuer Re-Authorize falls Persistenz dauerhaft kaputt.
+          }
+        }
         // eslint-disable-next-line no-console
         console.info('[enricher] oauth-bearer refresh ok', {
           subMcpName,
           expiresIn: json.expires_in,
+          rotatedRefresh: !!json.refresh_token && json.refresh_token !== refreshToken,
         });
         const expiresIn = typeof json.expires_in === 'number' ? json.expires_in : 3600;
         const expiresAt = ts + Math.min(expiresIn * 1000, OAUTH_BEARER_CACHE_MS);
