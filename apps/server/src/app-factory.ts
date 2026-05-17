@@ -36,6 +36,7 @@ import type { BlobAdapter, KekProvider } from '@mcp-approval2/adapters';
 import type { AppBindings, ServerContext } from './lib/context.js';
 import { HttpError } from './lib/errors.js';
 import { requestId } from './middleware/request-id.js';
+import { logRequests } from './middleware/log.js';
 import { errorHandler } from './middleware/error-handler.js';
 import {
   createRateLimitMiddleware,
@@ -56,6 +57,7 @@ import { inviteRoutes } from './routes/auth/invite.js';
 import { recoveryRoutes } from './routes/auth/recovery.js';
 import { credentialsRoutes } from './routes/credentials.js';
 import { knowledgeProxyRoutes } from './routes/knowledge-proxy.js';
+import { kcProxyRoutes } from './routes/kc-proxy.js';
 import { adminRoutes } from './routes/admin.js';
 import { gdprRoutes } from './routes/gdpr.js';
 import { approvalsRoutes } from './routes/approvals.js';
@@ -121,6 +123,10 @@ import {
 } from './services/cost-tracker.js';
 import type { KnowledgeService } from './services/knowledge.js';
 import { emitAudit } from './services/audit.js';
+import {
+  createUserSyncService,
+  type UserSyncService,
+} from './services/user-sync.js';
 
 // Tools
 import {
@@ -128,6 +134,13 @@ import {
   makeSystemHealthTool,
   registerCoreTools,
 } from './tools/index.js';
+import {
+  buildKcWrappers,
+  type BuildKcWrappersOpts,
+} from './tools/kc_wrappers/index.js';
+import { makeRs256Signer } from './services/knowledge.js';
+import { getSigningKey } from './auth/jwt-signing.js';
+import { effectiveOauthIssuer } from './schema/env.js';
 
 // ---------------------------------------------------------------------------
 // Burst-7 service-instantiation helpers
@@ -161,6 +174,24 @@ export interface CreateAppDeps {
    * `/v1/knowledge/*`-Proxy-Routen NICHT montiert.
    */
   readonly knowledge?: KnowledgeService;
+  /**
+   * AS-3: KC-Proxy-Konfiguration fuer `/admin/kc-proxy/*` PWA-Pfad.
+   * Erfordert `MCP_KNOWLEDGE_URL` + `MCP_KNOWLEDGE_SERVICE_TOKEN`.
+   * Wenn nicht gesetzt, wird die Route NICHT gemountet → 404.
+   */
+  readonly kcProxy?: import('./routes/kc-proxy.js').KcProxyDeps;
+  /**
+   * AS-3 (Tests): fetchImpl-Override fuer kc_wrappers/* boot-time
+   * Manifest-Fetch. Tests injizieren hier einen Stub, der das
+   * `POST /mcp tools/list` ohne Network beantwortet.
+   */
+  readonly kcWrappersFetchOverride?: typeof fetch;
+  /**
+   * AS-3 (A11): UserSyncService — push approval2-User-State an KC2.
+   * Wenn nicht gesetzt: User-State-Aenderungen werden NICHT in KC2
+   * propagiert (Single-Service-Setup ohne KC).
+   */
+  readonly userSync?: UserSyncService;
   /**
    * Tool-Registry-Override fuer Tests. Default: frische Registry; bei vollem
    * Service-Set wird via `registerCoreTools(...)` befuellt, sonst nur mit den
@@ -252,6 +283,8 @@ export async function createApp(
   // Globale Middleware (in order)
   // ─────────────────────────────────────────────────────────────────────
   app.use('*', requestId());
+  // Per-Request-Log (method/path/status/duration). Health-Probes geskipped.
+  app.use('*', logRequests());
   app.onError(errorHandler());
 
   // Rate-Limit fuer User-facing v1 + MCP. Auth-Routen + /health bleiben aussen vor.
@@ -310,9 +343,35 @@ export async function createApp(
     app.route('/', knowledgeProxyRoutes(server, { knowledge: deps.knowledge }));
   }
 
+  // AS-3 (A11): UserSyncService — push approval2-User-State an KC2.
+  // Lazy gebaut wenn nicht uebergeben + knowledge da ist.
+  const userSyncService: UserSyncService | undefined =
+    deps.userSync ??
+    (deps.knowledge
+      ? createUserSyncService({ adapter: deps.knowledge.adapter, db: server.db })
+      : undefined);
+  // Wir mounten hier keinen HTTP-Endpunkt fuer userSync — der Service
+  // wird intern aus admin.ts / gdpr.ts / bootstrap.ts aufgerufen.
+  // Stash auf den server-Container damit downstream routes/services
+  // ihn aufrufen koennen (alternativ: explizite Pass-Down — heute haben
+  // wir aber keinen sauberen Pfad fuer "alle bestehenden Routes kriegen
+  // den Service mit". Folge-Refactor.).
+  if (userSyncService) {
+    (server as { userSync?: UserSyncService }).userSync = userSyncService;
+  }
+
+  // AS-3 (§1.3): /admin/kc-proxy/* — PWA-Same-Origin-Proxy zu KC2.
+  // Nur gemountet wenn beide Felder gesetzt sind (graceful ohne KC-Anbindung).
+  if (deps.kcProxy) {
+    app.route('/', kcProxyRoutes(server, deps.kcProxy));
+  }
+
   // Admin-Routes (role='admin' check intern in adminOnly-middleware)
   if (server.db) {
-    const adminService = createAdminService({ db: server.db });
+    const adminService = createAdminService({
+      db: server.db,
+      ...(userSyncService ? { userSync: userSyncService } : {}),
+    });
     app.route('/v1/admin', adminRoutes({ admin: adminService }));
   }
 
@@ -357,6 +416,39 @@ export async function createApp(
         ? { federatedSearch: optionalServices.federatedSearch }
         : {}),
     });
+
+    // AS-3 (§1.4 + A8): KC-Wrapper-Tools aus KC2's tools/list-Manifest
+    // generieren und registrieren. Graceful — bei KC2-Unreach laufen
+    // approval2 + Native-Tools weiter.
+    if (deps.kcProxy) {
+      try {
+        const signer = await buildBootKcSigner(server);
+        const wrapperArgs: BuildKcWrappersOpts = {
+          knowledgeUrl: deps.kcProxy.knowledgeUrl,
+          serviceToken: deps.kcProxy.serviceToken,
+          signer,
+          ...(deps.kcWrappersFetchOverride !== undefined
+            ? { fetchImpl: deps.kcWrappersFetchOverride }
+            : {}),
+        };
+        const { tools: kcTools, manifest } = await buildKcWrappers(wrapperArgs);
+        for (const t of kcTools) {
+          if (!registry.has(t.name)) {
+            registry.register(t);
+          }
+        }
+        // Manifest in einer module-scoped Cache-Reference ablegen — der
+        // refresh-Cron (A9) kann es lesen und neu builden.
+        kcWrappersCache.set(server, { tools: kcTools, manifest, opts: wrapperArgs });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[mcp-approval2] kc_wrappers boot-build failed: ${
+            err instanceof Error ? err.message : String(err)
+          }. KC-Wrappers not mounted; native + gateway tools remain.`,
+        );
+      }
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────
@@ -493,6 +585,27 @@ export async function createApp(
       prfSessions,
       subMcpRegistry: subMcpReg,
       ...(optionalServices.push ? { push: optionalServices.push } : {}),
+      // AS-3 (A9): kc-manifest-refresh erhaelt registry + previous-snapshot
+      // wenn das Boot-Build erfolgreich war. Cache-getter laeuft jedes Mal —
+      // sodass Folge-Refreshs den jeweils aktuellsten Stand sehen.
+      ...(() => {
+        const cached = kcWrappersCache.get(server);
+        if (!cached) return {};
+        return {
+          kcManifest: {
+            registry,
+            previousOpts: cached.opts,
+            previousTools: cached.tools,
+            onUpdated: (entry) => {
+              kcWrappersCache.set(server, {
+                tools: entry.tools,
+                manifest: entry.manifest,
+                opts: cached.opts,
+              });
+            },
+          },
+        };
+      })(),
     };
     app.route(
       '/',
@@ -741,6 +854,66 @@ function constantTimeEqualHex(a: string, b: string): boolean {
     diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   }
   return diff === 0;
+}
+
+// ---------------------------------------------------------------------------
+// AS-3 (§1.4): KC-Wrappers boot helpers + cache
+// ---------------------------------------------------------------------------
+
+/**
+ * Module-scoped Cache fuer den Wrapper-Bauplan. Der Refresh-Cron (A9)
+ * liest hier `opts` + alte `tools`-Liste, baut neu, und ersetzt im
+ * registry.
+ */
+export interface KcWrappersCacheEntry {
+  readonly tools: ReadonlyArray<import('./mcp/protocol/tool.js').Tool<unknown, unknown>>;
+  readonly manifest: import('./tools/kc_wrappers/index.js').KcManifest;
+  readonly opts: import('./tools/kc_wrappers/index.js').BuildKcWrappersOpts;
+}
+
+class KcWrappersCache {
+  private map = new WeakMap<ServerContext, KcWrappersCacheEntry>();
+  set(srv: ServerContext, e: KcWrappersCacheEntry): void {
+    this.map.set(srv, e);
+  }
+  get(srv: ServerContext): KcWrappersCacheEntry | undefined {
+    return this.map.get(srv);
+  }
+}
+
+export const kcWrappersCache = new KcWrappersCache();
+
+async function buildBootKcSigner(
+  server: ServerContext,
+): Promise<import('@mcp-approval2/adapters').JwtSigner> {
+  const pem =
+    process.env['JWT_RS256_PRIVATE_KEY_PEM'] ?? process.env['JWT_PRIVATE_KEY'];
+  if (!pem) {
+    throw new Error(
+      'kc_wrappers: JWT_RS256_PRIVATE_KEY_PEM not configured — cannot sign OBO-JWTs',
+    );
+  }
+  const signingEnv: { JWT_RS256_PRIVATE_KEY_PEM: string; JWT_KID?: string } = {
+    JWT_RS256_PRIVATE_KEY_PEM: pem,
+  };
+  if (process.env['JWT_KID']) signingEnv.JWT_KID = process.env['JWT_KID'];
+  const privateKey = await getSigningKey(signingEnv);
+  if (!privateKey) {
+    throw new Error('kc_wrappers: failed to load private key');
+  }
+  const issuer = effectiveOauthIssuer({
+    ORIGIN: server.config.ORIGIN,
+    ...(server.config.SELF_OAUTH_ISSUER !== undefined
+      ? { SELF_OAUTH_ISSUER: server.config.SELF_OAUTH_ISSUER }
+      : {}),
+  });
+  const kid = process.env['JWT_KID'];
+  return makeRs256Signer({
+    privateKey,
+    issuer,
+    audience: 'mcp-knowledge2',
+    ...(kid ? { kid } : {}),
+  });
 }
 
 // ---------------------------------------------------------------------------

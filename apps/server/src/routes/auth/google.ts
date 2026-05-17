@@ -14,6 +14,8 @@ import { randomBytes } from 'node:crypto';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { AppBindings, ServerContext } from '../../lib/context.js';
 import { HttpError } from '../../lib/errors.js';
+import { authCookieOpts, deleteCookieOpts } from '../../lib/cookie.js';
+import { withRequestId } from '../../lib/logger.js';
 import { GoogleOAuthProvider } from '../../auth/idp/google.js';
 import { acceptInvite } from '../../auth/invite/accept.js';
 import { bootstrapIfNeeded } from '../../auth/bootstrap.js';
@@ -28,6 +30,15 @@ interface StateCookiePayload {
   readonly state: string;
   readonly nonce: string;
   readonly inviteToken?: string;
+  /**
+   * AS-3 (§1.1): Wenn `/oauth/authorize` einen Browser-Caller ohne Session
+   * sah und auf `/auth/google/start?return=<authz-url>` weitergeleitet hat,
+   * tragen wir die return-URL hier mit, damit der Callback den User nach
+   * Session-Erstellung wieder auf den OAuth-Authorize-Flow zurueckwirft.
+   *
+   * Nur same-origin URLs werden akzeptiert (Open-Redirect-Schutz im Callback).
+   */
+  readonly returnTo?: string;
 }
 
 export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
@@ -38,22 +49,48 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
     const state = randomBytes(24).toString('base64url');
     const nonce = randomBytes(24).toString('base64url');
     const inviteToken = c.req.query('invite');
-    const payload: StateCookiePayload = inviteToken
-      ? { state, nonce, inviteToken }
-      : { state, nonce };
-    setCookie(c, STATE_COOKIE, JSON.stringify(payload), {
-      httpOnly: true,
-      secure: server.config.NODE_ENV === 'production',
-      sameSite: 'Lax',
-      maxAge: 10 * 60,
-      path: '/',
-    });
+    // AS-3 (§1.1): nimm `?return=<path>` mit ins State-Cookie. NUR same-
+    // origin Pfade — kein Open-Redirect erlauben (auch keine externen
+    // Hostnames wenn der Caller das durchgeschmuggelt hat).
+    // Akzeptiert ?return= (Server-canonical) ODER ?next= (PWA-Convention).
+    const returnRaw = c.req.query('return') ?? c.req.query('next');
+    let returnTo: string | undefined;
+    if (returnRaw) {
+      try {
+        // Decode wenn vom Authorize-Endpoint encoded uebergeben.
+        const decoded = decodeURIComponent(returnRaw);
+        if (isSafeReturnPath(decoded, returnAllowOrigins(server.config))) {
+          returnTo = decoded;
+        }
+      } catch {
+        // ignore — kein returnTo
+      }
+    }
+    const payload: StateCookiePayload = {
+      state,
+      nonce,
+      ...(inviteToken ? { inviteToken } : {}),
+      ...(returnTo ? { returnTo } : {}),
+    };
+    setCookie(c, STATE_COOKIE, JSON.stringify(payload), authCookieOpts(server.config, { maxAge: 10 * 60 }));
     const startArgs = inviteToken ? { state, nonce, inviteToken } : { state, nonce };
     const { authorizationUrl } = await idp.start(startArgs);
+    withRequestId(c.get('requestId')).info(
+      {
+        event: 'auth.google.start',
+        host: new URL(c.req.url).host,
+        returnRaw: returnRaw ?? null,
+        returnTo: returnTo ?? null,
+        invite: !!inviteToken,
+        cookieDomain: server.config.COOKIE_DOMAIN || '(host-scoped)',
+      },
+      'oauth.start',
+    );
     return c.redirect(authorizationUrl);
   });
 
   app.get('/auth/google/callback', async (c) => {
+    const log = withRequestId(c.get('requestId'));
     const code = c.req.query('code');
     const stateQ = c.req.query('state');
     const error = c.req.query('error');
@@ -61,6 +98,16 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
     if (!code || !stateQ) throw HttpError.badRequest('invalid_request', 'missing code/state');
 
     const cookieRaw = getCookie(c, STATE_COOKIE);
+    log.info(
+      {
+        event: 'auth.google.callback.in',
+        host: new URL(c.req.url).host,
+        hasStateCookie: !!cookieRaw,
+        hasCode: !!code,
+        cookieHeaderPresent: !!c.req.header('cookie'),
+      },
+      'oauth.callback.in',
+    );
     if (!cookieRaw) throw HttpError.badRequest('invalid_request', 'missing oauth state cookie');
     let stateCookie: StateCookiePayload;
     try {
@@ -68,7 +115,7 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
     } catch {
       throw HttpError.badRequest('invalid_request', 'corrupt oauth state cookie');
     }
-    deleteCookie(c, STATE_COOKIE, { path: '/' });
+    deleteCookie(c, STATE_COOKIE, deleteCookieOpts(server.config));
 
     const profile = await idp.complete({
       code,
@@ -120,7 +167,13 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
     // Sitzung erstellen
     const now = Date.now();
     const expiresAt = now + server.config.SESSION_TTL_SEC * 1000;
-    const ip = c.req.header('x-forwarded-for') ?? null;
+    // INET-Column erwartet single-IP, kein CSV. Hinter Fly + CF kommen
+    // mehrere Hops in X-Forwarded-For ("client, cf-edge, fly-edge"). Fly
+    // setzt zusaetzlich Fly-Client-IP (immer single IP, vom Edge gepruefte
+    // Originator-IP) — bevorzugen wir.
+    const flyIp = c.req.header('fly-client-ip');
+    const xffFirst = c.req.header('x-forwarded-for')?.split(',')[0]?.trim();
+    const ip = flyIp ?? xffFirst ?? null;
     const ua = c.req.header('user-agent') ?? null;
     const raw = server.db.unsafe('create_session');
     const sessions = await raw.query<{ id: string }>(
@@ -146,14 +199,35 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
     });
 
     // Refresh-Token als HTTP-only-Cookie
-    setCookie(c, 'refresh_token', refresh.rawToken, {
-      httpOnly: true,
-      secure: server.config.NODE_ENV === 'production',
-      sameSite: 'Lax',
-      maxAge: server.config.REFRESH_TTL_SEC,
-      path: '/',
-    });
+    setCookie(c, 'refresh_token', refresh.rawToken, authCookieOpts(server.config, { maxAge: server.config.REFRESH_TTL_SEC }));
 
+    // AS-3 (§1.1): wenn die Login-Start-Phase eine `returnTo` mitgegeben
+    // hat (z.B. /oauth/authorize-Browser-Flow), redirect dorthin nach
+    // Session-Bake. Wir setzen ein same-origin-Session-Cookie (`session_jwt`)
+    // damit der nachgelagerte Authorize-Endpoint den User wiedererkennt.
+    if (stateCookie.returnTo && isSafeReturnPath(stateCookie.returnTo, returnAllowOrigins(server.config))) {
+      setCookie(c, 'session_jwt', accessToken, authCookieOpts(server.config, { maxAge: server.config.SESSION_TTL_SEC }));
+      log.info(
+        { event: 'auth.google.callback.redirect', returnTo: stateCookie.returnTo, userId, role },
+        'oauth.callback.redirect',
+      );
+      return c.redirect(stateCookie.returnTo, 302);
+    }
+
+    log.info(
+      {
+        event: 'auth.google.callback.json',
+        returnToPresent: !!stateCookie.returnTo,
+        returnToSafe: stateCookie.returnTo
+          ? isSafeReturnPath(stateCookie.returnTo, returnAllowOrigins(server.config))
+          : null,
+        returnTo: stateCookie.returnTo ?? null,
+        allowed: returnAllowOrigins(server.config),
+        userId,
+        role,
+      },
+      'oauth.callback.json',
+    );
     return c.json({
       accessToken,
       expiresAt: accessExp,
@@ -163,4 +237,43 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
   });
 
   return app;
+}
+
+/**
+ * Sicherheits-Check fuer `?return=<path>`-Carry-Throughs (AS-3).
+ *
+ * Wir akzeptieren NUR:
+ *   - Absolute URLs deren Origin in der allow-Liste ist (ORIGIN + ALLOWED_ORIGINS).
+ *     Cross-Subdomain ist erlaubt sofern explizit in ALLOWED_ORIGINS — Multi-
+ *     Origin-Setup (PWA app2.ai-toolhub.org, OAuth-Callback mcp2.ai-toolhub.org).
+ *   - Pfade die mit `/` beginnen und KEIN Backslash- oder Whitespace-Trick enthalten
+ *
+ * Alles andere (nicht whitelisted Hosts, `javascript:`-URLs, Whitespace-
+ * Smuggling) wird verworfen — kein Open-Redirect.
+ */
+function isSafeReturnPath(candidate: string, allowedOrigins: ReadonlyArray<string>): boolean {
+  if (!candidate || candidate.length > 2048) return false;
+  if (/[\s\x00-\x1f\x7f]/.test(candidate)) return false;
+  try {
+    const url = new URL(candidate);
+    return allowedOrigins.some((o) => {
+      try {
+        return url.origin === new URL(o).origin;
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return candidate.startsWith('/') && !candidate.startsWith('//');
+  }
+}
+
+/**
+ * Sammelt zugelassene Return-Origins: ORIGIN + ALLOWED_ORIGINS (deduped).
+ */
+function returnAllowOrigins(config: {
+  ORIGIN: string;
+  ALLOWED_ORIGINS: ReadonlyArray<string>;
+}): ReadonlyArray<string> {
+  return Array.from(new Set([config.ORIGIN, ...config.ALLOWED_ORIGINS]));
 }

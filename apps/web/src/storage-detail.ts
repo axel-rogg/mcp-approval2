@@ -5,8 +5,8 @@
  *
  * UX:
  *   - Header mit Back-Button + Title
- *   - Meta (kind, subtype, size, visibility, created)
- *   - Summary-Section mit Edit-Pencil (nur kind=doc, opens Modal)
+ *   - Meta (subtype, size, visibility, created)
+ *   - Summary-Section mit Edit-Pencil (nur subtype=doc, opens Modal)
  *   - Body-Preview (decoded falls utf8, sonst <hex preview>)
  *   - Footer: Force-Delete-Checkbox (refcount>0) + Delete-Button
  *
@@ -17,6 +17,7 @@ import type { ApiStorageClient, KnowledgeObject } from './api-storage.js';
 import type { ApiClient, Session } from './api.js';
 import { logout } from './auth.js';
 import { renderHeader } from './components/header.js';
+import { dispatchRenderer } from './renderers/index.js';
 
 function formatBytes(n: number | undefined): string {
   if (n === undefined || n === null) return '–';
@@ -118,7 +119,6 @@ export async function renderStorageDetail(
   metaSection.className = 'storage-meta card';
   const dl = document.createElement('dl');
   const metaPairs: ReadonlyArray<[string, string]> = [
-    ['Kind', String(obj.kind)],
     ['Subtype', obj.subtype ?? '-'],
     ['Size', formatBytes(obj.bodySize)],
     ['Visibility', obj.visibility ?? 'private'],
@@ -145,7 +145,7 @@ export async function renderStorageDetail(
 
     const sh = document.createElement('h2');
     sh.textContent = 'Summary';
-    if (obj.kind === 'doc') {
+    if (obj.subtype === 'doc') {
       const pencil = document.createElement('button');
       pencil.type = 'button';
       pencil.className = 'edit-pencil';
@@ -165,17 +165,27 @@ export async function renderStorageDetail(
     main.appendChild(summary);
   }
 
-  // Body
+  // Body — Subtype-aware Renderer + Raw-Toggle (Fallback)
   const bodySection = document.createElement('section');
   bodySection.className = 'storage-body card';
   const bh = document.createElement('h2');
   bh.textContent = 'Body';
   bodySection.appendChild(bh);
 
+  const rendered = dispatchRenderer(obj);
+  bodySection.appendChild(rendered);
+
+  const rawToggle = document.createElement('details');
+  rawToggle.className = 'storage-body-raw';
+  const summary = document.createElement('summary');
+  summary.textContent = 'Raw';
+  rawToggle.appendChild(summary);
   const pre = document.createElement('pre');
   pre.className = 'storage-body-pre';
   pre.textContent = decodeBody(obj) || '(empty)';
-  bodySection.appendChild(pre);
+  rawToggle.appendChild(pre);
+  bodySection.appendChild(rawToggle);
+
   main.appendChild(bodySection);
 
   // Actions footer

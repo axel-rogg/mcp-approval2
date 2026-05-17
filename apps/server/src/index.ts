@@ -14,7 +14,13 @@
  * from './index.js'` weiterhin durchlaufen (Backward-Compat zur Burst-2-Phase).
  */
 import { serve } from '@hono/node-server';
-import { LocalKekProvider } from '@mcp-approval2/adapters';
+import {
+  AppRoleAuth,
+  CloudKmsKekProvider,
+  LocalKekProvider,
+  OpenBaoKekProvider,
+  StaticTokenAuth,
+} from '@mcp-approval2/adapters';
 import { loadConfig, type AppConfig } from './lib/config.js';
 import { createDbAdapter } from './lib/db.js';
 import type { ServerContext } from './lib/context.js';
@@ -86,12 +92,34 @@ interface BootEnv {
   readonly VAULT_ADDR?: string;
   readonly VAULT_TOKEN?: string;
   readonly VAULT_TRANSIT_PATH?: string;
+  /** AppRoleAuth credentials (production path). When both are set, takes
+   *  precedence over VAULT_TOKEN (which is the Solo-Pilot static-token path). */
+  readonly VAULT_APPROLE_ROLE_ID?: string;
+  readonly VAULT_APPROLE_SECRET_ID?: string;
+  /**
+   * Cloud-KMS-KEK-Pfad (Privat-Mode Default seit 2026-05-17 — Google-Cloud-
+   * Switch wegen Operator-Realismus, siehe docs/privat.md §9 + ADR-0005).
+   * CLOUD_KMS_KEY_NAME ist der voll-qualifizierte Resource-Name
+   * (`projects/.../cryptoKeys/...`), CLOUD_KMS_WRAPPED_MASTER_B64 ist die
+   * base64-encoded ciphertext des 32-byte Master-Keys.
+   */
+  readonly CLOUD_KMS_KEY_NAME?: string;
+  readonly CLOUD_KMS_WRAPPED_MASTER_B64?: string;
+  /**
+   * KC2-Base-URL. AS-3-kanonischer Name ist `MCP_KNOWLEDGE_URL`; der
+   * Legacy-Name `KNOWLEDGE_URL` wird weiter akzeptiert. Boot-Code waehlt
+   * den ersten gesetzten Wert (MCP_KNOWLEDGE_URL bevorzugt).
+   */
   readonly KNOWLEDGE_URL?: string;
   readonly JWT_PRIVATE_KEY?: string;
   readonly JWT_RS256_PRIVATE_KEY_PEM?: string;
   readonly JWT_RS256_PUBLIC_KEY_PEM?: string;
   readonly JWT_KID?: string;
   readonly MCP_APPROVAL_INTERNAL_TOKEN?: string;
+  /** AS-3: shared S2S Bearer fuer KC2-Calls (alongside OBO-JWT). */
+  readonly MCP_KNOWLEDGE_SERVICE_TOKEN?: string;
+  /** AS-3: `iss`-Claim in OBO-JWTs an KC2. Default Fallback: config.ORIGIN. */
+  readonly SELF_OAUTH_ISSUER?: string;
 }
 
 async function buildOptionalDeps(
@@ -101,22 +129,63 @@ async function buildOptionalDeps(
   const deps: Mutable<CreateAppDeps> = {};
 
   // ─── KEK-Provider ─────────────────────────────────────────────────────
-  // Dev-Pfad: LocalKekProvider mit MASTER_KEY_BASE64.
-  // Production-Pfad (OpenBao via AppRoleAuth) wird im naechsten Burst-Schritt
-  // verkabelt — der OpenBao-Provider liegt in @mcp-approval2/adapters bereit,
-  // aber der `StaticTokenAuth`/`AppRoleAuth`-Helper ist noch nicht ueber den
-  // Package-Index exportiert. Aktuell: wenn VAULT_ADDR gesetzt aber kein
-  // MASTER_KEY_BASE64 → Warnung loggen, sonst Local-Provider.
-  if (bootEnv.VAULT_ADDR && !bootEnv.MASTER_KEY_BASE64) {
-    // eslint-disable-next-line no-console
-    console.warn(
-      '[mcp-approval2] VAULT_ADDR set but OpenBao boot-path is not yet wired ' +
-        'through @mcp-approval2/adapters (need StaticTokenAuth re-export). ' +
-        'Falling back to no-credentials-mode. Set MASTER_KEY_BASE64 for dev or ' +
-        'inject kekProvider via createApp() directly.',
-    );
+  //
+  // Selection precedence (highest first):
+  //   1. CLOUD_KMS_KEY_NAME + CLOUD_KMS_WRAPPED_MASTER_B64
+  //      → CloudKmsKekProvider (privat-Mode Default seit 2026-05-17 —
+  //        Google-Cloud-KMS multi-region `eu`. Master wird beim Boot via
+  //        KMS.decrypt entpackt, danach in-process HKDF). Auth via ADC
+  //        (GOOGLE_APPLICATION_CREDENTIALS_JSON in Doppler/env).
+  //   2. VAULT_ADDR + VAULT_APPROLE_ROLE_ID + VAULT_APPROLE_SECRET_ID
+  //      → OpenBaoKekProvider with AppRoleAuth (selfhosted-Variante; parkt
+  //        seit Cloud-KMS-Default).
+  //   3. VAULT_ADDR + VAULT_TOKEN
+  //      → OpenBaoKekProvider with StaticTokenAuth (Solo-Pilot Bao-Path).
+  //   4. MASTER_KEY_BASE64
+  //      → LocalKekProvider (dev fallback; in-process HKDF derivation,
+  //        no external dependency). Multi-User-safe via per-user salt.
+  //   5. (none of the above) → no kekProvider, app boots in
+  //      no-credentials-mode (KekRequiredError on any path that needs it).
+  if (bootEnv.CLOUD_KMS_KEY_NAME && bootEnv.CLOUD_KMS_WRAPPED_MASTER_B64) {
+    deps.kekProvider = new CloudKmsKekProvider({
+      keyName: bootEnv.CLOUD_KMS_KEY_NAME,
+      wrappedMasterB64: bootEnv.CLOUD_KMS_WRAPPED_MASTER_B64,
+    });
   }
-  if (bootEnv.MASTER_KEY_BASE64) {
+  if (!deps.kekProvider && bootEnv.VAULT_ADDR) {
+    const transitMount = bootEnv.VAULT_TRANSIT_PATH ?? 'transit';
+    if (bootEnv.VAULT_APPROLE_ROLE_ID && bootEnv.VAULT_APPROLE_SECRET_ID) {
+      // Production path — AppRoleAuth handles login + lease renewal.
+      const auth = new AppRoleAuth({
+        addr: bootEnv.VAULT_ADDR,
+        roleId: bootEnv.VAULT_APPROLE_ROLE_ID,
+        secretId: bootEnv.VAULT_APPROLE_SECRET_ID,
+      });
+      deps.kekProvider = new OpenBaoKekProvider({
+        addr: bootEnv.VAULT_ADDR,
+        auth,
+        transitMount,
+      });
+    } else if (bootEnv.VAULT_TOKEN) {
+      // Solo-Pilot / dev path — static token. Rotation is operator's job.
+      const auth = new StaticTokenAuth(bootEnv.VAULT_TOKEN);
+      deps.kekProvider = new OpenBaoKekProvider({
+        addr: bootEnv.VAULT_ADDR,
+        auth,
+        transitMount,
+      });
+    } else {
+      // VAULT_ADDR set but no token/approle → operator error; warn and
+      // fall through to MASTER_KEY_BASE64.
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[mcp-approval2] VAULT_ADDR set but neither VAULT_TOKEN nor ' +
+          'VAULT_APPROLE_ROLE_ID/SECRET_ID provided. Falling back to ' +
+          'MASTER_KEY_BASE64 (LocalKekProvider).',
+      );
+    }
+  }
+  if (!deps.kekProvider && bootEnv.MASTER_KEY_BASE64) {
     const masterKey = decodeBase64(bootEnv.MASTER_KEY_BASE64);
     if (masterKey.byteLength !== 32) {
       throw new Error('MASTER_KEY_BASE64 must decode to 32 bytes');
@@ -159,6 +228,16 @@ async function buildOptionalDeps(
     deps.internalServiceToken = bootEnv.MCP_APPROVAL_INTERNAL_TOKEN;
   }
 
+  // ─── AS-3: kc-proxy ──────────────────────────────────────────────────
+  // PWA-Same-Origin-Proxy zu mcp-knowledge2. Nur gemountet wenn beide
+  // KC-URL + SERVICE_TOKEN gesetzt sind.
+  if (bootEnv.KNOWLEDGE_URL && bootEnv.MCP_KNOWLEDGE_SERVICE_TOKEN) {
+    deps.kcProxy = {
+      knowledgeUrl: bootEnv.KNOWLEDGE_URL,
+      serviceToken: bootEnv.MCP_KNOWLEDGE_SERVICE_TOKEN,
+    };
+  }
+
   return deps;
 }
 
@@ -181,7 +260,11 @@ function pickBootEnv(env: NodeJS.ProcessEnv): BootEnv {
   if (env['VAULT_ADDR']) out.VAULT_ADDR = env['VAULT_ADDR'];
   if (env['VAULT_TOKEN']) out.VAULT_TOKEN = env['VAULT_TOKEN'];
   if (env['VAULT_TRANSIT_PATH']) out.VAULT_TRANSIT_PATH = env['VAULT_TRANSIT_PATH'];
-  if (env['KNOWLEDGE_URL']) out.KNOWLEDGE_URL = env['KNOWLEDGE_URL'];
+  if (env['VAULT_APPROLE_ROLE_ID']) out.VAULT_APPROLE_ROLE_ID = env['VAULT_APPROLE_ROLE_ID'];
+  if (env['VAULT_APPROLE_SECRET_ID']) out.VAULT_APPROLE_SECRET_ID = env['VAULT_APPROLE_SECRET_ID'];
+  // AS-3-naming bevorzugt; Legacy-Fallback.
+  const kcUrl = env['MCP_KNOWLEDGE_URL'] ?? env['KNOWLEDGE_URL'];
+  if (kcUrl) out.KNOWLEDGE_URL = kcUrl;
   if (env['JWT_PRIVATE_KEY']) out.JWT_PRIVATE_KEY = env['JWT_PRIVATE_KEY'];
   if (env['JWT_RS256_PRIVATE_KEY_PEM']) {
     out.JWT_RS256_PRIVATE_KEY_PEM = env['JWT_RS256_PRIVATE_KEY_PEM'];
@@ -193,6 +276,10 @@ function pickBootEnv(env: NodeJS.ProcessEnv): BootEnv {
   if (env['MCP_APPROVAL_INTERNAL_TOKEN']) {
     out.MCP_APPROVAL_INTERNAL_TOKEN = env['MCP_APPROVAL_INTERNAL_TOKEN'];
   }
+  if (env['MCP_KNOWLEDGE_SERVICE_TOKEN']) {
+    out.MCP_KNOWLEDGE_SERVICE_TOKEN = env['MCP_KNOWLEDGE_SERVICE_TOKEN'];
+  }
+  if (env['SELF_OAUTH_ISSUER']) out.SELF_OAUTH_ISSUER = env['SELF_OAUTH_ISSUER'];
   return out;
 }
 

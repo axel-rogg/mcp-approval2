@@ -1,15 +1,22 @@
 # =============================================================================
 # fly.toml — Fly.io deployment config for mcp-approval2 (Hono.js + Drizzle)
 # =============================================================================
-# Plan-Ref: deploy/fly/README.md, docs/runbooks/runbook-fly-deploy.md.
+# Status (2026-05-17): primärer Deploy-Pfad für privat-Mode.
+# Architektur-Wahrheit: docs/privat.md (Fly.io-Switch vom Hetzner-Self-Host).
+# Operative Anleitung: deploy/fly/README.md, deploy/fly/deploy.sh.
 #
-# Hobby-Setup: single shared-cpu-1x machine in Frankfurt (fra).
-# Companion-Apps:
-#   - mcp-approval2-pg        (Fly Postgres-Cluster, attached via DATABASE_URL)
-#   - mcp-approval2-openbao   (separate Fly-App, internal-DNS for VAULT_ADDR)
+# Companion-Apps (separate fly.toml-Files / Fly-Apps):
+#   - mcp-approval2-pg        Fly Postgres-Cluster, attached via DATABASE_URL
+#   - mcp-approval2-openbao   separate Fly-App, internal-DNS für VAULT_ADDR
 #
-# Secrets are NEVER inlined here — `[env]` only carries non-sensitive defaults.
-# Use `fly secrets set` for credentials (see deploy/fly/deploy.sh).
+# Custom-Domain: `mcp2.ai-toolhub.org` aktiviert via `fly certs add` + CF CNAME.
+# Bis dahin: Fly-Default-FQDN `mcp-approval2.fly.dev`. ⚠ WebAuthn — bei
+# Domain-Wechsel müssen Passkeys re-enrolled werden (RP_ID ist gebunden).
+#
+# Secrets werden NIE hier eingebettet — `[env]` enthält nur nicht-sensitive
+# Defaults. Credentials kommen via `fly secrets set` (synct von Doppler durch
+# `bash deploy/fly/deploy.sh`).
+# Current secrets: `fly secrets list -a mcp-approval2`.
 # =============================================================================
 
 app            = "mcp-approval2"
@@ -21,24 +28,60 @@ kill_timeout   = 30
   dockerfile = "deploy/fly/Dockerfile.server"
 
 # ──────────────────────────────────────────────────────────────────────────
+# Release command — runs in a one-shot VM after image-build, BEFORE the
+# app-machines roll. DB-Migrations leben hier statt im Boot-Pfad, damit
+# (1) Boot-Latenz konstant ist, (2) Migration-Fail den App-Start abbricht
+# bevor halb-migrierter State live geht, (3) Re-Deploy idempotent ist
+# (migrate.ts trackt applied versions via _migrations-Tabelle).
+#
+# DATABASE_URL=$DATABASE_ADMIN_URL: migrate.ts liest DATABASE_URL env, aber
+# Migrations brauchen den DIRECT-Endpoint (PgBouncer-pooled ist transaktions-
+# safe für unsere SQL aber direct ist robuster für DDL). approval_admin
+# wurde 2026-05-16 manuell mit CREATE auf public schema beschenkt
+# (via approval_app-Owner-GRANT, siehe ADR-pending). Default-Privilege-
+# Vererbung folgt fuer neue Tabellen.
+# ──────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────
 # Env — non-sensitive defaults only.
 # DATABASE_URL is injected by `fly postgres attach`.
-# Secrets (MCP_BEARER_TOKEN, JWT_*, OAuth, MASTER_KEY_BASE64) come from
-# `fly secrets set`. Print current with `fly secrets list -a mcp-approval2`.
+# Secrets (JWT_*, OAuth-Client-Secrets, MASTER_KEY_BASE64, VAULT_TOKEN,
+# SERVICE_TOKEN, MCP_APPROVAL_INTERNAL_TOKEN, BLOB_ACCESS_KEY/SECRET) kommen
+# aus `fly secrets set` (synct von Doppler durch deploy.sh).
+# Vollständige Doppler-Werte-Spec: docs/privat.md §6.
 # ──────────────────────────────────────────────────────────────────────────
 [env]
   PORT                  = "8787"
   NODE_ENV              = "production"
   LOG_LEVEL             = "info"
-  # OpenBao via fly-internal DNS (.internal resolves intra-VPC, no public route).
+
+  # OpenBao via fly-internal DNS (.internal resolves intra-VPC, kein public route).
+  # Companion-App: fly.openbao.toml. KEK-Provider-Selection in
+  # apps/server/src/index.ts:121-175 (4-stufig: AppRole > StaticToken >
+  # LocalKek > none). VAULT_TOKEN als Secret via `fly secrets set`.
+  KEK_PROVIDER          = "openbao"
   VAULT_ADDR            = "http://mcp-approval2-openbao.internal:8200"
   VAULT_TRANSIT_PATH    = "transit"
-  # Public surface — Fly assigns mcp-approval2.fly.dev by default; swap to a
-  # custom domain by editing here + `fly certs add <domain>` (then redeploy).
-  BASE_URL              = "https://mcp-approval2.fly.dev"
-  WEBAUTHN_RP_ID        = "mcp-approval2.fly.dev"
+
+  # Blob via Cloudflare R2 (privat.md §9.1). BLOB_ACCESS_KEY/SECRET kommen
+  # aus Doppler→fly secrets. BACKUP_BUCKET hat eigenen API-Token mit nur
+  # PutObject/GetObject (privat.md §9.2 — kein Delete-Permission).
+  BLOB_PROVIDER         = "s3"
+  BLOB_REGION           = "auto"
+  BLOB_PATH_STYLE       = "true"
+
+  # Public surface — Custom-Domain mcp2.ai-toolhub.org wird via
+  # `fly certs add mcp2.ai-toolhub.org` aktiviert + CF DNS-Record:
+  # CNAME mcp2 → mcp-approval2.fly.dev (proxied=false wegen WebAuthn-Origin).
+  # Bei Erst-Deploy ohne Custom-Domain: Werte auf .fly.dev anpassen oder
+  # via fly secrets temporär überschreiben.
+  BASE_URL              = "https://mcp2.ai-toolhub.org"
+  WEBAUTHN_RP_ID        = "mcp2.ai-toolhub.org"
   WEBAUTHN_RP_NAME      = "mcp-approval2"
-  WEBAUTHN_ORIGINS      = "https://mcp-approval2.fly.dev"
+  WEBAUTHN_ORIGINS      = "https://mcp2.ai-toolhub.org,https://mcp-approval2.fly.dev"
+  ALLOWED_ORIGINS       = "https://mcp2.ai-toolhub.org,https://app2.ai-toolhub.org,https://mcp-approval2.fly.dev"
+
+  # OAuth + JWT
+  SELF_OAUTH_ISSUER     = "https://mcp2.ai-toolhub.org"
   JWT_ISSUER            = "mcp-approval2"
   JWKS_PATH             = "/.well-known/jwks.json"
 
@@ -65,7 +108,19 @@ kill_timeout   = 30
   cpus   = 1
 
 # ──────────────────────────────────────────────────────────────────────────
-# Deploy strategy — rolling so health-check gates new release.
+# Deploy strategy + Release-Command
+#
+# release_command: runs in a one-shot VM after image-build, BEFORE the
+# app-machines roll. DB-Migrations leben hier statt im Boot-Pfad, damit
+# (1) Boot-Latenz konstant ist, (2) Migration-Fail den App-Start abbricht
+# bevor halb-migrierter State live geht, (3) Re-Deploy idempotent ist
+# (migrate.ts trackt applied versions via _migrations-Tabelle).
+#
+# DATABASE_URL=$DATABASE_ADMIN_URL Override: migrate.ts liest DATABASE_URL
+# env, aber Migrations brauchen den Neon-Direct-Endpoint statt des Pooled-
+# Endpoint (PgBouncer ist transaktions-safe fuer unsere SQL aber direct ist
+# robuster fuer DDL).
 # ──────────────────────────────────────────────────────────────────────────
 [deploy]
-  strategy = "rolling"
+  strategy        = "rolling"
+  release_command = "sh -c 'DATABASE_URL=$DATABASE_ADMIN_URL npm run db:migrate'"

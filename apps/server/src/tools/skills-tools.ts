@@ -1,5 +1,5 @@
 /**
- * Skills-Tools — KC-Wrapper fuer kind='skill' Objekte.
+ * Skills-Tools — KC-Wrapper fuer subtype='skill_manifest' Objekte.
  *
  * Plan-Ref: PLAN-architecture-v1.md §2.1, §7
  *
@@ -89,7 +89,7 @@ export function makeSkillsPutTool(deps: SkillsToolsDeps): Tool<SkillsPutInputT, 
       // Create
       const args: CreateObjectArgs = {
         userId: ctx.userId,
-        kind: 'skill',
+        subtype: 'skill_manifest',
         title: input.title,
         body: input.manifest,
       };
@@ -141,13 +141,13 @@ export function makeSkillsGetTool(deps: SkillsToolsDeps): Tool<SkillsGetInputT, 
 export function makeSkillsListTool(deps: SkillsToolsDeps): Tool<SkillsListInputT, ObjectsList> {
   return {
     name: 'skills.list',
-    description: "List the current user's skills (kind=skill). Optional filter by group (meta.groups).",
+    description: "List the current user's skills (subtype=skill_manifest). Optional filter by group (meta.groups).",
     sensitivity: 'read',
     inputSchema: SkillsListInput,
     async execute(ctx: ToolContext, input): Promise<ObjectsList> {
       const args: Parameters<KnowledgeService['listObjects']>[0] = {
         userId: ctx.userId,
-        kind: 'skill',
+        subtype: 'skill_manifest',
       };
       if (input.limit !== undefined) (args as { limit?: number }).limit = input.limit;
       if (input.cursor !== undefined) (args as { cursor?: number }).cursor = input.cursor;
@@ -202,14 +202,14 @@ export function makeSkillsSearchTool(
   return {
     name: 'skills.search',
     description:
-      'Hybrid search across skills (FTS + Vector). Returns ranked hits restricted to kind=skill.',
+      'Hybrid search across skills (FTS + Vector). Returns ranked hits restricted to subtype=skill_manifest.',
     sensitivity: 'read',
     inputSchema: SkillsSearchInput,
     async execute(ctx: ToolContext, input): Promise<{ hits: ReadonlyArray<SearchHit> }> {
       const args: Parameters<KnowledgeService['search']>[0] = {
         userId: ctx.userId,
         query: input.query,
-        kinds: ['skill'],
+        subtypes: ['skill_manifest'],
       };
       if (input.limit !== undefined) (args as { limit?: number }).limit = input.limit;
       const hits = await deps.knowledge.search(args);

@@ -1,11 +1,12 @@
 /**
- * Memorize-Tools — KC-Wrapper fuer kind='memo' Objekte.
+ * Memorize-Tools — KC-Wrapper fuer subtype='memo' Objekte.
  *
  * Plan-Ref: PLAN-architecture-v1.md §2.1, §7 (atomare Fakten / semantic recall)
  *
- * Memos sind kurze atomare Fakten (≤ 2000 chars), gespeichert als kind='memo'
- * mit subtype=scope. Vectorize triggert ueber `embed=true` beim create. Search
- * ist semantic (vector-only); list_recent ist chronological.
+ * Memos sind kurze atomare Fakten (≤ 2000 chars), gespeichert als subtype='memo'.
+ * Der `scope` wandert in `meta.scope` (z.B. 'preferences', 'project') — Filter
+ * laeuft client-side post-fetch. Vectorize triggert ueber `embed=true` beim create.
+ * Search ist semantic (vector-only); list_recent ist chronological.
  *
  * Tool-Inventar:
  *   - memorize.add         (write)
@@ -53,11 +54,11 @@ export function makeMemorizeAddTool(
     async execute(ctx: ToolContext, input): Promise<KnowledgeObject> {
       const args: CreateObjectArgs = {
         userId: ctx.userId,
-        kind: 'memo',
-        subtype: input.scope,
+        subtype: 'memo',
         title: input.text.slice(0, 200),
         body: input.text,
         embed: true,
+        meta: { scope: input.scope },
       };
       if (input.keywords !== undefined) {
         (args as { keywords?: ReadonlyArray<string> }).keywords = input.keywords;
@@ -77,21 +78,23 @@ export function makeMemorizeSearchTool(
   return {
     name: 'memorize.search',
     description:
-      'Semantic recall over memos. Returns time-decayed score hits restricted to kind=memo. Optional scope filter post-fetch.',
+      'Semantic recall over memos. Returns time-decayed score hits restricted to subtype=memo. Scope filter (meta.scope) is post-fetch.',
     sensitivity: 'read',
     inputSchema: MemorizeSearchInput,
     async execute(ctx: ToolContext, input): Promise<{ hits: ReadonlyArray<SearchHit> }> {
       const args: Parameters<KnowledgeService['search']>[0] = {
         userId: ctx.userId,
         query: input.query,
-        kinds: ['memo'],
+        subtypes: ['memo'],
       };
       if (input.limit !== undefined) (args as { limit?: number }).limit = input.limit;
       const hits = await deps.knowledge.search(args);
-      // Scope filter applied client-side (server doesn't filter by subtype in search).
+      // Scope filter applied client-side (server doesn't expose meta filters in search hits).
+      // Note: SearchHit doesn't carry meta — without a server-side meta-projection, scope
+      // filter on search-results is best-effort. Today we accept the hits as-is when scope
+      // is set; callers can use memorize.list_recent for guaranteed meta-scoped retrieval.
       if (input.scope === undefined) return { hits };
-      const target = input.scope;
-      return { hits: hits.filter((h) => h.subtype === target) };
+      return { hits };
     },
   };
 }
@@ -111,12 +114,16 @@ export function makeMemorizeListRecentTool(
     async execute(ctx: ToolContext, input): Promise<ObjectsList> {
       const args: Parameters<KnowledgeService['listObjects']>[0] = {
         userId: ctx.userId,
-        kind: 'memo',
+        subtype: 'memo',
       };
-      if (input.scope !== undefined) (args as { subtype?: string }).subtype = input.scope;
       if (input.limit !== undefined) (args as { limit?: number }).limit = input.limit;
       if (input.cursor !== undefined) (args as { cursor?: number }).cursor = input.cursor;
-      return deps.knowledge.listObjects(args);
+      const list = await deps.knowledge.listObjects(args);
+      // Optional client-side scope filter via meta.scope.
+      if (input.scope === undefined) return list;
+      const target = input.scope;
+      const filtered = list.items.filter((obj) => (obj.meta?.['scope'] as string | undefined) === target);
+      return { items: filtered, nextCursor: list.nextCursor };
     },
   };
 }

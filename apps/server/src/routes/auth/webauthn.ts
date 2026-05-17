@@ -20,6 +20,7 @@ import { z } from 'zod';
 import type { AppBindings, ServerContext } from '../../lib/context.js';
 import { HttpError } from '../../lib/errors.js';
 import { auth } from '../../middleware/auth.js';
+import { authCookieOpts } from '../../lib/cookie.js';
 import { beginRegistration, finishRegistration } from '../../auth/webauthn/registration.js';
 import { beginAuthentication, finishAuthentication } from '../../auth/webauthn/authentication.js';
 import { issueSessionJwt } from '../../auth/session/issuer.js';
@@ -162,13 +163,7 @@ export function webauthnRoutes(server: ServerContext): Hono<AppBindings> {
         server.config,
       );
       const refresh = await issueInitialRefresh(server.db, server.config, { sessionId, userId: result.userId });
-      setCookie(c, 'refresh_token', refresh.rawToken, {
-        httpOnly: true,
-        secure: server.config.NODE_ENV === 'production',
-        sameSite: 'Lax',
-        maxAge: server.config.REFRESH_TTL_SEC,
-        path: '/',
-      });
+      setCookie(c, 'refresh_token', refresh.rawToken, authCookieOpts(server.config, { maxAge: server.config.REFRESH_TTL_SEC }));
 
       return c.json({
         accessToken: token,

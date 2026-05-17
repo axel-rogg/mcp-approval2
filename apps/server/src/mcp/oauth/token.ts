@@ -177,6 +177,45 @@ interface IssuedTokenPair {
   readonly scope: string | null;
 }
 
+/**
+ * AS-3: zusatz-Claims fuer Google-OIDC-Identity-Resolution.
+ *
+ * Plan-Ref: PLAN-as3-autonomous.md §1.1 + §2.3.
+ *
+ * Wenn der User ueber Google-IdP eingeloggt hat (external_id ist gesetzt),
+ * traegt das Issued-Token zusaetzlich:
+ *   - `idp: 'google'`     — IdP-Discriminator (kuenftig erweiterbar)
+ *   - `idp_sub: <google-sub>` — Google's stabiler User-Identifier
+ *   - `email: <google-email>` — fuer Cross-Service-Lookup (KC2 mappt via citext-email)
+ *
+ * Das Token bleibt HS256-signed mit JWT_SECRET (das ist self-issued an
+ * Claude.ai-Clients gegen approval2; KC2-Calls nutzen den separaten
+ * OBO-JWT mit RS256-Service-Key, siehe §1.2).
+ */
+interface IdpClaims {
+  readonly idp: 'google' | string;
+  readonly idp_sub: string;
+  readonly email?: string | undefined;
+}
+
+async function loadIdpClaims(
+  server: ServerContext,
+  userId: string,
+): Promise<IdpClaims | null> {
+  const raw = server.db.unsafe('oauth_token_load_idp_claims');
+  const rows = await raw.query<{ external_id: string | null; email: string | null }>(
+    `SELECT external_id, email FROM users WHERE id = $1 LIMIT 1`,
+    [userId],
+  );
+  const row = rows[0];
+  if (!row || !row.external_id) return null;
+  return {
+    idp: 'google',
+    idp_sub: row.external_id,
+    email: row.email ?? undefined,
+  };
+}
+
 async function issueAccessToken(
   server: ServerContext,
   args: {
@@ -184,6 +223,7 @@ async function issueAccessToken(
     readonly clientId: string;
     readonly resource: string;
     readonly scope: string | null;
+    readonly idpClaims?: IdpClaims | null;
   },
 ): Promise<{ token: string; jti: string; expiresIn: number }> {
   const now = Math.floor(Date.now() / 1000);
@@ -191,10 +231,19 @@ async function issueAccessToken(
   const jti = randomUUID();
   const issuer = server.config.ORIGIN.replace(/\/$/, '');
   const secret = new TextEncoder().encode(server.config.JWT_SECRET);
-  const token = await new SignJWT({
+  const payload: Record<string, unknown> = {
     client_id: args.clientId,
     scope: args.scope ?? '',
-  })
+  };
+  // AS-3: IdP-Claims fuer Cross-Service-Identity-Trail (§2.3 Audience-Map).
+  if (args.idpClaims) {
+    payload['idp'] = args.idpClaims.idp;
+    payload['idp_sub'] = args.idpClaims.idp_sub;
+    if (args.idpClaims.email !== undefined) {
+      payload['email'] = args.idpClaims.email;
+    }
+  }
+  const token = await new SignJWT(payload)
     .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
     .setSubject(args.userId)
     .setAudience(args.resource)
@@ -241,11 +290,15 @@ async function issueTokenPair(
   },
 ): Promise<IssuedTokenPair> {
   const familyId = args.familyId ?? randomUUID();
+  // AS-3: IdP-Claims aus users.external_id holen — wenn Google-User, dann
+  // im Access-Token mitgeben fuer Cross-Service-Identity-Trail.
+  const idpClaims = await loadIdpClaims(server, args.userId);
   const access = await issueAccessToken(server, {
     userId: args.userId,
     clientId: args.clientId,
     resource: args.resource,
     scope: args.scope,
+    idpClaims,
   });
   const refresh = await issueRefreshToken(server, {
     userId: args.userId,

@@ -37,6 +37,10 @@ import { runSweepOutputRefs } from './sweep-output-refs.js';
 import { runSweepPrfSessions } from './sweep-prf-sessions.js';
 import { runGatewayDiscovery } from './gateway-discovery.js';
 import { runReminders } from './reminders.js';
+import {
+  runKcManifestRefresh,
+  type KcManifestRefreshDeps,
+} from './kc-manifest-refresh.js';
 
 export const CRON_TASKS = [
   'auto-archive-apps',
@@ -46,6 +50,8 @@ export const CRON_TASKS = [
   'sweep-prf-sessions',
   'gateway-discovery',
   'reminders',
+  // AS-3 (A9): KC2-Manifest-Refresh, scheduled `*/5 * * * *`.
+  'kc-manifest-refresh',
 ] as const;
 
 export type CronTask = (typeof CRON_TASKS)[number];
@@ -73,6 +79,12 @@ export interface CronDeps {
   readonly fetchImpl?: typeof fetch;
   /** Override fuer Tests / deterministische Zeit. */
   readonly now?: () => number;
+  /**
+   * AS-3 (A9): Deps fuer `kc-manifest-refresh`. Wird vom app-factory bei
+   * gemounteten kc_wrappers gesetzt. Wenn `undefined`, ist der Task ein
+   * noop + audit (siehe runKcManifestRefresh).
+   */
+  readonly kcManifest?: KcManifestRefreshDeps;
 }
 
 /**
@@ -97,6 +109,8 @@ export async function runCronTask(task: string, deps: CronDeps): Promise<TaskRes
       return runGatewayDiscovery(deps);
     case 'reminders':
       return runReminders(deps);
+    case 'kc-manifest-refresh':
+      return runKcManifestRefresh(deps);
   }
 }
 

@@ -29,14 +29,29 @@
 import type {
   CreateObjectArgs,
   KnowledgeObject,
-  ObjectKind,
   ObjectsList,
   SearchHit,
   Share,
   ShareScope,
 } from './types.js';
 
-export interface GetObjectArgs {
+/**
+ * AS-3 (§1.2): User-Identity-Trio fuer OBO-Calls.
+ *
+ * Alle user-facing Operationen koennen optional `userEmail` +
+ * `approvalId` mitgeben. Im OBO-Pfad (adapter-side serviceToken
+ * konfiguriert) wandert das in den signed OBO-JWT als `on_behalf_of`
+ * resp. `approval_id`-Claim. Im Legacy-Pfad (kein serviceToken) werden
+ * die Felder ignoriert.
+ */
+export interface OnBehalfOfFields {
+  /** Google-email; in OBO-JWT als `on_behalf_of` mitgesendet. */
+  readonly userEmail?: string;
+  /** Optional approval_id bei state-changing Tools nach Approve. */
+  readonly approvalId?: string;
+}
+
+export interface GetObjectArgs extends OnBehalfOfFields {
   readonly id: string;
   readonly userId: string;
   /**
@@ -46,10 +61,18 @@ export interface GetObjectArgs {
   readonly expandBody?: boolean;
 }
 
-export interface ListObjectsArgs {
+export interface ListObjectsArgs extends OnBehalfOfFields {
   readonly userId: string;
-  readonly kind?: ObjectKind;
   readonly subtype?: string;
+  /**
+   * Server-side prefix-match filter (`LIKE 'prefix%'`). Mutually exclusive
+   * with `subtype` — passing both throws locally before the HTTP call.
+   *
+   * Use case: list all apps (`subtype_prefix: 'app:'`) without enumerating
+   * each app-type. The Postgres B-Tree-Index on `(owner_id, subtype)` makes
+   * this index-friendly because the pattern is left-anchored.
+   */
+  readonly subtypePrefix?: string;
   readonly limit?: number;
   /**
    * D-4: Server cursor ist Integer (Unix-ms vom letzten updatedAt). `null`
@@ -58,7 +81,7 @@ export interface ListObjectsArgs {
   readonly cursor?: number | null;
 }
 
-export interface UpdateObjectArgs {
+export interface UpdateObjectArgs extends OnBehalfOfFields {
   readonly id: string;
   readonly userId: string;
   readonly patch: {
@@ -76,40 +99,39 @@ export interface UpdateObjectArgs {
   };
 }
 
-export interface SearchArgs {
+export interface SearchArgs extends OnBehalfOfFields {
   readonly userId: string;
   readonly query: string;
   /**
-   * D-9 (joint): Server akzeptiert SINGLE `kind` heute. Multi-kind ist als
-   * Follow-up gequeued. Adapter sendet:
-   *   - wenn kinds.length === 1 → server `kind: ObjectKind`
-   *   - wenn kinds.length > 1   → server `kind: ObjectKind[]` (forward-compatible,
-   *     wird heute server-seitig silently ignoriert / multi-kind-Follow-up)
-   *   - wenn kinds undefined    → kein Filter
+   * Post-ADR-0004: free-form subtype-Filter. Storage akzeptiert
+   * `subtypes: string[]` als Mehrfach-Filter (kind-agnostisch). Leeres
+   * Array oder undefined → kein Filter.
    */
-  readonly kinds?: ReadonlyArray<ObjectKind>;
+  readonly subtypes?: ReadonlyArray<string>;
+  /**
+   * Prefix-match filters analog to `subtypes`. Combinable — KC2 joins
+   * via OR. e.g. `subtypePrefixes: ['app:']` for "all apps", or
+   * `subtypes: ['skill'], subtypePrefixes: ['app:']` for "all skills
+   * AND all apps".
+   */
+  readonly subtypePrefixes?: ReadonlyArray<string>;
   readonly limit?: number;
 }
 
-export interface CreateShareArgs {
+export interface CreateShareArgs extends OnBehalfOfFields {
   readonly resourceId: string;
-  /**
-   * D-6: server leitet resourceKind aus dem Object-Row ab. Wir behalten das
-   * Feld im Caller-Args (fuer Audit-Logging), schicken es aber NICHT mit.
-   */
-  readonly resourceKind: ObjectKind;
   readonly userId: string;
   readonly grantedTo: string;
   readonly scope: ShareScope;
   readonly expiresAt?: number;
 }
 
-export interface ListSharesArgs {
+export interface ListSharesArgs extends OnBehalfOfFields {
   readonly resourceId: string;
   readonly userId: string;
 }
 
-export interface RevokeShareArgs {
+export interface RevokeShareArgs extends OnBehalfOfFields {
   readonly shareId: string;
   readonly userId: string;
 }
@@ -117,6 +139,32 @@ export interface RevokeShareArgs {
 export interface EraseUserArgs {
   readonly userId: string;
   readonly confirmationToken: string;
+}
+
+/**
+ * AS-3 (§2.2 + A11): Push-Sync von approval2-User-State an KC2.
+ *
+ * Wird bei User-Create/Suspend/Erase aufgerufen. KC2 wiederholt die
+ * users-Row in seiner eigenen users-Tabelle (citext-email-mapping).
+ *
+ * Authentifizierung: SERVICE_TOKEN (`Authorization: Bearer <token>`),
+ * NICHT user-JWT — das ist ein Admin-/System-Call.
+ */
+export type UserSyncStatus = 'active' | 'invited' | 'suspended' | 'deleted';
+
+export interface SyncUserArgs {
+  readonly userId: string;
+  readonly email: string;
+  readonly displayName: string;
+  readonly status: UserSyncStatus;
+  readonly externalId?: string;
+}
+
+export interface SyncUserResult {
+  /** 'created' wenn KC2 die Row neu angelegt hat, 'updated' wenn Patch. */
+  readonly status: 'created' | 'updated' | 'unchanged';
+  /** KC2-side user-id (kann von approval2-id divergieren). */
+  readonly kcUserId: string;
 }
 
 /**
@@ -148,7 +196,12 @@ export interface KnowledgeAdapter {
   getObject(args: GetObjectArgs): Promise<KnowledgeObject>;
   listObjects(args: ListObjectsArgs): Promise<ObjectsList>;
   updateObject(args: UpdateObjectArgs): Promise<KnowledgeObject>;
-  deleteObject(args: { id: string; userId: string }): Promise<void>;
+  deleteObject(args: {
+    id: string;
+    userId: string;
+    userEmail?: string;
+    approvalId?: string;
+  }): Promise<void>;
 
   // ---------- Sharing ----------
   createShare(args: CreateShareArgs): Promise<Share>;
@@ -160,4 +213,10 @@ export interface KnowledgeAdapter {
 
   // ---------- Internal (admin only) ----------
   eraseUser(args: EraseUserArgs): Promise<EraseUserResult>;
+  /**
+   * AS-3: Push-Sync User-State an KC2. Wird vom UserService bei
+   * Create/Suspend/Erase aufgerufen. Caller-Pflicht: SERVICE_TOKEN muss
+   * konfiguriert sein.
+   */
+  syncUser(args: SyncUserArgs): Promise<SyncUserResult>;
 }

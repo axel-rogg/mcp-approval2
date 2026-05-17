@@ -2,7 +2,7 @@
  * Typed Fetch-Client für Storage-Tab.
  *
  * Backend-Routen:
- *   GET    /v1/knowledge/objects?kind=&q=&limit=&cursor=&embedded=
+ *   GET    /v1/knowledge/objects?subtype=&q=&limit=&cursor=&embedded=
  *   GET    /v1/knowledge/objects/<id>?expand=body,refs,tags,summary
  *   DELETE /v1/knowledge/objects/<id>?force=1                  → Approval-Request
  *   PATCH  /v1/knowledge/objects/<id>     { summary: string }  → Approval-Request
@@ -12,15 +12,18 @@
  *
  * Drift-Resolution-aware: alle Felder optional, Type-Guards nicht enforced —
  * Backend kann Schema-Felder hinzufügen ohne PWA-Break.
+ *
+ * Generic-Object-Model (GENERIC-DATA-MODEL.md v3): `kind` ist entfernt, alles
+ * läuft über free-form `subtype`. Caller-Konvention: `file`, `skill_manifest`,
+ * `app:<typ>` (z.B. `app:composable`), `memo`. Storage interpretiert nichts.
  */
 
-export type ObjectKind = 'doc' | 'skill' | 'app' | 'app_state' | 'memo' | string;
+export type ObjectSubtype = string;
 export type Visibility = 'private' | 'shared' | 'public' | string;
 
 export interface KnowledgeObject {
   readonly id: string;
-  readonly kind: ObjectKind;
-  readonly subtype?: string | null;
+  readonly subtype?: ObjectSubtype | null;
   readonly title?: string | null;
   readonly filename?: string | null;
   readonly description?: string | null;
@@ -36,7 +39,13 @@ export interface KnowledgeObject {
 }
 
 export interface ListObjectsArgs {
-  readonly kind?: string;
+  readonly subtype?: string;
+  /**
+   * Server-side prefix-match filter (`subtype LIKE 'prefix%'`). e.g.
+   * `subtypePrefix: 'app:'` returns all `app:*` subtypes. Mutually
+   * exclusive with `subtype` — backend rejects both.
+   */
+  readonly subtypePrefix?: string;
   readonly q?: string;
   readonly limit?: number;
   readonly cursor?: number;
@@ -135,7 +144,8 @@ export function createApiStorageClient(baseUrl?: string): ApiStorageClient {
   return {
     async listObjects(args) {
       const query: Record<string, string | number | undefined> = {};
-      if (args.kind) query['kind'] = args.kind;
+      if (args.subtype) query['subtype'] = args.subtype;
+      if (args.subtypePrefix) query['subtype_prefix'] = args.subtypePrefix;
       if (args.q) query['q'] = args.q;
       if (args.limit !== undefined) query['limit'] = args.limit;
       if (args.cursor !== undefined) query['cursor'] = args.cursor;

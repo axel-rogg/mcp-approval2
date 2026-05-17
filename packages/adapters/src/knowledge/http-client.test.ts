@@ -6,7 +6,7 @@
  *   - listObjects: `{items, next_cursor}` (int cursor, nicht hasMore)
  *   - createShare: `{granted_to, scope, expires_at?}` snake_case (kein resourceKind)
  *   - listShares: `{items: [...]}` (kein bare array)
- *   - search: `{kind: ObjectKind | ObjectKind[]}` (heute single, multi-kind queued)
+ *   - search: `{subtypes: string[]}` (kind-agnostisch, ADR-0004)
  *   - eraseUser: `{user_id, confirmation_token}` + Service-Token + rich response
  *   - getObject: optional `?expand=body` → body_b64-Field
  *   - Errors: RFC 7807 Problem Details (mit Legacy-Fallback)
@@ -25,9 +25,18 @@ import {
 
 const USER_ID = '00000000-0000-0000-0000-000000000001';
 
-function makeSigner(token = 'jwt-token-xyz'): JwtSigner & { mock: ReturnType<typeof vi.fn> } {
-  const mock = vi.fn().mockResolvedValue(token);
-  return { sign: mock, mock };
+function makeSigner(
+  token = 'jwt-token-xyz',
+  oboToken = 'obo-jwt-token-xyz',
+): JwtSigner & {
+  signMock: ReturnType<typeof vi.fn>;
+  oboMock: ReturnType<typeof vi.fn>;
+  /** Legacy alias to keep older test expectations stable. */
+  mock: ReturnType<typeof vi.fn>;
+} {
+  const signMock = vi.fn().mockResolvedValue(token);
+  const oboMock = vi.fn().mockResolvedValue(oboToken);
+  return { sign: signMock, signOBO: oboMock, signMock, oboMock, mock: signMock };
 }
 
 function makeJsonResponse(status: number, body: unknown, init?: { requestId?: string }): Response {
@@ -54,10 +63,10 @@ function makeProblemResponse(
 
 function defaultObjectView(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   // ObjectView wie der Server sie schickt (camelCase, alle Pflichtfelder).
+  // ADR-0004: kein `kind` mehr, nur free-form `subtype`.
   return {
     id: 'o1',
     ownerId: USER_ID,
-    kind: 'doc',
     subtype: null,
     title: null,
     description: null,
@@ -140,7 +149,7 @@ describe('HttpKnowledgeAdapter — authedFetch + JWT', () => {
     const adapter = makeAdapter({ fetchImpl: fetchMock });
     await adapter.createObject({
       userId: USER_ID,
-      kind: 'doc',
+      subtype: 'doc',
       title: 'hello',
       body: 'hello-body',
     });
@@ -150,7 +159,9 @@ describe('HttpKnowledgeAdapter — authedFetch + JWT', () => {
     expect(headers['content-type']).toBe('application/json');
     expect(init?.method).toBe('POST');
     const sent = JSON.parse(init?.body as string) as Record<string, unknown>;
-    expect(sent['kind']).toBe('doc');
+    // ADR-0004: kein `kind` mehr im Wire-Body.
+    expect(sent['kind']).toBeUndefined();
+    expect(sent['subtype']).toBe('doc');
     expect(sent['title']).toBe('hello');
     // D-2: body wird base64-encodet als body_b64 gesendet, NICHT als body.
     expect(sent['body']).toBeUndefined();
@@ -348,7 +359,7 @@ describe('HttpKnowledgeAdapter — createObject (D-2 + D-3)', () => {
     const bytes = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
     await adapter.createObject({
       userId: USER_ID,
-      kind: 'doc',
+      subtype: 'doc',
       body: bytes,
     });
     const [, init] = fetchMock.mock.calls[0] ?? [];
@@ -363,7 +374,7 @@ describe('HttpKnowledgeAdapter — createObject (D-2 + D-3)', () => {
     const adapter = makeAdapter({ fetchImpl: fetchMock });
     await adapter.createObject({
       userId: USER_ID,
-      kind: 'doc',
+      subtype: 'doc',
       title: 'T',
       description: 'D',
       keywords: ['a', 'b'],
@@ -378,7 +389,7 @@ describe('HttpKnowledgeAdapter — createObject (D-2 + D-3)', () => {
     const [, init] = fetchMock.mock.calls[0] ?? [];
     const sent = JSON.parse(init?.body as string) as Record<string, unknown>;
     expect(sent).toMatchObject({
-      kind: 'doc',
+      subtype: 'doc',
       title: 'T',
       description: 'D',
       keywords: ['a', 'b'],
@@ -389,6 +400,7 @@ describe('HttpKnowledgeAdapter — createObject (D-2 + D-3)', () => {
       embed: true,
       visibility: 'private',
     });
+    expect(sent['kind']).toBeUndefined();
     expect(sent['body_b64']).toBe(Buffer.from('body-text', 'utf-8').toString('base64'));
   });
 });
@@ -432,16 +444,18 @@ describe('HttpKnowledgeAdapter — getObject (D-11)', () => {
 });
 
 describe('HttpKnowledgeAdapter — listObjects (D-4 + D-5)', () => {
-  it('serializes kind/limit/cursor as query params (cursor as integer)', async () => {
+  it('serializes subtype/limit/cursor as query params (cursor as integer)', async () => {
     const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
       makeJsonResponse(200, { items: [], next_cursor: null }),
     );
     const adapter = makeAdapter({ fetchImpl: fetchMock });
-    await adapter.listObjects({ userId: USER_ID, kind: 'skill', limit: 50, cursor: 1234567890 });
+    await adapter.listObjects({ userId: USER_ID, subtype: 'skill', limit: 50, cursor: 1234567890 });
     const [url] = fetchMock.mock.calls[0] ?? [];
     const u = new URL(String(url));
     expect(u.pathname).toBe('/v1/objects');
-    expect(u.searchParams.get('kind')).toBe('skill');
+    // ADR-0004: kein `kind` mehr — `subtype` ist der einzige Discriminator.
+    expect(u.searchParams.get('kind')).toBeNull();
+    expect(u.searchParams.get('subtype')).toBe('skill');
     expect(u.searchParams.get('limit')).toBe('50');
     expect(u.searchParams.get('cursor')).toBe('1234567890');
   });
@@ -466,6 +480,30 @@ describe('HttpKnowledgeAdapter — listObjects (D-4 + D-5)', () => {
     const adapter = makeAdapter({ fetchImpl: fetchMock });
     const list = await adapter.listObjects({ userId: USER_ID });
     expect(list.nextCursor).toBeNull();
+  });
+
+  it('serializes subtypePrefix as ?subtype_prefix= query param', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, { items: [], next_cursor: null }),
+    );
+    const adapter = makeAdapter({ fetchImpl: fetchMock });
+    await adapter.listObjects({ userId: USER_ID, subtypePrefix: 'app:' });
+    const [url] = fetchMock.mock.calls[0] ?? [];
+    const u = new URL(String(url));
+    expect(u.pathname).toBe('/v1/objects');
+    expect(u.searchParams.get('subtype_prefix')).toBe('app:');
+    // mutually exclusive — neither flag should leak the other.
+    expect(u.searchParams.get('subtype')).toBeNull();
+  });
+
+  it('rejects locally when both subtype and subtypePrefix are set (mutual-excl)', async () => {
+    const fetchMock = vi.fn<FetchLike>();
+    const adapter = makeAdapter({ fetchImpl: fetchMock });
+    await expect(
+      adapter.listObjects({ userId: USER_ID, subtype: 'doc', subtypePrefix: 'app:' }),
+    ).rejects.toThrowError(/mutually exclusive/);
+    // No HTTP roundtrip should have happened — caught locally.
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
@@ -511,12 +549,11 @@ describe('HttpKnowledgeAdapter — deleteObject', () => {
 });
 
 describe('HttpKnowledgeAdapter — createShare (D-6 + D-7)', () => {
-  it('sends granted_to/scope snake_case (drops resourceKind)', async () => {
+  it('sends granted_to/scope snake_case (ADR-0004: no resourceKind on wire)', async () => {
     const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
       makeJsonResponse(201, {
         id: 's1',
         resourceId: 'o1',
-        resourceKind: 'doc',
         grantedBy: USER_ID,
         grantedTo: 'user-2',
         scope: 'read',
@@ -528,7 +565,6 @@ describe('HttpKnowledgeAdapter — createShare (D-6 + D-7)', () => {
     const adapter = makeAdapter({ fetchImpl: fetchMock });
     const share = await adapter.createShare({
       resourceId: 'o1',
-      resourceKind: 'doc',
       userId: USER_ID,
       grantedTo: 'user-2',
       scope: 'read',
@@ -537,7 +573,7 @@ describe('HttpKnowledgeAdapter — createShare (D-6 + D-7)', () => {
     expect(String(url)).toBe('https://knowledge.example.org/v1/objects/o1/shares');
     expect(init?.method).toBe('POST');
     const body = JSON.parse(init?.body as string) as Record<string, unknown>;
-    // D-6: server haelt resourceKind aus dem Body raus, snake_case granted_to.
+    // ADR-0004: server-Body ohne resourceKind, snake_case granted_to.
     expect(body).toEqual({ granted_to: 'user-2', scope: 'read' });
     // D-7: server-Response hat grantedAt (nicht createdAt).
     expect(share.grantedAt).toBe(1);
@@ -548,7 +584,6 @@ describe('HttpKnowledgeAdapter — createShare (D-6 + D-7)', () => {
       makeJsonResponse(201, {
         id: 's1',
         resourceId: 'o1',
-        resourceKind: 'doc',
         grantedBy: USER_ID,
         grantedTo: 'user-2',
         scope: 'read',
@@ -560,7 +595,6 @@ describe('HttpKnowledgeAdapter — createShare (D-6 + D-7)', () => {
     const adapter = makeAdapter({ fetchImpl: fetchMock });
     await adapter.createShare({
       resourceId: 'o1',
-      resourceKind: 'doc',
       userId: USER_ID,
       grantedTo: 'user-2',
       scope: 'read',
@@ -580,7 +614,6 @@ describe('HttpKnowledgeAdapter — listShares (D-8)', () => {
           {
             id: 's1',
             resourceId: 'o1',
-            resourceKind: 'doc',
             grantedBy: USER_ID,
             grantedTo: 'u2',
             scope: 'read',
@@ -609,38 +642,39 @@ describe('HttpKnowledgeAdapter — revokeShare', () => {
   });
 });
 
-describe('HttpKnowledgeAdapter — search (D-9)', () => {
-  it('sends single kind as string when kinds.length === 1', async () => {
+describe('HttpKnowledgeAdapter — search (ADR-0004 subtypes)', () => {
+  it('sends subtypes array even when only one subtype is requested', async () => {
     const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
       makeJsonResponse(200, {
         items: [
-          { id: 'o1', kind: 'doc', subtype: null, title: 'h', score: 0.9, ftsRank: 0.5, vectorScore: 0.4 },
+          { id: 'o1', subtype: 'doc', title: 'h', score: 0.9, ftsRank: 0.5, vectorScore: 0.4 },
         ],
       }),
     );
     const adapter = makeAdapter({ fetchImpl: fetchMock });
-    const hits = await adapter.search({ userId: USER_ID, query: 'foo', kinds: ['doc'], limit: 5 });
+    const hits = await adapter.search({ userId: USER_ID, query: 'foo', subtypes: ['doc'], limit: 5 });
     expect(hits).toHaveLength(1);
     expect(hits[0]?.id).toBe('o1');
     const [url, init] = fetchMock.mock.calls[0] ?? [];
     expect(String(url)).toBe('https://knowledge.example.org/v1/search');
     expect(init?.method).toBe('POST');
     const body = JSON.parse(init?.body as string) as Record<string, unknown>;
-    expect(body).toEqual({ query: 'foo', kind: 'doc', limit: 5 });
+    expect(body).toEqual({ query: 'foo', subtypes: ['doc'], limit: 5 });
+    expect(body['kind']).toBeUndefined();
   });
 
-  it('sends kind as array when kinds.length > 1 (forward-compatible)', async () => {
+  it('sends multi-subtype filter as array', async () => {
     const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
       makeJsonResponse(200, { items: [] }),
     );
     const adapter = makeAdapter({ fetchImpl: fetchMock });
-    await adapter.search({ userId: USER_ID, query: 'foo', kinds: ['doc', 'skill'] });
+    await adapter.search({ userId: USER_ID, query: 'foo', subtypes: ['doc', 'skill'] });
     const [, init] = fetchMock.mock.calls[0] ?? [];
     const body = JSON.parse(init?.body as string) as Record<string, unknown>;
-    expect(body).toEqual({ query: 'foo', kind: ['doc', 'skill'] });
+    expect(body).toEqual({ query: 'foo', subtypes: ['doc', 'skill'] });
   });
 
-  it('omits kind when kinds is undefined or empty', async () => {
+  it('omits subtypes when undefined or empty', async () => {
     const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
       makeJsonResponse(200, { items: [] }),
     );
@@ -649,7 +683,237 @@ describe('HttpKnowledgeAdapter — search (D-9)', () => {
     const [, init] = fetchMock.mock.calls[0] ?? [];
     const body = JSON.parse(init?.body as string) as Record<string, unknown>;
     expect(body).toEqual({ query: 'foo' });
+    expect(body['subtypes']).toBeUndefined();
     expect(body['kind']).toBeUndefined();
+  });
+
+  it('sends subtype_prefixes when provided (combinable with subtypes)', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, { items: [] }),
+    );
+    const adapter = makeAdapter({ fetchImpl: fetchMock });
+    await adapter.search({
+      userId: USER_ID,
+      query: 'foo',
+      subtypes: ['skill'],
+      subtypePrefixes: ['app:'],
+    });
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+    expect(body).toEqual({
+      query: 'foo',
+      subtypes: ['skill'],
+      subtype_prefixes: ['app:'],
+    });
+  });
+
+  it('omits subtype_prefixes when undefined or empty', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, { items: [] }),
+    );
+    const adapter = makeAdapter({ fetchImpl: fetchMock });
+    await adapter.search({ userId: USER_ID, query: 'foo', subtypePrefixes: [] });
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+    expect(body['subtype_prefixes']).toBeUndefined();
+  });
+});
+
+// =============================================================================
+// AS-3 Tests — OBO-Pfad
+// =============================================================================
+
+describe('HttpKnowledgeAdapter — AS-3 OBO pattern', () => {
+  it('uses serviceToken + X-On-Behalf-Of header when serviceToken configured', async () => {
+    const signer = makeSigner('legacy-jwt', 'obo-jwt-xyz');
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, defaultObjectView()),
+    );
+    const adapter = makeAdapter({
+      fetchImpl: fetchMock,
+      signer,
+      serviceToken: 'svc-token-abc',
+    });
+    await adapter.getObject({
+      id: 'o1',
+      userId: USER_ID,
+      userEmail: 'axel@example.org',
+    });
+
+    // OBO-Pfad: signer.signOBO wurde gerufen, signer.sign NICHT.
+    expect(signer.oboMock).toHaveBeenCalledTimes(1);
+    expect(signer.signMock).not.toHaveBeenCalled();
+    expect(signer.oboMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sub: USER_ID,
+        aud: 'mcp-knowledge2',
+        on_behalf_of: 'axel@example.org',
+        ttlSec: 120,
+        request_id: 'req-test-1',
+      }),
+    );
+
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const headers = init?.headers as Record<string, string>;
+    expect(headers['authorization']).toBe('Bearer svc-token-abc');
+    expect(headers['x-on-behalf-of']).toBe('obo-jwt-xyz');
+    expect(headers['x-request-id']).toBe('req-test-1');
+  });
+
+  it('falls back to userId as on_behalf_of when userEmail not provided', async () => {
+    const signer = makeSigner();
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, defaultObjectView()),
+    );
+    const adapter = makeAdapter({
+      fetchImpl: fetchMock,
+      signer,
+      serviceToken: 'svc-token',
+    });
+    await adapter.getObject({ id: 'o1', userId: USER_ID });
+    expect(signer.oboMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        on_behalf_of: USER_ID, // fallback when userEmail missing
+      }),
+    );
+  });
+
+  it('forwards approval_id to OBO-JWT when provided (write-tools)', async () => {
+    const signer = makeSigner();
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, defaultObjectView()),
+    );
+    const adapter = makeAdapter({
+      fetchImpl: fetchMock,
+      signer,
+      serviceToken: 'svc-token',
+    });
+    await adapter.updateObject({
+      id: 'o1',
+      userId: USER_ID,
+      userEmail: 'axel@example.org',
+      approvalId: 'appr-uuid-42',
+      patch: { title: 'new' },
+    });
+    expect(signer.oboMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sub: USER_ID,
+        aud: 'mcp-knowledge2',
+        on_behalf_of: 'axel@example.org',
+        approval_id: 'appr-uuid-42',
+      }),
+    );
+  });
+
+  it('omits approval_id from OBO when read-only call', async () => {
+    const signer = makeSigner();
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, defaultObjectView()),
+    );
+    const adapter = makeAdapter({
+      fetchImpl: fetchMock,
+      signer,
+      serviceToken: 'svc-token',
+    });
+    await adapter.getObject({ id: 'o1', userId: USER_ID, userEmail: 'a@b.de' });
+    const oboArgs = signer.oboMock.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(oboArgs['approval_id']).toBeUndefined();
+  });
+
+  it('LEGACY-Pfad: ohne serviceToken nutzt weiterhin signer.sign + Bearer-JWT', async () => {
+    const signer = makeSigner('legacy-bearer', 'unused-obo');
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, defaultObjectView()),
+    );
+    const adapter = makeAdapter({
+      fetchImpl: fetchMock,
+      signer,
+      // KEIN serviceToken → Legacy-Pfad.
+    });
+    await adapter.getObject({ id: 'o1', userId: USER_ID });
+    expect(signer.signMock).toHaveBeenCalledTimes(1);
+    expect(signer.oboMock).not.toHaveBeenCalled();
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const headers = init?.headers as Record<string, string>;
+    expect(headers['authorization']).toBe('Bearer legacy-bearer');
+    expect(headers['x-on-behalf-of']).toBeUndefined();
+  });
+});
+
+describe('HttpKnowledgeAdapter — syncUser (AS-3 §2.2 / A11)', () => {
+  it('POSTs to /v1/internal/users/sync with service-token (NOT JWT)', async () => {
+    const signer = makeSigner();
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, { status: 'created', kc_user_id: 'kc-user-1' }),
+    );
+    const adapter = makeAdapter({
+      fetchImpl: fetchMock,
+      signer,
+      serviceToken: 'svc-token-abc',
+    });
+    const res = await adapter.syncUser({
+      userId: USER_ID,
+      email: 'axel@example.org',
+      displayName: 'Axel R.',
+      status: 'active',
+      externalId: 'google-sub-123',
+    });
+
+    // syncUser ist ein Admin-Call → kein signer-Call.
+    expect(signer.signMock).not.toHaveBeenCalled();
+    expect(signer.oboMock).not.toHaveBeenCalled();
+
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    expect(String(url)).toBe('https://knowledge.example.org/v1/internal/users/sync');
+    expect(init?.method).toBe('POST');
+    const headers = init?.headers as Record<string, string>;
+    expect(headers['authorization']).toBe('Bearer svc-token-abc');
+    expect(headers['x-on-behalf-of']).toBeUndefined();
+
+    const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+    expect(body).toEqual({
+      user_id: USER_ID,
+      email: 'axel@example.org',
+      display_name: 'Axel R.',
+      status: 'active',
+      external_id: 'google-sub-123',
+    });
+
+    expect(res).toEqual({ status: 'created', kcUserId: 'kc-user-1' });
+  });
+
+  it('omits external_id from body when not provided', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, { status: 'updated', kc_user_id: 'kc-user-2' }),
+    );
+    const adapter = makeAdapter({ fetchImpl: fetchMock, serviceToken: 'tok' });
+    await adapter.syncUser({
+      userId: USER_ID,
+      email: 'b@c.de',
+      displayName: 'Test',
+      status: 'suspended',
+    });
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const body = JSON.parse(init?.body as string) as Record<string, unknown>;
+    expect(body['external_id']).toBeUndefined();
+    expect(body['status']).toBe('suspended');
+  });
+
+  it('throws ServiceError if serviceToken not configured', async () => {
+    const fetchMock = vi.fn<FetchLike>();
+    const adapter = makeAdapter({ fetchImpl: fetchMock });
+    await expect(
+      adapter.syncUser({
+        userId: USER_ID,
+        email: 'x@y.de',
+        displayName: 'X',
+        status: 'active',
+      }),
+    ).rejects.toMatchObject({
+      name: 'ServiceError',
+      message: expect.stringContaining('serviceToken not configured') as unknown as string,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

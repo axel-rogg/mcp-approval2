@@ -432,3 +432,179 @@ resource "doppler_secret" "placeholder_allowed_emails" {
     ignore_changes = [value]
   }
 }
+
+# ---- Fly.io Placeholders (Stand 2026-05-17, Fly-Switch) -------------------
+#
+# Diese Placeholders werden ergänzend zu den existing Crypto-Secrets benötigt
+# wenn der privat-Mode auf Fly.io deployed wird. Workflow:
+#   1. terraform apply (Buckets in r2-blob.tf + diese Placeholders)
+#   2. CF-Dashboard: API-Tokens für data-Bucket + backup-Bucket erstellen
+#   3. Doppler-UI: BLOB_ACCESS_KEY/SECRET + BACKUP_ACCESS_KEY/SECRET füllen
+#   4. bash deploy/fly/deploy.sh — synct Doppler → fly secrets
+#
+# Spec: docs/privat.md §6
+
+# Fly-API-Token (für deploy.sh + GH-Actions deploy-fly.yml)
+# Mint via `fly tokens create deploy` (oder `fly auth token` für Pilot).
+resource "doppler_secret" "placeholder_fly_api_token" {
+  project = doppler_project.mcp_approval2.name
+  config  = doppler_environment.privat.slug
+  name    = "FLY_API_TOKEN"
+  value   = ""
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+# Cross-Service-Bridge zu mcp-knowledge2 (OBO-Pfad, gleicher Wert in beiden
+# Doppler-Projects mcp-approval2/privat und mcp-knowledge2/privat).
+resource "doppler_secret" "placeholder_service_token" {
+  project = doppler_project.mcp_approval2.name
+  config  = doppler_environment.privat.slug
+  name    = "SERVICE_TOKEN"
+  value   = ""
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+# knowledge2-Backend-URL für approval2's KC-Proxy + kc_wrappers
+resource "doppler_secret" "placeholder_mcp_knowledge_url" {
+  project = doppler_project.mcp_approval2.name
+  config  = doppler_environment.privat.slug
+  name    = "MCP_KNOWLEDGE_URL"
+  value   = "https://knowledge2.ai-toolhub.org"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+# OBO-Token-Issuer für Service-to-Service-JWTs (gleicher Wert wie BASE_URL).
+resource "doppler_secret" "placeholder_self_oauth_issuer" {
+  project = doppler_project.mcp_approval2.name
+  config  = doppler_environment.privat.slug
+  name    = "SELF_OAUTH_ISSUER"
+  value   = "https://mcp2.ai-toolhub.org"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+# ---- Blob-Provider (R2 via S3-API, privat.md §9.1) ------------------------
+# Output von r2-blob.tf gibt die Bucket-Namen vor, hier Placeholders für die
+# Auth-Credentials + Endpoint. R2-API-Tokens sind out-of-band (CF-Dashboard
+# erstellt sie, da CF-Provider noch kein R2-API-Token-Resource hat).
+
+resource "doppler_secret" "placeholder_blob_endpoint" {
+  project = doppler_project.mcp_approval2.name
+  config  = doppler_environment.privat.slug
+  name    = "BLOB_ENDPOINT"
+  # Pflicht-Format fuer EU-Jurisdiction-Buckets:
+  #   https://<cf-account-id>.eu.r2.cloudflarestorage.com
+  # `.eu.` ist nicht optional — ohne knallt es mit 403 (CF gibt "bucket not
+  # found" als 403 zurueck wenn am Global-Endpoint nach EU-Bucket gefragt
+  # wird). Drift-Bug 2026-05-16 hat /health/ready bei knowledge2 in degraded
+  # geschickt; Fix via `doppler secrets set BLOB_ENDPOINT=...`.
+  value = ""
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+resource "doppler_secret" "placeholder_blob_region" {
+  project = doppler_project.mcp_approval2.name
+  config  = doppler_environment.privat.slug
+  name    = "BLOB_REGION"
+  value   = "auto"
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+resource "doppler_secret" "placeholder_blob_bucket" {
+  project = doppler_project.mcp_approval2.name
+  config  = doppler_environment.privat.slug
+  name    = "BLOB_BUCKET"
+  value   = "mcp-approval2-blob-eu"
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+resource "doppler_secret" "placeholder_blob_access_key" {
+  project = doppler_project.mcp_approval2.name
+  config  = doppler_environment.privat.slug
+  name    = "BLOB_ACCESS_KEY"
+  value   = "" # CF-Dashboard → R2 → API-Token mit data-bucket scope
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+resource "doppler_secret" "placeholder_blob_secret_key" {
+  project = doppler_project.mcp_approval2.name
+  config  = doppler_environment.privat.slug
+  name    = "BLOB_SECRET_KEY"
+  value   = ""
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+resource "doppler_secret" "placeholder_blob_path_style" {
+  project = doppler_project.mcp_approval2.name
+  config  = doppler_environment.privat.slug
+  name    = "BLOB_PATH_STYLE"
+  value   = "true"
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+# ---- Backup-Bucket (separate API-Token, privat.md §9.2) -------------------
+
+resource "doppler_secret" "placeholder_backup_bucket" {
+  project = doppler_project.mcp_approval2.name
+  config  = doppler_environment.privat.slug
+  name    = "BACKUP_BUCKET"
+  value   = "mcp-approval2-backup-eu"
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+resource "doppler_secret" "placeholder_backup_access_key" {
+  project = doppler_project.mcp_approval2.name
+  config  = doppler_environment.privat.slug
+  name    = "BACKUP_ACCESS_KEY"
+  value   = "" # CF-Dashboard → R2 → API-Token mit nur PutObject+GetObject (kein Delete!)
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+resource "doppler_secret" "placeholder_backup_secret_key" {
+  project = doppler_project.mcp_approval2.name
+  config  = doppler_environment.privat.slug
+  name    = "BACKUP_SECRET_KEY"
+  value   = ""
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+# Backup-Master-Key — AES-256-GCM-Key (32 bytes base64) für encrypted pg_dump.
+# Generieren: openssl rand -base64 32. Pro Service unique (privat.md §4).
+resource "doppler_secret" "placeholder_backup_master_key" {
+  project = doppler_project.mcp_approval2.name
+  config  = doppler_environment.privat.slug
+  name    = "BACKUP_MASTER_KEY"
+  value   = ""
+  lifecycle {
+    ignore_changes = [value]
+  }
+}

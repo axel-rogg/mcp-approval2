@@ -1,6 +1,11 @@
 # mcp-approval2
 
-> **Status: Phase 0 in Aufbau (2026-05-13)** — Greenfield-Replacement fuer
+> **Status: AS-3 code-complete + Generic-Object-Model implementiert
+> (2026-05-15)** auf Branch `feat/as3-cutover`. Cutover-Day pending —
+> Operator-Runbook im Schwester-Repo
+> [knowledge2/docs/runbooks/runbook-as3-cutover.md](https://github.com/axel-rogg/mcp-knowledge2/blob/feat/as3-cutover/docs/runbooks/runbook-as3-cutover.md).
+>
+> Greenfield-Replacement fuer
 > [mcp-approval](https://github.com/axel-rogg/mcp-approval) als Multi-User-
 > faehiger MCP-Approval-Server mit portabler Runtime.
 
@@ -54,9 +59,10 @@ npm run dev
 ```
 
 Default-Endpoints (Dev):
-- `http://localhost:8787` — MCP-Server + PWA
-- `http://localhost:5432` — Postgres
-- `http://localhost:8200` — OpenBao UI
+- `http://localhost:8787` — MCP-Server + PWA (Hono.js auf Node)
+- `http://localhost:5432` — Postgres 16 + pgvector
+- `http://localhost:8200` — OpenBao API (Vault-fork, dev-mode in `docker-compose.yml`)
+- `http://localhost:9001` — MinIO Console (S3-Local-Substitute, Login `minioadmin/minioadmin`)
 
 ## Project Layout
 
@@ -89,15 +95,27 @@ mcp-approval2/
 
 | Phase | Status | Inhalt |
 |---|---|---|
-| Phase 0 | in Aufbau | Skeleton, Tooling, Crypto, ADRs, CI |
-| Phase 1 | geplant | Auth, Sessions, WebAuthn, Invite-Flow |
-| Phase 2 | geplant | OpenBao + Credentials + PRF |
-| Phase 3 | geplant | mcp-knowledge2 Service-Boundary |
-| Phase 4 | geplant | MCP-Protocol + Tool-Surface |
-| Phase 5 | geplant | Sub-MCP-Migration (cf/github/gws/gcloud/utils) |
-| Phase 6 | geplant | Rate-Limit + GDPR-Tools + Pilot-Hardening |
+| Phase 0–6 | ✅ Single-shot baseline (2026-05-13) | Skeleton+Auth+Credentials+Tools+Sub-MCP+GDPR |
+| Pilot-Deploy | ✅ live verifiziert (2026-05-14) | 3/3 Smoke grün auf Hetzner CX22 (Postgres+OpenBao+approval2+knowledge2+Caddy), danach VM-destroyed (Restart via `terraform apply`) |
+| AS-3 | ✅ Code-complete (2026-05-15) | Cross-Service-Auth (OBO + Service-Token), Google OIDC, DCR-OAuth-Facade |
+| ADR-0004 | ✅ Implemented (2026-05-15) | Generic Object Model: subtype free-form statt kind-enum, app:-Namespacing, Tool-Wrappers (lists/notes/bookmarks/recipes), PWA Subtype-Renderer |
+| Vulnerabilities | ✅ Patched (2026-05-15) | drizzle-orm HIGH SQL-injection gefixt, vite+vitest@8/4, esbuild override |
+| Tests | ✅ 711 passed / 1 skipped (2026-05-16) | adapters 129+1skip · core 47 · server 519 · web 16 — typecheck strict clean |
+| Cutover-Day | ⏳ pending | Operator-Runbook in knowledge2 |
+| CF-Deploy-Pfad | ⚠️ ~50%, blockiert für AS-3 | nur D1-Migration 0001 portiert (kein Approval-Flow), kc-proxy/kc_wrappers nicht verkabelt, R2-Adapter fehlt — siehe [STATUS.md](docs/STATUS.md) |
 
-Detail in [PLAN-architecture-v1.md](docs/plans/active/PLAN-architecture-v1.md).
+**Aktuelle Tool-Familien** (`apps/server/src/tools/`):
+- `docs.*` (subtype=`doc`) — Markdown/Code/Binary mit summary+embed
+- `skills.*` (subtype=`skill_manifest`) — YAML-Frontmatter Skills mit Resource-Refs
+- `apps.*` (subtype=`app:<typ>`) — Composable-Apps mit CAS-State
+- `memorize.*` (subtype=`memo`) — Atomare Facts, semantic recall
+- `lists.*` (subtype=`list`) — Markdown-Checkbox-Liste mit tick/untick
+- `notes.*` (subtype=`note`) — Free-form Markdown
+- `bookmarks.*` (subtype=`bookmark`) — URL + Notes
+- `recipes.*` (subtype=`recipe`) — YAML-Frontmatter Rezepte
+
+Detail in [PLAN-architecture-v1.md](docs/plans/active/PLAN-architecture-v1.md)
++ [PLAN-wrapper-conventions.md](docs/plans/active/PLAN-wrapper-conventions.md).
 
 ## Licensing
 

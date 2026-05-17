@@ -38,6 +38,41 @@ import {
 } from '@mcp-approval2/adapters';
 
 /**
+ * AS-3 (§1.2 + §1.5): User-Identity-Trio fuer KC-Calls.
+ *
+ * Tools koennen das per-Aufruf mitgeben — der Adapter forwarded es in den
+ * OBO-JWT (`on_behalf_of` + `approval_id`-Claim). Im Legacy-Pfad (kein
+ * SERVICE_TOKEN konfiguriert) werden die Felder ignoriert.
+ *
+ * Konvention: tools/kc_wrappers/* sollten `kcAuthFromCtx(ctx)` aufrufen
+ * und das Resultat in die Service-Args spreizen. So bleibt der Auth-
+ * Flow konsistent ueber alle KC-Wrapper.
+ */
+export interface KcAuthFields {
+  readonly userEmail?: string;
+  readonly approvalId?: string;
+}
+
+/**
+ * Hilfsfunktion: extrahiert die KC-Auth-Felder aus einem ToolContext.
+ *
+ * Caller-Pattern:
+ *   ```ts
+ *   const auth = kcAuthFromCtx(ctx);
+ *   return deps.knowledge.updateObject({ userId: ctx.userId, ...auth, ... });
+ *   ```
+ */
+export function kcAuthFromCtx(ctx: {
+  email?: string;
+  approvalId?: string;
+}): KcAuthFields {
+  const out: { userEmail?: string; approvalId?: string } = {};
+  if (ctx.email) out.userEmail = ctx.email;
+  if (ctx.approvalId) out.approvalId = ctx.approvalId;
+  return out;
+}
+
+/**
  * Lokaler Audit-Service-Contract.
  *
  * Format-kompatibel mit `AuditService` aus src/mcp/protocol/tool.ts — wir
@@ -65,12 +100,21 @@ export interface KnowledgeServiceOptions {
 }
 
 export class KnowledgeService {
-  private readonly adapter: KnowledgeAdapter;
+  private readonly _adapter: KnowledgeAdapter;
   private readonly audit: AuditService;
   private readonly requestIdProvider: () => string | undefined;
 
+  /**
+   * AS-3 (A11): Adapter-Exposure fuer den UserSyncService (push-pattern).
+   * Andere Caller sollten weiterhin die Service-Methoden nutzen — die
+   * machen Audit-Logging mit.
+   */
+  get adapter(): KnowledgeAdapter {
+    return this._adapter;
+  }
+
   constructor(opts: KnowledgeServiceOptions) {
-    this.adapter = opts.adapter;
+    this._adapter = opts.adapter;
     this.audit = opts.audit;
     this.requestIdProvider = opts.requestIdProvider ?? (() => undefined);
   }
@@ -80,24 +124,34 @@ export class KnowledgeService {
   // ---------------------------------------------------------------------------
 
   async createObject(args: CreateObjectArgs): Promise<KnowledgeObject> {
+    const subtype = args.subtype ?? 'object';
     return this.audited(
-      `knowledge.${args.kind}.created`,
+      `knowledge.${subtype}.created`,
       args.userId,
-      args.kind,
+      subtype,
       undefined,
       () => this.adapter.createObject(args),
-      (result) => ({ resourceId: result.id, details: { kind: result.kind, subtype: result.subtype } }),
+      (result) => ({ resourceId: result.id, details: { subtype: result.subtype } }),
     );
   }
 
-  async getObject(args: { id: string; userId: string }): Promise<KnowledgeObject> {
+  async getObject(args: {
+    id: string;
+    userId: string;
+    userEmail?: string;
+    approvalId?: string;
+    expandBody?: boolean;
+  }): Promise<KnowledgeObject> {
     return this.audited(
       'knowledge.object.read',
       args.userId,
       undefined,
       args.id,
       () => this.adapter.getObject(args),
-      (result) => ({ resourceKind: result.kind, details: { kind: result.kind } }),
+      (result) => ({
+        ...(result.subtype ? { resourceKind: result.subtype } : {}),
+        details: { subtype: result.subtype ?? null },
+      }),
     );
   }
 
@@ -105,12 +159,12 @@ export class KnowledgeService {
     return this.audited(
       'knowledge.object.list',
       args.userId,
-      args.kind,
+      args.subtype,
       undefined,
       () => this.adapter.listObjects(args),
       (result) => ({
         details: {
-          kind: args.kind,
+          subtype: args.subtype ?? null,
           count: result.items.length,
           hasMore: result.nextCursor !== null,
         },
@@ -126,13 +180,18 @@ export class KnowledgeService {
       args.id,
       () => this.adapter.updateObject(args),
       (result) => ({
-        resourceKind: result.kind,
+        ...(result.subtype ? { resourceKind: result.subtype } : {}),
         details: { patchedFields: Object.keys(args.patch) },
       }),
     );
   }
 
-  async deleteObject(args: { id: string; userId: string }): Promise<void> {
+  async deleteObject(args: {
+    id: string;
+    userId: string;
+    userEmail?: string;
+    approvalId?: string;
+  }): Promise<void> {
     await this.audited(
       'knowledge.object.deleted',
       args.userId,
@@ -177,7 +236,7 @@ export class KnowledgeService {
     return this.audited(
       'knowledge.skill.attach_resource',
       args.userId,
-      'skill',
+      'skill_manifest',
       args.skillId,
       () =>
         this.adapter.updateObject({
@@ -240,8 +299,8 @@ export class KnowledgeService {
    * bekommen (TODO). Fuer < 200 skills akzeptabel.
    */
   async docUsages(args: { userId: string; docId: string }): Promise<{
-    incoming: ReadonlyArray<{ kind: 'skill'; id: string; title: string | null }>;
-    outgoing: ReadonlyArray<{ kind: string; id: string }>;
+    incoming: ReadonlyArray<{ subtype: 'skill_manifest'; id: string; title: string | null }>;
+    outgoing: ReadonlyArray<{ subtype: string; id: string }>;
   }> {
     return this.audited(
       'knowledge.doc.usages',
@@ -249,19 +308,19 @@ export class KnowledgeService {
       'doc',
       args.docId,
       async () => {
-        const incoming: Array<{ kind: 'skill'; id: string; title: string | null }> = [];
+        const incoming: Array<{ subtype: 'skill_manifest'; id: string; title: string | null }> = [];
         let cursor: number | null = null;
         // Hard limit: max 5 pages * 200 = 1000 skills scanned.
         for (let page = 0; page < 5; page += 1) {
           const listArgs: ListObjectsArgs =
             cursor === null
-              ? { userId: args.userId, kind: 'skill', limit: 200 }
-              : { userId: args.userId, kind: 'skill', limit: 200, cursor };
+              ? { userId: args.userId, subtype: 'skill_manifest', limit: 200 }
+              : { userId: args.userId, subtype: 'skill_manifest', limit: 200, cursor };
           const list = await this.adapter.listObjects(listArgs);
           for (const skill of list.items) {
             const ids = readResourceIds(skill.meta);
             if (ids.includes(args.docId)) {
-              incoming.push({ kind: 'skill', id: skill.id, title: skill.title });
+              incoming.push({ subtype: 'skill_manifest', id: skill.id, title: skill.title });
             }
           }
           if (list.nextCursor === null) break;
@@ -382,7 +441,7 @@ export class KnowledgeService {
     return this.audited(
       'knowledge.share.created',
       args.userId,
-      args.resourceKind,
+      undefined,
       args.resourceId,
       () => this.adapter.createShare(args),
       (result) => ({
@@ -391,7 +450,12 @@ export class KnowledgeService {
     );
   }
 
-  async listShares(args: { resourceId: string; userId: string }): Promise<ReadonlyArray<Share>> {
+  async listShares(args: {
+    resourceId: string;
+    userId: string;
+    userEmail?: string;
+    approvalId?: string;
+  }): Promise<ReadonlyArray<Share>> {
     return this.audited(
       'knowledge.share.list',
       args.userId,
@@ -428,7 +492,7 @@ export class KnowledgeService {
       undefined,
       () => this.adapter.search(args),
       (result) => ({
-        details: { count: result.length, kinds: args.kinds, queryLength: args.query.length },
+        details: { count: result.length, subtypes: args.subtypes, queryLength: args.query.length },
       }),
     );
   }
@@ -555,6 +619,13 @@ export interface KnowledgeServiceEnv {
   readonly JWT_AUDIENCE?: string;
   /** Optional: kid-Header fuer JWKS-Key-Selection. */
   readonly JWT_KID?: string;
+  /**
+   * AS-3: shared SERVICE_TOKEN fuer S2S-Calls an KC2. Wenn gesetzt, baut die
+   * Factory den HttpKnowledgeAdapter mit OBO-Pattern auf (alle user-Routes
+   * senden `Authorization: Bearer <service-token>` + `X-On-Behalf-Of: <obo-jwt>`).
+   * Wenn ungesetzt: Legacy-Pfad (`Authorization: Bearer <user-jwt>`).
+   */
+  readonly SERVICE_TOKEN?: string;
 }
 
 /**
@@ -592,28 +663,26 @@ export async function createKnowledgeService(args: {
     throw new Error('createKnowledgeService: failed to load private key');
   }
 
-  const signer: JwtSigner = {
-    async sign({ sub, scope, ttlSec = 60 }) {
-      const payload: Record<string, unknown> = {};
-      if (scope !== undefined) payload['scope'] = scope;
-      const signArgs: Parameters<typeof signJwt>[0] = {
-        payload,
-        privateKey,
-        alg: 'RS256',
-        expiresInSec: ttlSec,
-        issuer,
-        audience,
-        subject: sub,
-      };
-      if (args.env.JWT_KID !== undefined) signArgs.kid = args.env.JWT_KID;
-      return signJwt(signArgs);
-    },
-  };
+  const signer: JwtSigner = makeRs256Signer({
+    privateKey,
+    issuer,
+    audience,
+    ...(args.env.JWT_KID !== undefined ? { kid: args.env.JWT_KID } : {}),
+  });
 
-  const baseAdapterOpts = {
+  const baseAdapterOpts: {
+    baseUrl: string;
+    jwtSigner: JwtSigner;
+    serviceToken?: string;
+  } = {
     baseUrl: args.env.KNOWLEDGE_URL,
     jwtSigner: signer,
   };
+  // AS-3: wenn SERVICE_TOKEN gesetzt ist, schaltet der Adapter intern auf den
+  // OBO-Pfad um. Ohne den Token gilt der Legacy-Bearer-JWT-Pfad.
+  if (args.env.SERVICE_TOKEN !== undefined && args.env.SERVICE_TOKEN.length > 0) {
+    baseAdapterOpts.serviceToken = args.env.SERVICE_TOKEN;
+  }
   const fetchImpl = args.fetchImpl;
   const adapter = new HttpKnowledgeAdapter(
     fetchImpl
@@ -630,3 +699,83 @@ export async function createKnowledgeService(args: {
   return new KnowledgeService(svcOpts);
 }
 
+// =============================================================================
+// JWT-Signer-Factory (AS-3)
+// =============================================================================
+
+interface Rs256SignerArgs {
+  readonly privateKey: CryptoKey;
+  readonly issuer: string;
+  readonly audience: string;
+  readonly kid?: string;
+}
+
+/**
+ * Konstruiert einen `JwtSigner` der beide Methoden bedient — `sign` (legacy)
+ * und `signOBO` (AS-3). Beide nutzen denselben RS256-Private-Key, nur
+ * unterschiedliche Claim-Sets.
+ *
+ * Plan-Ref: PLAN-as3-autonomous.md §1.2 + §2.1.
+ *
+ * Behavior:
+ *   - `sign(sub, scope, ttlSec=60)`: Legacy-Pfad, traegt `iss/aud/sub/iat/exp`
+ *     und optional `scope`. Wird heute nur noch fuer den Internal-Erase-Route
+ *     gebraucht — der OBO-Pfad ersetzt alle User-Routes-Calls.
+ *   - `signOBO(SignOboArgs)`: AS-3-Pattern. Audience-Override moeglich (default
+ *     bleibt die Factory-Audience). Setzt:
+ *         `iss=issuer, aud=args.aud, sub=args.sub, on_behalf_of, request_id?, approval_id?, jti, iat, exp`.
+ *     `jti` wird hier generiert (crypto.randomUUID) damit KC2 Replay-
+ *     Detection in Phase 2 leicht nachruesten kann.
+ *
+ * `kid` wird im Protected-Header gesetzt wenn vorhanden — KC2's JWKS-Lookup
+ * matched darueber den Public-Key.
+ */
+export function makeRs256Signer(args: Rs256SignerArgs): JwtSigner {
+  const { privateKey, issuer, audience, kid } = args;
+
+  return {
+    async sign({ sub, scope, ttlSec = 60 }) {
+      const payload: Record<string, unknown> = {};
+      if (scope !== undefined) payload['scope'] = scope;
+      const signArgs: Parameters<typeof signJwt>[0] = {
+        payload,
+        privateKey,
+        alg: 'RS256',
+        expiresInSec: ttlSec,
+        issuer,
+        audience,
+        subject: sub,
+      };
+      if (kid !== undefined) signArgs.kid = kid;
+      return signJwt(signArgs);
+    },
+
+    async signOBO({ sub, aud, on_behalf_of, approval_id, request_id, ttlSec = 120 }) {
+      const payload: Record<string, unknown> = {
+        on_behalf_of,
+      };
+      if (approval_id !== undefined) payload['approval_id'] = approval_id;
+      if (request_id !== undefined) payload['request_id'] = request_id;
+      const signArgs: Parameters<typeof signJwt>[0] = {
+        payload,
+        privateKey,
+        alg: 'RS256',
+        expiresInSec: ttlSec,
+        issuer,
+        audience: aud,
+        subject: sub,
+        jti: randomUuid(),
+      };
+      if (kid !== undefined) signArgs.kid = kid;
+      return signJwt(signArgs);
+    },
+  };
+}
+
+function randomUuid(): string {
+  const g = globalThis as { crypto?: { randomUUID?: () => string } };
+  if (g.crypto?.randomUUID) return g.crypto.randomUUID();
+  // Fallback Pseudo-UUID (sehr unwahrscheinlich genutzt, Node 20+/CF haben randomUUID).
+  const rand = () => Math.floor(Math.random() * 0xffff_ffff).toString(16);
+  return `${rand()}-${rand()}-${rand()}-${rand()}`;
+}

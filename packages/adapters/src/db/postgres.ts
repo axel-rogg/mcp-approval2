@@ -80,6 +80,11 @@ export class PostgresDbAdapter implements DbAdapter {
     await reserved`BEGIN`;
     await reserved`SELECT set_config('app.current_user', ${userId}, true)`;
 
+    // drizzle's construct() greift auf client.options.parsers zu; ReservedSql
+    // hat keine eigenen options (die leben auf der parent Sql-Instanz).
+    // Wir attachen sie damit der drizzle-init-Loop nicht crashed mit
+    // "Cannot read properties of undefined (reading 'parsers')".
+    (reserved as unknown as { options: unknown }).options = this.sql.options;
     const scopedDb = drizzle(reserved as unknown as postgres.Sql);
 
     const handle: ScopedDb & { release(): Promise<void> } = {
@@ -139,6 +144,8 @@ export class PostgresDbAdapter implements DbAdapter {
     assertUuid(userId);
     const result = await this.sql.begin(async (tx) => {
       await tx`SELECT set_config('app.current_user', ${userId}, true)`;
+      // Siehe scoped() — TransactionSql hat ebenfalls keine eigenen options.
+      (tx as unknown as { options: unknown }).options = this.sql.options;
       const drz = drizzle(tx as unknown as postgres.Sql);
       const scoped: ScopedDb = {
         userId,

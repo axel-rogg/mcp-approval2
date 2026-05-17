@@ -1,0 +1,22 @@
+# Daily 03:00 UTC trigger for mcp-backup.service.
+#
+# 03:00 UTC = 04:00 CET = 05:00 CEST — outside business hours in EU,
+# minimal load on Postgres for a full dump.
+
+[Unit]
+Description=Daily timer for mcp-backup.service
+Documentation=file:///opt/mcp-approval2/docs/runbooks/runbook-hetzner-backup-restore.md
+Requires=mcp-backup.service
+
+[Timer]
+# Daily at 03:00 UTC. RandomizedDelay smears across the minute to avoid
+# every Hetzner customer hitting Storage Box at exactly 03:00:00.
+OnCalendar=*-*-* 03:00:00 UTC
+RandomizedDelaySec=120
+# If the VM was off at 03:00, run as soon as it boots — better late
+# than never. Persistent=true requires the marker file in /var/lib/systemd/timers.
+Persistent=true
+Unit=mcp-backup.service
+
+[Install]
+WantedBy=timers.target

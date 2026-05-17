@@ -37,7 +37,18 @@ export type UserProfileUpdateInput = z.infer<typeof UserProfileUpdateInput>;
 // Knowledge-Tools
 // =============================================================================
 
-const KnowledgeKind = z.enum(['doc', 'skill', 'app', 'memo']);
+/**
+ * Free-form Subtype-Discriminator (post-ADR-0004 Generic Object Model).
+ * Storage akzeptiert beliebige Strings, der Form-Regex (mit `:`-Erlaubnis
+ * fuer `app:`-Namespacing) ist Caller-Convention.
+ */
+export const KnowledgeSubtype = z
+  .string()
+  .min(1)
+  .max(32)
+  .regex(/^[a-z][a-z0-9_:-]*$/, {
+    message: 'subtype must be lowercase alphanumeric with -, _, : separators (starts with a letter)',
+  });
 
 export const KnowledgeDocsCreateInput = z
   .object({
@@ -45,7 +56,7 @@ export const KnowledgeDocsCreateInput = z
     body: z.string().min(1).max(1_000_000),
     description: z.string().max(2000).optional(),
     keywords: z.array(z.string().min(1).max(64)).max(32).optional(),
-    subtype: z.string().min(1).max(64).optional(),
+    subtype: KnowledgeSubtype.optional(),
     visibility: z.enum(['private', 'shared']).optional(),
   })
   .strict();
@@ -78,7 +89,7 @@ export type KnowledgeSkillsListInput = z.infer<typeof KnowledgeSkillsListInput>;
 export const KnowledgeSearchInput = z
   .object({
     query: z.string().min(1).max(1024),
-    kinds: z.array(KnowledgeKind).max(4).optional(),
+    subtypes: z.array(KnowledgeSubtype).max(16).optional(),
     limit: z.number().int().min(1).max(100).optional(),
   })
   .strict();
@@ -271,13 +282,235 @@ export const MemorizeDeleteInput = z
 export type MemorizeDeleteInput = z.infer<typeof MemorizeDeleteInput>;
 
 // =============================================================================
+// Subtype-Konstanten (PLAN-wrapper-conventions §"Drift-Prevention")
+//
+// Wrapper exportieren Subtype-Strings als Konstanten statt String-Literals.
+// Wer eine neue Wrapper-Familie anlegt MUSS einen Eintrag in
+// docs/plans/active/PLAN-wrapper-conventions.md §"Subtype-Tabelle" machen
+// und die Konstante hier hinzufuegen.
+// =============================================================================
+
+export const LIST_SUBTYPE = 'list' as const;
+export const NOTE_SUBTYPE = 'note' as const;
+export const BOOKMARK_SUBTYPE = 'bookmark' as const;
+export const RECIPE_SUBTYPE = 'recipe' as const;
+
+// =============================================================================
+// Lists-Tools (subtype='list', Body=Markdown-Checkbox)
+//
+// Body-Format-Regex (validateListBody in lists-tools.ts):
+//   - H1 optional als 1. Zeile: ^# .+$
+//   - Item-Zeilen: ^- \[[ xX]\] .+(\s+#[a-z0-9_-]{1,32})*$
+//   - Leerzeilen erlaubt
+// Max 120 Items (siehe PLAN-wrapper-conventions §"Body-Formate / list").
+// =============================================================================
+
+export const ListsCreateInput = z
+  .object({
+    title: z.string().min(1).max(200),
+    items: z.array(z.string().min(1).max(280)).max(120).optional(),
+  })
+  .strict();
+export type ListsCreateInput = z.infer<typeof ListsCreateInput>;
+
+export const ListsAddItemInput = z
+  .object({
+    id: z.string().min(1).max(128),
+    item: z.string().min(1).max(280),
+    tag: z.string().min(1).max(32).regex(/^[a-z0-9_-]+$/).optional(),
+  })
+  .strict();
+export type ListsAddItemInput = z.infer<typeof ListsAddItemInput>;
+
+export const ListsTickInput = z
+  .object({
+    id: z.string().min(1).max(128),
+    /** Text-substring (case-insensitive) used to identify the item. */
+    match: z.string().min(1).max(280).optional(),
+    /** Zero-based line index alternative (counts only `- [ ]/[x]` rows). */
+    line_index: z.number().int().nonnegative().max(120).optional(),
+  })
+  .strict()
+  .refine(
+    (v) => v.match !== undefined || v.line_index !== undefined,
+    { message: 'one of match or line_index must be provided' },
+  );
+export type ListsTickInput = z.infer<typeof ListsTickInput>;
+
+export const ListsUntickInput = ListsTickInput;
+export type ListsUntickInput = z.infer<typeof ListsUntickInput>;
+
+export const ListsListInput = z
+  .object({
+    limit: z.number().int().min(1).max(200).optional(),
+    cursor: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+export type ListsListInput = z.infer<typeof ListsListInput>;
+
+export const ListsGetInput = z
+  .object({
+    id: z.string().min(1).max(128),
+  })
+  .strict();
+export type ListsGetInput = z.infer<typeof ListsGetInput>;
+
+// =============================================================================
+// Notes-Tools (subtype='note', Body=Markdown frei)
+// =============================================================================
+
+export const NotesCreateInput = z
+  .object({
+    title: z.string().min(1).max(200),
+    body: z.string().min(1).max(16_384),
+    description: z.string().min(1).max(2000).optional(),
+    embed: z.boolean().optional(),
+    keywords: z.array(z.string().min(1).max(64)).max(32).optional(),
+  })
+  .strict();
+export type NotesCreateInput = z.infer<typeof NotesCreateInput>;
+
+export const NotesUpdateInput = z
+  .object({
+    id: z.string().min(1).max(128),
+    title: z.string().min(1).max(200).optional(),
+    body: z.string().min(1).max(16_384).optional(),
+    description: z.string().max(2000).optional(),
+    keywords: z.array(z.string().min(1).max(64)).max(32).optional(),
+    expected_version: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+  .refine(
+    (v) =>
+      v.title !== undefined ||
+      v.body !== undefined ||
+      v.description !== undefined ||
+      v.keywords !== undefined,
+    { message: 'at least one of title/body/description/keywords must be provided' },
+  );
+export type NotesUpdateInput = z.infer<typeof NotesUpdateInput>;
+
+export const NotesListInput = z
+  .object({
+    limit: z.number().int().min(1).max(200).optional(),
+    cursor: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+export type NotesListInput = z.infer<typeof NotesListInput>;
+
+export const NotesGetInput = z
+  .object({
+    id: z.string().min(1).max(128),
+  })
+  .strict();
+export type NotesGetInput = z.infer<typeof NotesGetInput>;
+
+export const NotesDeleteInput = z
+  .object({
+    id: z.string().min(1).max(128),
+  })
+  .strict();
+export type NotesDeleteInput = z.infer<typeof NotesDeleteInput>;
+
+// =============================================================================
+// Bookmarks-Tools (subtype='bookmark', Body=Markdown notes, meta.url)
+// =============================================================================
+
+export const BookmarksCreateInput = z
+  .object({
+    title: z.string().min(1).max(200),
+    url: z.string().url().max(2048),
+    notes: z.string().max(8000).optional(),
+    keywords: z.array(z.string().min(1).max(64)).max(32).optional(),
+  })
+  .strict();
+export type BookmarksCreateInput = z.infer<typeof BookmarksCreateInput>;
+
+export const BookmarksListInput = z
+  .object({
+    limit: z.number().int().min(1).max(200).optional(),
+    cursor: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+export type BookmarksListInput = z.infer<typeof BookmarksListInput>;
+
+export const BookmarksGetInput = z
+  .object({
+    id: z.string().min(1).max(128),
+  })
+  .strict();
+export type BookmarksGetInput = z.infer<typeof BookmarksGetInput>;
+
+export const BookmarksDeleteInput = z
+  .object({
+    id: z.string().min(1).max(128),
+  })
+  .strict();
+export type BookmarksDeleteInput = z.infer<typeof BookmarksDeleteInput>;
+
+// =============================================================================
+// Recipes-Tools (subtype='recipe', Body=Markdown + optional YAML-Frontmatter)
+// =============================================================================
+
+export const RecipesCreateInput = z
+  .object({
+    title: z.string().min(1).max(200),
+    body: z.string().min(1).max(32_768),
+    description: z.string().min(1).max(2000).optional(),
+    keywords: z.array(z.string().min(1).max(64)).max(32).optional(),
+  })
+  .strict();
+export type RecipesCreateInput = z.infer<typeof RecipesCreateInput>;
+
+export const RecipesUpdateInput = z
+  .object({
+    id: z.string().min(1).max(128),
+    title: z.string().min(1).max(200).optional(),
+    body: z.string().min(1).max(32_768).optional(),
+    description: z.string().max(2000).optional(),
+    keywords: z.array(z.string().min(1).max(64)).max(32).optional(),
+    expected_version: z.number().int().nonnegative().optional(),
+  })
+  .strict()
+  .refine(
+    (v) =>
+      v.title !== undefined ||
+      v.body !== undefined ||
+      v.description !== undefined ||
+      v.keywords !== undefined,
+    { message: 'at least one of title/body/description/keywords must be provided' },
+  );
+export type RecipesUpdateInput = z.infer<typeof RecipesUpdateInput>;
+
+export const RecipesListInput = z
+  .object({
+    limit: z.number().int().min(1).max(200).optional(),
+    cursor: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+export type RecipesListInput = z.infer<typeof RecipesListInput>;
+
+export const RecipesGetInput = z
+  .object({
+    id: z.string().min(1).max(128),
+  })
+  .strict();
+export type RecipesGetInput = z.infer<typeof RecipesGetInput>;
+
+export const RecipesDeleteInput = z
+  .object({
+    id: z.string().min(1).max(128),
+  })
+  .strict();
+export type RecipesDeleteInput = z.infer<typeof RecipesDeleteInput>;
+
+// =============================================================================
 // Objects-Tools  (technical view, all kinds)
 // =============================================================================
 
 export const ObjectsListInput = z
   .object({
-    kind: KnowledgeKind.optional(),
-    subtype: z.string().min(1).max(64).optional(),
+    subtype: KnowledgeSubtype.optional(),
     limit: z.number().int().min(1).max(200).optional(),
     cursor: z.number().int().nonnegative().optional(),
   })

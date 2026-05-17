@@ -1,8 +1,9 @@
 # ADR-0010: OpenBao Self-Hosted als KEK-Provider
 
-**Status:** Accepted  
-**Date:** 2026-05-13  
-**Deciders:** Axel + Claude (Decision-Session)  
+**Status:** ⚠️ Superseded by [ADR-0011](./0011-cloud-kms-kek-provider.md) (2026-05-17) für privat-Mode. OpenBao-Setup bleibt als alternative Selfhosting-Variante implementiert (TF unter `terraform/environments/privat-openbao/`, Adapter-Code intakt), ist aber nicht mehr Default-Pfad. Begründung der Supersession: Solo-Operator hat keinen Offline-Key-Storage (USB/Paper-Wallet), wodurch OpenBao seinen Sicherheitsmehrwert verliert.
+**Date:** 2026-05-13
+**Superseded:** 2026-05-17
+**Deciders:** Axel + Claude (Decision-Session)
 **Plan-Reference:** [PLAN-architecture-v1.md §0, §5.2](../plans/active/PLAN-architecture-v1.md)
 
 ## Context and Problem Statement

@@ -37,6 +37,15 @@ describe('cron dispatcher', () => {
     expect(CRON_TASKS).toContain('sweep-prf-sessions');
     expect(CRON_TASKS).toContain('gateway-discovery');
     expect(CRON_TASKS).toContain('reminders');
+    expect(CRON_TASKS).toContain('kc-manifest-refresh');
+  });
+
+  it('runs kc-manifest-refresh as noop without kcManifest deps', async () => {
+    const db = makeDbStub();
+    const result = await runCronTask('kc-manifest-refresh', { db });
+    expect(result['tools_count']).toBe(0);
+    expect(result['added']).toBe(0);
+    expect(result['removed']).toBe(0);
   });
 
   it('isCronTask narrows correctly', () => {

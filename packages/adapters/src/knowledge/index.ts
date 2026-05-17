@@ -9,7 +9,6 @@
 export type {
   CreateObjectArgs,
   KnowledgeObject,
-  ObjectKind,
   ObjectsList,
   SearchHit,
   Share,
@@ -24,9 +23,13 @@ export type {
   KnowledgeAdapter,
   ListObjectsArgs,
   ListSharesArgs,
+  OnBehalfOfFields,
   RevokeShareArgs,
   SearchArgs,
+  SyncUserArgs,
+  SyncUserResult,
   UpdateObjectArgs,
+  UserSyncStatus,
 } from './interface.js';
 
 export {
@@ -36,6 +39,7 @@ export type {
   FetchLike,
   HttpKnowledgeAdapterOptions,
   JwtSigner,
+  SignOboArgs,
 } from './http-client.js';
 
 export {

@@ -32,6 +32,8 @@ import type {
   ListSharesArgs,
   RevokeShareArgs,
   SearchArgs,
+  SyncUserArgs,
+  SyncUserResult,
   UpdateObjectArgs,
 } from './interface.js';
 import type {
@@ -43,12 +45,55 @@ import type {
 } from './types.js';
 import { errorFromResponse, ServiceError } from './errors.js';
 
+/**
+ * Args fuer `JwtSigner.signOBO` — On-Behalf-Of-Token gegen KC2.
+ *
+ * Plan-Ref: PLAN-as3-autonomous.md §2.1 + §1.2.
+ *
+ * Wire-Shape (was der Signer in den JWT-Payload setzt):
+ *   ```
+ *   {
+ *     iss: <SELF_OAUTH_ISSUER ?? ORIGIN>,
+ *     aud: 'mcp-knowledge2',
+ *     sub: <approval2-internal-users.id>,
+ *     on_behalf_of: <google-email>,
+ *     approval_id?: <uuid>,                 // Pflicht bei write-Tools
+ *     request_id?: <uuid>,
+ *     jti: <uuid>,                           // Replay-Prevention
+ *     iat, exp                               // exp = iat + ttlSec (Default 120s)
+ *   }
+ *   ```
+ */
+export interface SignOboArgs {
+  readonly sub: string;
+  readonly aud: string;
+  readonly on_behalf_of: string;
+  readonly approval_id?: string;
+  readonly request_id?: string;
+  /** Default 120s. */
+  readonly ttlSec?: number;
+}
+
 export interface JwtSigner {
   /**
-   * Signt einen kurzlebigen Service-Boundary-JWT.
+   * Signt einen kurzlebigen Service-Boundary-JWT (Legacy-Pattern, v1).
    * Pflicht: sub. Optional: scope (fine-grained), ttlSec (default 60).
+   *
+   * **Deprecation:** Wird durch `signOBO` ersetzt (AS-3, §1.2). Bleibt
+   * verfuegbar fuer den Internal-Erase-Pfad und Legacy-Pfade die noch
+   * keinen OBO-Konsumenten haben.
    */
   sign(args: { sub: string; scope?: string; ttlSec?: number }): Promise<string>;
+
+  /**
+   * Signt einen OBO-JWT (On-Behalf-Of) fuer den Service-Call approval2 →
+   * KC2. Wird im `X-On-Behalf-Of`-Header transportiert, das eigentliche
+   * Bearer-Token ist der statische `SERVICE_TOKEN` (siehe
+   * `HttpKnowledgeAdapterOptions.serviceToken`).
+   *
+   * Plan-Ref: PLAN-as3-autonomous.md §2.1.
+   */
+  signOBO(args: SignOboArgs): Promise<string>;
 }
 
 export type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
@@ -77,6 +122,20 @@ interface AuthedFetchArgs {
   readonly scope?: string;
   readonly requestId?: string;
   readonly query?: Record<string, string | number | undefined>;
+  /**
+   * AS-3 (§1.2): wenn der Caller eine User-Email kennt (z.B. aus dem
+   * Session-Principal), wandert sie in den OBO-JWT als
+   * `on_behalf_of`-Claim. Pflicht im OBO-Pfad — wenn nicht gesetzt,
+   * faellt der Adapter zurueck auf Legacy-JWT-Bearer (kein on-behalf-of
+   * mitsenden).
+   */
+  readonly userEmail?: string;
+  /**
+   * AS-3 (§1.5 + §1.6): bei state-changing Tool-Calls nach Approval-
+   * Approve traegt der Approval-Handler die `approval_id` mit, damit KC2
+   * den Audit-Trail `via_proxy=true, approval_id=<…>` sieht.
+   */
+  readonly approvalId?: string;
 }
 
 interface ServiceFetchArgs {
@@ -111,14 +170,45 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
   // ---------------------------------------------------------------------------
 
   private async authedFetch<T>(args: AuthedFetchArgs): Promise<T> {
+    const reqId = args.requestId ?? this.requestIdFactory();
+    const url = this.buildUrl(args.path, args.query);
+
+    // AS-3 (§1.2): wenn `serviceToken` konfiguriert ist → OBO-Pfad. Sonst
+    // legacy Per-Call-JWT-Bearer.
+    if (this.serviceToken) {
+      const oboArgs: {
+        sub: string;
+        aud: string;
+        on_behalf_of: string;
+        ttlSec: number;
+        approval_id?: string;
+        request_id?: string;
+      } = {
+        sub: args.userId,
+        aud: 'mcp-knowledge2',
+        on_behalf_of: args.userEmail ?? args.userId,
+        ttlSec: 120, // §2.1 default
+        request_id: reqId,
+      };
+      if (args.approvalId !== undefined) oboArgs.approval_id = args.approvalId;
+      const obo = await this.jwtSigner.signOBO(oboArgs);
+      return this.doFetch<T>({
+        method: args.method,
+        url,
+        token: this.serviceToken,
+        body: args.body,
+        reqId,
+        oboToken: obo,
+      });
+    }
+
+    // Legacy-Pfad: Per-Call-Bearer-JWT.
     const signArgs: { sub: string; ttlSec: number; scope?: string } = {
       sub: args.userId,
       ttlSec: this.jwtTtlSec,
     };
     if (args.scope !== undefined) signArgs.scope = args.scope;
     const token = await this.jwtSigner.sign(signArgs);
-    const reqId = args.requestId ?? this.requestIdFactory();
-    const url = this.buildUrl(args.path, args.query);
     return this.doFetch<T>({ method: args.method, url, token, body: args.body, reqId });
   }
 
@@ -146,12 +236,17 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
     readonly token: string;
     readonly body?: unknown;
     readonly reqId: string;
+    /** AS-3: OBO-JWT als `X-On-Behalf-Of`-Header, parallel zum Service-Bearer. */
+    readonly oboToken?: string;
   }): Promise<T> {
     const headers: Record<string, string> = {
       authorization: `Bearer ${opts.token}`,
       'x-request-id': opts.reqId,
       accept: 'application/json',
     };
+    if (opts.oboToken !== undefined) {
+      headers['x-on-behalf-of'] = opts.oboToken;
+    }
     let bodyInit: BodyInit | undefined;
     if (opts.body !== undefined) {
       headers['content-type'] = 'application/json';
@@ -220,7 +315,8 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
 
   async createObject(args: CreateObjectArgs): Promise<KnowledgeObject> {
     // D-2 + D-3: body als base64 unter `body_b64`, plus mime_type/filename/embed.
-    const body: Record<string, unknown> = { kind: args.kind };
+    // ADR-0004: kein `kind` mehr, optionales free-form `subtype`.
+    const body: Record<string, unknown> = {};
     if (args.subtype !== undefined) body['subtype'] = args.subtype;
     if (args.title !== undefined) body['title'] = args.title;
     if (args.description !== undefined) body['description'] = args.description;
@@ -237,7 +333,9 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
       path: '/v1/objects',
       userId: args.userId,
       body,
-      scope: `${args.kind}:write`,
+      scope: 'objects:write',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
     });
   }
 
@@ -252,15 +350,27 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
       userId: args.userId,
       query,
       scope: 'objects:read',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
     });
     return normaliseObjectView(raw);
   }
 
   async listObjects(args: ListObjectsArgs): Promise<ObjectsList> {
     // D-4 + D-5: server liefert `{items, next_cursor}` mit number-cursor.
+    // ADR-0004: nur noch free-form `subtype`-Filter.
+    // Mutual-Exclusive: subtype + subtypePrefix duerfen nicht zusammen
+    // gesetzt sein. Wir fangen das lokal ab — kein unnoetiger HTTP-Call
+    // gegen eine garantierte 400.
+    if (args.subtype !== undefined && args.subtypePrefix !== undefined) {
+      throw new ServiceError(
+        'listObjects: subtype and subtypePrefix are mutually exclusive',
+        400,
+      );
+    }
     const query: Record<string, string | number | undefined> = {};
-    if (args.kind !== undefined) query['kind'] = args.kind;
     if (args.subtype !== undefined) query['subtype'] = args.subtype;
+    if (args.subtypePrefix !== undefined) query['subtype_prefix'] = args.subtypePrefix;
     if (args.limit !== undefined) query['limit'] = args.limit;
     if (args.cursor !== undefined && args.cursor !== null) query['cursor'] = args.cursor;
     const raw = await this.authedFetch<{
@@ -272,6 +382,8 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
       userId: args.userId,
       query,
       scope: 'objects:read',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
     });
     return {
       items: raw.items.map(normaliseObjectView),
@@ -300,16 +412,25 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
       userId: args.userId,
       body,
       scope: 'objects:write',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
     });
     return normaliseObjectView(raw);
   }
 
-  async deleteObject(args: { id: string; userId: string }): Promise<void> {
+  async deleteObject(args: {
+    id: string;
+    userId: string;
+    userEmail?: string;
+    approvalId?: string;
+  }): Promise<void> {
     await this.authedFetch<void>({
       method: 'DELETE',
       path: `/v1/objects/${encodeURIComponent(args.id)}`,
       userId: args.userId,
       scope: 'objects:write',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
     });
   }
 
@@ -331,6 +452,8 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
       userId: args.userId,
       body,
       scope: 'shares:write',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
     });
   }
 
@@ -341,6 +464,8 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
       path: `/v1/objects/${encodeURIComponent(args.resourceId)}/shares`,
       userId: args.userId,
       scope: 'shares:read',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
     });
     return res.items;
   }
@@ -351,6 +476,8 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
       path: `/v1/shares/${encodeURIComponent(args.shareId)}`,
       userId: args.userId,
       scope: 'shares:write',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
     });
   }
 
@@ -359,17 +486,15 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
   // ---------------------------------------------------------------------------
 
   async search(args: SearchArgs): Promise<ReadonlyArray<SearchHit>> {
-    // D-9 (joint): server akzeptiert single `kind` heute. Multi-kind wird
-    // server-seitig nachgereicht — Adapter ist forward-compatible:
-    //   - kinds=[] / undefined → kein kind-filter
-    //   - kinds.length === 1   → server `kind: ObjectKind`
-    //   - kinds.length > 1     → server `kind: ObjectKind[]` (Server-Side wird
-    //                            das heute silently ignoriert; sobald die
-    //                            Server-Erweiterung live ist, filtern beide
-    //                            Seiten konsistent).
+    // ADR-0004: free-form `subtypes`-Array statt `kind`. Storage erlaubt
+    // Mehrfach-Filter; leeres Array / undefined → kein Filter.
     const body: Record<string, unknown> = { query: args.query };
-    if (args.kinds !== undefined && args.kinds.length > 0) {
-      body['kind'] = args.kinds.length === 1 ? args.kinds[0] : args.kinds;
+    if (args.subtypes !== undefined && args.subtypes.length > 0) {
+      body['subtypes'] = args.subtypes;
+    }
+    // subtype_prefixes combinable with subtypes (server joins via OR).
+    if (args.subtypePrefixes !== undefined && args.subtypePrefixes.length > 0) {
+      body['subtype_prefixes'] = args.subtypePrefixes;
     }
     if (args.limit !== undefined) body['limit'] = args.limit;
     const res = await this.authedFetch<{ items: ReadonlyArray<SearchHit> }>({
@@ -378,6 +503,8 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
       userId: args.userId,
       body,
       scope: 'search:read',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
     });
     return res.items;
   }
@@ -385,6 +512,39 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
   // ---------------------------------------------------------------------------
   // Internal (admin) — D-10: Service-Token, NICHT User-JWT.
   // ---------------------------------------------------------------------------
+
+  /**
+   * AS-3 (§2.2 + A11): Push-Sync User-State an KC2.
+   *
+   * Wire-Shape: `POST /v1/internal/users/sync`
+   *   Body (snake_case):
+   *     `{user_id, email, display_name, status, external_id?}`
+   *   Response: `{status: 'created'|'updated'|'unchanged', kc_user_id}`
+   *
+   * Auth: Service-Token im Bearer-Header. KEIN OBO-JWT — das ist ein
+   * Admin-Call.
+   */
+  async syncUser(args: SyncUserArgs): Promise<SyncUserResult> {
+    const body: Record<string, unknown> = {
+      user_id: args.userId,
+      email: args.email,
+      display_name: args.displayName,
+      status: args.status,
+    };
+    if (args.externalId !== undefined) body['external_id'] = args.externalId;
+    const raw = await this.serviceFetch<{
+      status: 'created' | 'updated' | 'unchanged';
+      kc_user_id: string;
+    }>({
+      method: 'POST',
+      path: '/v1/internal/users/sync',
+      body,
+    });
+    return {
+      status: raw.status,
+      kcUserId: raw.kc_user_id,
+    };
+  }
 
   async eraseUser(args: EraseUserArgs): Promise<EraseUserResult> {
     const raw = await this.serviceFetch<{

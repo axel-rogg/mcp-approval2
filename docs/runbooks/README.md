@@ -10,14 +10,28 @@ Operative Playbooks fuer mcp-approval2 Pilot-Betrieb. Diese Files sind fuer Oper
 | [pilot-smoke](runbook-pilot-smoke.md) | Stable | Smoke-Tests gegen laufenden Pilot |
 | [incident-response](runbook-incident-response.md) | Stable | SEV-Klassifikation, Forensik, Notification, Post-Incident |
 | [token-rotation](runbook-token-rotation.md) | Stable | Application-Token-Rotation (RS256-JWT, INTERNAL, OAuth-Client) |
-| [fly-deploy](runbook-fly-deploy.md) | Stable | Fly.io-Deploy + Operations (Legacy hobby-Setup) |
+| [fly-deploy](runbook-fly-deploy.md) | **Primary** | **Fly.io-Deploy + Operations (privat-Mode-Pfad, Stand 2026-05-17)** |
 | [cloudflare-deploy](runbook-cloudflare-deploy.md) | Draft | Cloudflare-Workers-Deploy (Sub-MCPs) |
-| [hetzner-deploy](runbook-hetzner-deploy.md) | Ready | Hetzner Initial-Deploy + Updates (Privat-Pilot) |
-| [hetzner-rotate-vault](runbook-hetzner-rotate-vault.md) | Ready | OpenBao-Vault Token + AppRole + Transit-Key Rotation |
-| [hetzner-backup-restore](runbook-hetzner-backup-restore.md) | Ready | DB-Dump + Vault-Snapshot + Restore-Verfahren |
-| [hetzner-disaster-recovery](runbook-hetzner-disaster-recovery.md) | Ready | Komplett-Wiederherstellung (VM-Loss, DB-Corruption, Vault-Loss) |
-| [hetzner-to-gcp-migration](runbook-hetzner-to-gcp-migration.md) | Stub | Migration-Pfad zu GCP (Phase 2) |
-| [multi-instance-operations](runbook-multi-instance-operations.md) | Stub | Parallelbetrieb privat + business |
+
+## Deprecated (Audit-Trail / Notfall-Reset)
+
+Folgende Runbooks dokumentieren den historischen Hetzner-Self-Host-Pfad
+(2026-05-13 bis 2026-05-17). Sie sind nicht mehr Teil der aktuellen
+Architektur (Switch auf Fly.io per [docs/privat.md §9.4](../privat.md)),
+bleiben aber als Audit-Trail / Disaster-Recovery-Reaktivierungs-Material:
+
+| Runbook | Use-Case (deprecated) |
+|---|---|
+| [hetzner-deploy](runbook-hetzner-deploy.md) | Hetzner Initial-Deploy + Updates |
+| [hetzner-rotate-vault](runbook-hetzner-rotate-vault.md) | OpenBao-Vault Rotation (Hetzner-VM-bound — Fly-Variante: fly-deploy Operations-Section) |
+| [hetzner-backup-restore](runbook-hetzner-backup-restore.md) | DB-Dump + Vault-Snapshot + Restore (Hetzner-VM-bound) |
+| [hetzner-disaster-recovery](runbook-hetzner-disaster-recovery.md) | Komplett-Wiederherstellung (VM-Loss, DB-Corruption, Vault-Loss) |
+| [hetzner-auto-deploy](runbook-hetzner-auto-deploy.md) | GH-Actions-Auto-Deploy gegen Hetzner-VM |
+| [hetzner-to-gcp-migration](runbook-hetzner-to-gcp-migration.md) | Migration Hetzner → GCP (durch Fly→GCP-Migration in privat.md §8 ersetzt) |
+| [vm-start-stop](runbook-vm-start-stop.md) | Hetzner-VM Power-Management |
+| [vm-destroy-recreate](runbook-vm-destroy-recreate.md) | Hetzner-VM destroy + re-provision |
+| [coop-bypass](runbook-coop-bypass.md) | Hetzner-FQDN als Zscaler-Bypass (Fly hat das Problem nicht) |
+| [multi-instance-operations](runbook-multi-instance-operations.md) | Parallelbetrieb privat + business (Stub — überarbeiten wenn business-Mode aktiv) |
 
 ## TODO Phase 7
 

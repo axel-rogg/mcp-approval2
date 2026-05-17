@@ -40,6 +40,15 @@ COPY packages/adapters packages/adapters
 COPY apps/server      apps/server
 COPY apps/web         apps/web
 
+# Re-link workspace-local node_modules — `npm ci` hoists some deps to the
+# root /app/node_modules and keeps others (like marked) in workspace-local
+# trees (apps/web/node_modules/marked). The above COPYs only carry the root
+# node_modules over from `deps`, so workspace-locals are missing after the
+# source COPY overwrites apps/web/. `npm install --no-save` is a no-op when
+# everything's already linked; here it re-creates the workspace-local
+# directories without re-downloading (uses the existing root node_modules).
+RUN npm install --no-save --no-audit --no-fund
+
 # Build core+adapters first (server depends on them), then the server itself,
 # finally the PWA (vite → apps/web/dist).
 RUN npm run build -w @mcp-approval2/core \

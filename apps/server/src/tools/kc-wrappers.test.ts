@@ -48,8 +48,7 @@ function makeDoc(overrides: Partial<KnowledgeObject> = {}): KnowledgeObject {
   return {
     id: 'doc-1',
     ownerId: USER_ID,
-    kind: 'doc',
-    subtype: null,
+    subtype: 'doc',
     title: 'Stub Doc',
     description: null,
     keywords: [],
@@ -74,7 +73,7 @@ function makeDoc(overrides: Partial<KnowledgeObject> = {}): KnowledgeObject {
 function makeSkill(overrides: Partial<KnowledgeObject> = {}): KnowledgeObject {
   return makeDoc({
     id: 'skill-1',
-    kind: 'skill',
+    subtype: 'skill_manifest',
     title: 'Stub Skill',
     filename: null,
     mimeType: null,
@@ -102,7 +101,6 @@ function makeAdapter(): {
   const share: Share = {
     id: 'share-1',
     resourceId: 'doc-1',
-    resourceKind: 'doc',
     grantedBy: USER_ID,
     grantedTo: 'user-2',
     scope: 'read',
@@ -114,8 +112,7 @@ function makeAdapter(): {
   const hits: ReadonlyArray<SearchHit> = [
     {
       id: 'doc-1',
-      kind: 'doc',
-      subtype: null,
+      subtype: 'doc',
       title: 'Stub Doc',
       score: 0.9,
       ftsRank: 0.5,
@@ -123,8 +120,7 @@ function makeAdapter(): {
     },
     {
       id: 'memo-1',
-      kind: 'memo',
-      subtype: 'project',
+      subtype: 'memo',
       title: 'memorize hit',
       score: 0.7,
       ftsRank: null,
@@ -132,8 +128,7 @@ function makeAdapter(): {
     },
     {
       id: 'skill-1',
-      kind: 'skill',
-      subtype: null,
+      subtype: 'skill_manifest',
       title: 'Stub Skill',
       score: 0.5,
       ftsRank: 0.5,
@@ -143,9 +138,15 @@ function makeAdapter(): {
 
   const adapter: KnowledgeAdapter = {
     async createObject(args) {
+      // Map canonical subtypes back to legacy IDs the tests expect:
+      //   'doc' → 'new-doc', 'skill_manifest' → 'new-skill', 'memo' → 'new-memo'.
+      const newIdSuffix =
+        args.subtype === 'doc' ? 'doc'
+        : args.subtype === 'skill_manifest' ? 'skill'
+        : args.subtype === 'memo' ? 'memo'
+        : args.subtype ?? 'object';
       const obj = makeDoc({
-        id: `new-${args.kind}`,
-        kind: args.kind,
+        id: `new-${newIdSuffix}`,
         title: args.title ?? null,
         ...(args.subtype !== undefined ? { subtype: args.subtype } : {}),
         ...(args.filename !== undefined ? { filename: args.filename } : {}),
@@ -164,9 +165,7 @@ function makeAdapter(): {
     },
     async listObjects(args) {
       const items = [...objects.values()].filter(
-        (o) =>
-          (args.kind === undefined || o.kind === args.kind) &&
-          (args.subtype === undefined || o.subtype === args.subtype),
+        (o) => args.subtype === undefined || o.subtype === args.subtype,
       );
       return { items, nextCursor: null } as ObjectsList;
     },
@@ -196,9 +195,9 @@ function makeAdapter(): {
       /* noop */
     },
     async search(args) {
-      const ks = args.kinds;
-      if (ks === undefined) return hits;
-      return hits.filter((h) => ks.includes(h.kind));
+      const sts = args.subtypes;
+      if (sts === undefined) return hits;
+      return hits.filter((h) => h.subtype != null && sts.includes(h.subtype));
     },
     async eraseUser() {
       return {
@@ -214,6 +213,9 @@ function makeAdapter(): {
         },
         deletedRows: 0,
       };
+    },
+    async syncUser() {
+      return { status: 'created', kcUserId: 'kc-stub-1' };
     },
   };
   return { adapter, state: { objects, deleted, updates } };
@@ -251,7 +253,7 @@ function buildRegistry(): {
 // ===========================================================================
 
 describe('registerKcWrapperTools — registration', () => {
-  it('registers all 20 KC-wrapper tools', () => {
+  it('registers all 40 KC-wrapper tools', () => {
     const { registry } = buildRegistry();
     const names = registry.list().map((t) => t.name);
     expect(names.sort()).toEqual(
@@ -276,9 +278,29 @@ describe('registerKcWrapperTools — registration', () => {
         'memorize.delete',
         'objects.list',
         'objects.read',
+        'lists.create',
+        'lists.add_item',
+        'lists.tick',
+        'lists.untick',
+        'lists.list',
+        'lists.get',
+        'notes.create',
+        'notes.update',
+        'notes.list',
+        'notes.get',
+        'notes.delete',
+        'bookmarks.create',
+        'bookmarks.list',
+        'bookmarks.get',
+        'bookmarks.delete',
+        'recipes.create',
+        'recipes.update',
+        'recipes.list',
+        'recipes.get',
+        'recipes.delete',
       ].sort(),
     );
-    expect(registry.size()).toBe(20);
+    expect(registry.size()).toBe(40);
   });
 
   it('exposes correct sensitivity annotations', () => {
@@ -526,7 +548,7 @@ describe('skills tools', () => {
       bypassApproval: true,
     });
     const created = state.objects.get('new-skill');
-    expect(created?.kind).toBe('skill');
+    expect(created?.subtype).toBe('skill_manifest');
     expect(created?.meta?.['groups']).toEqual(['core']);
     expect(created?.meta?.['resource_ids']).toEqual(['doc-1']);
   });
@@ -624,7 +646,7 @@ describe('memorize tools', () => {
     ).rejects.toBeInstanceOf(ApprovalRequiredError);
   });
 
-  it('memorize.add creates with kind=memo + subtype=scope + embed', async () => {
+  it('memorize.add creates with subtype=memo + meta.scope + embed', async () => {
     const { registry, state } = buildRegistry();
     const ctx = makeCtx(makeAudit());
     await registry.dispatch({
@@ -634,11 +656,11 @@ describe('memorize tools', () => {
       bypassApproval: true,
     });
     const created = state.objects.get('new-memo');
-    expect(created?.kind).toBe('memo');
-    expect(created?.subtype).toBe('preferences');
+    expect(created?.subtype).toBe('memo');
+    expect((created?.meta as { scope?: string } | null | undefined)?.scope).toBe('preferences');
   });
 
-  it('memorize.search restricts kinds=["memo"] + scope filter', async () => {
+  it('memorize.search restricts subtypes=["memo"] + scope filter', async () => {
     const { registry } = buildRegistry();
     const ctx = makeCtx(makeAudit());
     const res = await registry.dispatch({
@@ -693,17 +715,17 @@ describe('objects tools', () => {
     expect(text).toContain('skill-1');
   });
 
-  it('objects.list filters by kind', async () => {
+  it('objects.list filters by subtype', async () => {
     const { registry } = buildRegistry();
     const ctx = makeCtx(makeAudit());
     const res = await registry.dispatch({
       name: 'objects.list',
-      input: { kind: 'skill' },
+      input: { subtype: 'skill_manifest' },
       ctx,
     });
     const text = (res.result.content[0] as { text: string }).text;
     expect(text).toContain('skill-1');
-    expect(text).not.toContain('"kind":"doc"');
+    expect(text).not.toContain('"subtype":"doc"');
   });
 
   it('objects.read reads by id', async () => {

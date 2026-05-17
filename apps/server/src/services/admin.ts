@@ -7,6 +7,7 @@
 
 import type { DbAdapter } from '@mcp-approval2/adapters';
 import { emitAudit, type AuditEvent } from './audit.js';
+import type { UserSyncService } from './user-sync.js';
 
 export interface AdminUserSummary {
   id: string;
@@ -41,10 +42,16 @@ export interface AdminService {
 
 export interface AdminServiceOptions {
   db: DbAdapter;
+  /**
+   * AS-3 (A11): Optional UserSyncService. Wenn gesetzt: bei
+   * suspend/unsuspend pushed admin den neuen State an KC2.
+   * Fire-and-forget — Failure ist non-blocking, audit-only.
+   */
+  userSync?: UserSyncService;
 }
 
 export function createAdminService(opts: AdminServiceOptions): AdminService {
-  const { db } = opts;
+  const { db, userSync } = opts;
   const audit = {
     async emit(event: AuditEvent) {
       await emitAudit(db, event);
@@ -99,6 +106,27 @@ export function createAdminService(opts: AdminServiceOptions): AdminService {
         result: 'success',
         ...(reason ? { details: { reason } } : {}),
       });
+      // AS-3 (A11): push state to KC2 (fire-and-forget; audit-on-failure).
+      if (userSync) {
+        const userRow = await scoped.query<{
+          email: string;
+          display_name: string;
+          external_id: string | null;
+        }>(
+          `SELECT email, display_name, external_id FROM users WHERE id = $1 LIMIT 1`,
+          [id],
+        );
+        const row = userRow[0];
+        if (row) {
+          await userSync.push({
+            userId: id,
+            email: row.email,
+            displayName: row.display_name,
+            status: 'suspended',
+            ...(row.external_id ? { externalId: row.external_id } : {}),
+          });
+        }
+      }
     },
 
     async unsuspendUser({ id, actorUserId }) {
@@ -113,6 +141,26 @@ export function createAdminService(opts: AdminServiceOptions): AdminService {
         targetUserId: id,
         result: 'success',
       });
+      if (userSync) {
+        const userRow = await scoped.query<{
+          email: string;
+          display_name: string;
+          external_id: string | null;
+        }>(
+          `SELECT email, display_name, external_id FROM users WHERE id = $1 LIMIT 1`,
+          [id],
+        );
+        const row = userRow[0];
+        if (row) {
+          await userSync.push({
+            userId: id,
+            email: row.email,
+            displayName: row.display_name,
+            status: 'active',
+            ...(row.external_id ? { externalId: row.external_id } : {}),
+          });
+        }
+      }
     },
 
     async listAuditForUser({ userId, limit = 100, offset = 0 }) {

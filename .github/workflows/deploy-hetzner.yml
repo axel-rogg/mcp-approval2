@@ -1,7 +1,18 @@
-name: Deploy to Hetzner
+name: Deploy to Hetzner (DEPRECATED)
+
+# ════════════════════════════════════════════════════════════════════════════
+# DEPRECATED 2026-05-17 — privat-Mode-Pfad ist jetzt Fly.io.
+# Architektur-Wahrheit: docs/privat.md §9.4
+# Aktiver Fly-Workflow: .github/workflows/deploy-fly.yml (zu erstellen)
+#
+# Push-Trigger entfernt damit nichts versehentlich fired. workflow_dispatch
+# bleibt für Re-Aktivierung als Disaster-Recovery-Pfad. Hetzner-VM ist seit
+# 2026-05-14 destroyed — Reaktivierung erfordert scripts/vm-destroy-recreate.sh
+# + Doppler-Re-Sync.
+# ════════════════════════════════════════════════════════════════════════════
 
 on:
-  # Trigger 1: Manuelle Auslösung via GH-Console
+  # Manuell-only, kein push-Trigger mehr (siehe Deprecation-Banner oben).
   workflow_dispatch:
     inputs:
       skip_migrations:
@@ -12,16 +23,6 @@ on:
         description: 'Branch to deploy (default: main)'
         type: string
         default: 'main'
-
-  # Trigger 2: Push to main mit [deploy-hetzner] in Commit-Subject
-  push:
-    branches: [main]
-    paths:
-      - 'apps/server/**'
-      - 'apps/web/**'
-      - 'packages/**'
-      - 'deploy/hetzner/**'
-      - '.github/workflows/deploy-hetzner.yml'
 
 # Concurrency: ein Deploy gleichzeitig pro Branch
 concurrency:

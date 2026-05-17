@@ -1,15 +1,18 @@
 /**
- * Storage-Browser-Liste — Object-Browser für alle Kinds (docs/skills/apps/memos).
+ * Storage-Browser-Liste — Object-Browser für alle Subtypes (file, skill_manifest, app:..., memo).
  *
- * Hash-Route: `#/storage[?kind=doc&q=foo&embedded=embedded]`
+ * Hash-Route: `#/storage[?subtype=doc&q=foo&embedded=embedded]`
  *
  * UX:
- *   - Filter-Chips für kinds (All, Docs, Skills, Apps, Memos)
+ *   - Filter-Chips für Subtypes (All, Docs, Skills, Apps, Memos)
  *   - Search-Input (debounced)
  *   - Embedded-Filter-Dropdown (nur embedded / nur ohne / alle)
- *   - Liste mit kind-Badge, title/filename, embedded-Pencil, refcount, updatedAt
+ *   - Liste mit subtype-Badge, title/filename, embedded-Pencil, refcount, updatedAt
  *   - Click → Detail-View (#/storage/<id>)
  *   - Load-more-Button bei nextCursor
+ *
+ * Generic-Object-Model (v3): kein `kind` mehr; alles über free-form `subtype`.
+ * Apps werden via Namespace-Prefix erkannt: `subtype.startsWith('app:')`.
  *
  * Plan-Ref: PLAN-data-browser-phase-b (Delete + Force-Toggle), PLAN-docs-embedding (Edit-Pencil).
  */
@@ -25,48 +28,62 @@ import { renderHeader } from './components/header.js';
 import { renderEmptyState } from './components/empty-state.js';
 
 interface StorageFilters {
-  readonly kind: string | undefined;
+  readonly subtype: string | undefined;
   readonly q: string | undefined;
   readonly embeddedFlag: 'embedded' | 'not-embedded' | undefined;
 }
 
-const KIND_LABEL: Record<string, string> = {
+/** Apps-Filter-Sentinel — matched alle subtypes mit `app:`-Prefix. */
+const APP_FILTER = 'app:*';
+
+const SUBTYPE_LABEL: Record<string, string> = {
   '': 'All',
-  doc: 'Docs',
-  skill: 'Skills',
-  app: 'Apps',
-  app_state: 'Apps',
+  file: 'Docs',
+  skill_manifest: 'Skills',
   memo: 'Memos',
+  [APP_FILTER]: 'Apps',
 };
 
-const KIND_ICON: Record<string, string> = {
-  doc: '📄',
-  skill: '🧠',
-  app: '🧩',
-  app_state: '🧩',
+const SUBTYPE_ICON: Record<string, string> = {
+  file: '📄',
+  skill_manifest: '🧠',
   memo: '💭',
 };
 
 const FILTER_CHIPS: ReadonlyArray<{ value: string; label: string }> = [
   { value: '', label: 'All' },
   { value: 'doc', label: 'Docs' },
-  { value: 'skill', label: 'Skills' },
-  { value: 'app', label: 'Apps' },
+  { value: 'skill_manifest', label: 'Skills' },
+  { value: APP_FILTER, label: 'Apps' },
   { value: 'memo', label: 'Memos' },
 ];
 
+function subtypeLabel(subtype: string | null | undefined): string {
+  if (!subtype) return '–';
+  if (SUBTYPE_LABEL[subtype]) return SUBTYPE_LABEL[subtype]!;
+  if (subtype.startsWith('app:')) return 'Apps';
+  return subtype;
+}
+
+function subtypeIcon(subtype: string | null | undefined): string {
+  if (!subtype) return '•';
+  if (SUBTYPE_ICON[subtype]) return SUBTYPE_ICON[subtype]!;
+  if (subtype.startsWith('app:')) return '🧩';
+  return '•';
+}
+
 export function parseFilters(hash: string): StorageFilters {
-  // Hash forms: '#/storage', '#/storage?kind=doc&q=foo&embedded=embedded'
+  // Hash forms: '#/storage', '#/storage?subtype=doc&q=foo&embedded=embedded'
   const qIdx = hash.indexOf('?');
-  if (qIdx < 0) return { kind: undefined, q: undefined, embeddedFlag: undefined };
+  if (qIdx < 0) return { subtype: undefined, q: undefined, embeddedFlag: undefined };
   const params = new URLSearchParams(hash.slice(qIdx + 1));
-  const kind = params.get('kind') ?? undefined;
+  const subtype = params.get('subtype') ?? undefined;
   const q = params.get('q') ?? undefined;
   const embedded = params.get('embedded');
   const embeddedFlag =
     embedded === 'embedded' || embedded === 'not-embedded' ? embedded : undefined;
   return {
-    kind: kind && kind !== '' ? kind : undefined,
+    subtype: subtype && subtype !== '' ? subtype : undefined,
     q: q && q !== '' ? q : undefined,
     embeddedFlag,
   };
@@ -74,7 +91,7 @@ export function parseFilters(hash: string): StorageFilters {
 
 function buildHash(filters: StorageFilters): string {
   const params = new URLSearchParams();
-  if (filters.kind) params.set('kind', filters.kind);
+  if (filters.subtype) params.set('subtype', filters.subtype);
   if (filters.q) params.set('q', filters.q);
   if (filters.embeddedFlag) params.set('embedded', filters.embeddedFlag);
   const qs = params.toString();
@@ -110,16 +127,13 @@ export async function renderStorageTab(
     btn.type = 'button';
     btn.className = 'storage-chip';
     const isActive =
-      (filters.kind === undefined && chip.value === '') ||
-      filters.kind === chip.value ||
-      // 'app' chip matches both 'app' and 'app_state'
-      (chip.value === 'app' && filters.kind === 'app_state');
+      (filters.subtype === undefined && chip.value === '') || filters.subtype === chip.value;
     if (isActive) btn.classList.add('active');
-    btn.dataset['kind'] = chip.value;
+    btn.dataset['subtype'] = chip.value;
     btn.textContent = chip.label;
     btn.addEventListener('click', () => {
       const next: StorageFilters = {
-        kind: chip.value === '' ? undefined : chip.value,
+        subtype: chip.value === '' ? undefined : chip.value,
         q: filters.q,
         embeddedFlag: filters.embeddedFlag,
       };
@@ -144,7 +158,7 @@ export async function renderStorageTab(
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       const next: StorageFilters = {
-        kind: filters.kind,
+        subtype: filters.subtype,
         q: search.value.trim() === '' ? undefined : search.value.trim(),
         embeddedFlag: filters.embeddedFlag,
       };
@@ -173,7 +187,7 @@ export async function renderStorageTab(
   flagSelect.addEventListener('change', () => {
     const v = flagSelect.value;
     const next: StorageFilters = {
-      kind: filters.kind,
+      subtype: filters.subtype,
       q: filters.q,
       embeddedFlag: v === 'embedded' || v === 'not-embedded' ? v : undefined,
     };
@@ -215,9 +229,14 @@ async function loadAndRender(
   }
 
   try {
+    // Apps-Filter (`app:*`) ist ein URL-Sentinel — er wird im API-Call zum
+    // server-side `subtype_prefix=app:` (KC2 macht `LIKE 'app:%'`). Kein
+    // client-side narrowing mehr noetig.
+    const isAppsFilter = filters.subtype === APP_FILTER;
     const args: ListObjectsArgs = {
       limit: 50,
-      ...(filters.kind ? { kind: filters.kind } : {}),
+      ...(filters.subtype && !isAppsFilter ? { subtype: filters.subtype } : {}),
+      ...(isAppsFilter ? { subtypePrefix: 'app:' } : {}),
       ...(filters.q ? { q: filters.q } : {}),
       ...(filters.embeddedFlag ? { embeddedFlag: filters.embeddedFlag } : {}),
       ...(cursor !== undefined ? { cursor } : {}),
@@ -280,10 +299,11 @@ function renderObjectRow(obj: KnowledgeObject): HTMLElement {
   const head = document.createElement('div');
   head.className = 'row storage-row-head';
 
-  const kindBadge = document.createElement('span');
-  kindBadge.className = `pill kind-badge kind-${obj.kind}`;
-  kindBadge.textContent = `${KIND_ICON[obj.kind] ?? '•'} ${KIND_LABEL[obj.kind] ?? obj.kind}`;
-  head.appendChild(kindBadge);
+  const subtypeBadge = document.createElement('span');
+  subtypeBadge.className = 'pill subtype-badge';
+  if (obj.subtype) subtypeBadge.dataset['subtype'] = obj.subtype;
+  subtypeBadge.textContent = `${subtypeIcon(obj.subtype)} ${subtypeLabel(obj.subtype)}`;
+  head.appendChild(subtypeBadge);
 
   const title = document.createElement('strong');
   title.className = 'storage-row-title';

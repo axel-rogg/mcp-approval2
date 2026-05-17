@@ -1,5 +1,5 @@
 /**
- * Docs-Tools — KC-Wrapper fuer kind='doc' Objekte.
+ * Docs-Tools — KC-Wrapper fuer subtype='doc' Objekte.
  *
  * Plan-Ref: PLAN-architecture-v1.md §2.1 (Storage-Boundary), §7
  *
@@ -27,7 +27,7 @@ import type {
   UpdateObjectArgs,
 } from '@mcp-approval2/adapters';
 import type { Tool, ToolContext } from '../mcp/protocol/tool.js';
-import type { KnowledgeService } from '../services/knowledge.js';
+import { kcAuthFromCtx, type KnowledgeService } from '../services/knowledge.js';
 import {
   DocsAttachToInput,
   DocsDeleteInput,
@@ -62,6 +62,7 @@ export function makeDocsPutTool(deps: DocsToolsDeps): Tool<DocsPutInputT, Knowle
     displayTemplate: 'Create/Update document: {{filename}}',
     inputSchema: DocsPutInput,
     async execute(ctx: ToolContext, input): Promise<KnowledgeObject> {
+      const kcAuth = kcAuthFromCtx(ctx);
       if (input.id !== undefined) {
         // Upsert via update — KC-Service patch
         const patch: UpdateObjectArgs['patch'] = {
@@ -85,15 +86,17 @@ export function makeDocsPutTool(deps: DocsToolsDeps): Tool<DocsPutInputT, Knowle
           id: input.id,
           userId: ctx.userId,
           patch,
+          ...kcAuth,
         });
       }
       // Create
       const args: CreateObjectArgs = {
         userId: ctx.userId,
-        kind: 'doc',
+        subtype: 'doc',
         title: input.filename,
         body: input.body,
         filename: input.filename,
+        ...kcAuth,
       };
       if (input.summary !== undefined) {
         (args as { description?: string }).description = input.summary;
@@ -146,13 +149,13 @@ export function makeDocsListTool(deps: DocsToolsDeps): Tool<DocsListInputT, Obje
   return {
     name: 'docs.list',
     description:
-      "List the current user's documents (kind=doc). Supports paging via limit/cursor and filter by namespace/category/tags/mime_type.",
+      "List the current user's documents (subtype=doc). Supports paging via limit/cursor and filter by namespace/category/tags/mime_type.",
     sensitivity: 'read',
     inputSchema: DocsListInput,
     async execute(ctx: ToolContext, input): Promise<ObjectsList> {
       const args: Parameters<KnowledgeService['listObjects']>[0] = {
         userId: ctx.userId,
-        kind: 'doc',
+        subtype: 'doc',
       };
       if (input.limit !== undefined) (args as { limit?: number }).limit = input.limit;
       if (input.cursor !== undefined) (args as { cursor?: number }).cursor = input.cursor;
@@ -202,15 +205,16 @@ export function makeDocsDeleteTool(deps: DocsToolsDeps): Tool<DocsDeleteInputT, 
     displayTemplate: 'DELETE document {{id}}{{#force}} (force){{/force}}',
     inputSchema: DocsDeleteInput,
     async execute(ctx: ToolContext, input): Promise<{ deleted: true; id: string }> {
+      const kcAuth = kcAuthFromCtx(ctx);
       if (input.force !== true) {
-        const obj = await deps.knowledge.getObject({ id: input.id, userId: ctx.userId });
+        const obj = await deps.knowledge.getObject({ id: input.id, userId: ctx.userId, ...kcAuth });
         if (obj.refcount > 0) {
           throw new Error(
             `docs.delete: document is still referenced by ${obj.refcount} skill(s); pass force=true to override`,
           );
         }
       }
-      await deps.knowledge.deleteObject({ id: input.id, userId: ctx.userId });
+      await deps.knowledge.deleteObject({ id: input.id, userId: ctx.userId, ...kcAuth });
       return { deleted: true, id: input.id };
     },
   };
@@ -222,7 +226,7 @@ export function makeDocsDeleteTool(deps: DocsToolsDeps): Tool<DocsDeleteInputT, 
 
 export function makeDocsUsagesTool(
   deps: DocsToolsDeps,
-): Tool<DocsUsagesInputT, { incoming: ReadonlyArray<{ kind: 'skill'; id: string; title: string | null }>; outgoing: ReadonlyArray<{ kind: string; id: string }> }> {
+): Tool<DocsUsagesInputT, { incoming: ReadonlyArray<{ subtype: 'skill_manifest'; id: string; title: string | null }>; outgoing: ReadonlyArray<{ subtype: string; id: string }> }> {
   return {
     name: 'docs.usages',
     description: 'List incoming references to a document (which skills attach it as a resource).',

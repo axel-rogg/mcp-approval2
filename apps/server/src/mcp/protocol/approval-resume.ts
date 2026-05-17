@@ -150,6 +150,9 @@ export async function resumeApproval(
     audit: args.audit,
     db: args.server.db,
     signal: ctrl.signal,
+    // AS-3: approval_id wandert in den OBO-JWT wenn das wieder-aufgenommene
+    // Tool einen KC2-Call macht. KC2 logged `via_proxy=true, approval_id=<…>`.
+    approvalId: args.approval.id,
   };
 
   try {

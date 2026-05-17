@@ -7,7 +7,7 @@
  *
  * Algorithmus:
  *   1. Parallel-Fanout: Tool-Suche (lexikalisch ueber registry-metadata) +
- *      Skill-Suche (via KnowledgeService.search(kinds=['skill'])).
+ *      Skill-Suche (via KnowledgeService.search(subtypes=['skill_manifest'])).
  *   2. Rank-Listen pro Surface bauen — 1-basierte Position = Rank.
  *   3. RRF-Fusion (k=60, Cormack et al. 2009): cross-source-comparable
  *      Score = sum(1 / (k + rank_in_list_i)).
@@ -129,7 +129,7 @@ export function createCapabilitySearchService(
         const hits = await knowledge.search({
           userId: args.userId,
           query: args.query,
-          kinds: ['skill'],
+          subtypes: ['skill_manifest'],
           limit: probeLimit,
         });
         skillsTop = hits.map((h) => ({

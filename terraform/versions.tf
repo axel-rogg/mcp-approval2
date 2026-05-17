@@ -22,6 +22,14 @@ terraform {
       source  = "DopplerHQ/doppler"
       version = "~> 1.13"
     }
+    fly = {
+      source  = "fly-apps/fly"
+      version = "~> 0.0.23"
+    }
+    neon = {
+      source  = "kislerdm/neon"
+      version = "~> 0.6"
+    }
   }
 }
 
@@ -32,3 +40,4 @@ terraform {
 #   CLOUDFLARE_API_TOKEN
 #   GOOGLE_APPLICATION_CREDENTIALS (path to service-account JSON, business workspace only)
 #   DOPPLER_TOKEN                  (Personal-Token with workplace:admin scope)
+#   FLY_API_TOKEN                  (from `fly auth token`, used by knowledge2-fly.tf)

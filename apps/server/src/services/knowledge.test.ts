@@ -24,8 +24,7 @@ function makeAdapterStub(): { adapter: KnowledgeAdapter; calls: Record<string, u
   const obj: KnowledgeObject = {
     id: 'obj-1',
     ownerId: USER_ID,
-    kind: 'doc',
-    subtype: null,
+    subtype: 'doc',
     title: 't',
     description: 'd',
     keywords: [],
@@ -48,7 +47,6 @@ function makeAdapterStub(): { adapter: KnowledgeAdapter; calls: Record<string, u
   const share: Share = {
     id: 'share-1',
     resourceId: 'obj-1',
-    resourceKind: 'doc',
     grantedBy: USER_ID,
     grantedTo: 'user-2',
     scope: 'read',
@@ -57,7 +55,7 @@ function makeAdapterStub(): { adapter: KnowledgeAdapter; calls: Record<string, u
     revokedAt: null,
   };
   const hits: ReadonlyArray<SearchHit> = [
-    { id: 'obj-1', kind: 'doc', subtype: null, title: 't', score: 0.9, ftsRank: 0.5, vectorScore: 0.4 },
+    { id: 'obj-1', subtype: 'doc', title: 't', score: 0.9, ftsRank: 0.5, vectorScore: 0.4 },
   ];
 
   const adapter: KnowledgeAdapter = {
@@ -111,6 +109,10 @@ function makeAdapterStub(): { adapter: KnowledgeAdapter; calls: Record<string, u
         deletedRows: 42,
       };
     },
+    async syncUser(args) {
+      record('syncUser', [args]);
+      return { status: 'created', kcUserId: 'kc-user-1' };
+    },
   };
   return { adapter, calls };
 }
@@ -130,7 +132,7 @@ describe('KnowledgeService — success path', () => {
     const { adapter, calls } = makeAdapterStub();
     const audit = makeAudit();
     const svc = new KnowledgeService({ adapter, audit });
-    const out = await svc.createObject({ userId: USER_ID, kind: 'doc', title: 't' });
+    const out = await svc.createObject({ userId: USER_ID, subtype: 'doc', title: 't' });
     expect(out.id).toBe('obj-1');
     expect(calls['createObject']).toHaveLength(1);
     expect(audit.emitted).toHaveLength(1);
@@ -159,10 +161,10 @@ describe('KnowledgeService — success path', () => {
     const { adapter } = makeAdapterStub();
     const audit = makeAudit();
     const svc = new KnowledgeService({ adapter, audit });
-    await svc.listObjects({ userId: USER_ID, kind: 'skill', limit: 10 });
+    await svc.listObjects({ userId: USER_ID, subtype: 'skill_manifest', limit: 10 });
     expect(audit.emitted[0]).toMatchObject({
       action: 'knowledge.object.list',
-      resourceKind: 'skill',
+      resourceKind: 'skill_manifest',
       result: 'success',
     });
     expect(audit.emitted[0]?.details).toMatchObject({ count: 1, hasMore: false });
@@ -195,7 +197,6 @@ describe('KnowledgeService — success path', () => {
     const svc = new KnowledgeService({ adapter, audit });
     await svc.createShare({
       resourceId: 'obj-1',
-      resourceKind: 'doc',
       userId: USER_ID,
       grantedTo: 'user-2',
       scope: 'read',
@@ -203,7 +204,6 @@ describe('KnowledgeService — success path', () => {
     expect(audit.emitted[0]).toMatchObject({
       action: 'knowledge.share.created',
       actorUserId: USER_ID,
-      resourceKind: 'doc',
       resourceId: 'obj-1',
       result: 'success',
     });
@@ -214,14 +214,14 @@ describe('KnowledgeService — success path', () => {
     const { adapter } = makeAdapterStub();
     const audit = makeAudit();
     const svc = new KnowledgeService({ adapter, audit });
-    await svc.search({ userId: USER_ID, query: 'foo bar', kinds: ['doc', 'skill'] });
+    await svc.search({ userId: USER_ID, query: 'foo bar', subtypes: ['doc', 'skill_manifest'] });
     expect(audit.emitted[0]).toMatchObject({
       action: 'knowledge.search',
       result: 'success',
     });
     expect(audit.emitted[0]?.details).toMatchObject({
       count: 1,
-      kinds: ['doc', 'skill'],
+      subtypes: ['doc', 'skill_manifest'],
       queryLength: 7,
     });
   });
