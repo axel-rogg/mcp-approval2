@@ -27,9 +27,17 @@ import type { ApiClient } from './api.js';
 
 type SubTab = 'users' | 'invites' | 'outbox' | 'audit';
 
-function fmtDate(ms: number | null): string {
-  if (ms === null || ms === undefined || ms === 0) return '—';
-  return new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
+function fmtDate(raw: number | string | null | undefined): string {
+  if (raw === null || raw === undefined || raw === '' || raw === 0) return '—';
+  // Postgres BIGINT kommt via postgres-js als string zurueck (precision-
+  // safety) — wir akzeptieren beides + parsen defensiv.
+  const ms = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(ms) || ms <= 0) return '—';
+  try {
+    return new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
+  } catch {
+    return '—';
+  }
 }
 
 export async function renderAdminTab(

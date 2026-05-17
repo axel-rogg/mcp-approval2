@@ -10,19 +10,23 @@ function baseUrl(): string {
   return typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8787';
 }
 
+// BIGINT-Spalten kommen via postgres-js als string zurueck (precision-safe).
+// Wir typisieren ehrlich number|string|null + parsen client-side (fmtDate).
+type DbBigInt = number | string | null;
+
 export interface AdminUser {
   readonly id: string;
   readonly email: string;
   readonly display_name: string;
   readonly role: 'admin' | 'member';
   readonly status: 'active' | 'invited' | 'suspended' | 'deleted';
-  readonly created_at: number;
-  readonly last_login_at: number | null;
+  readonly created_at: DbBigInt;
+  readonly last_login_at: DbBigInt;
 }
 
 export interface AdminAuditEntry {
   readonly id: string;
-  readonly ts: number;
+  readonly ts: DbBigInt;
   readonly actor_user_id: string | null;
   readonly actor_type: string;
   readonly action: string;
@@ -44,8 +48,8 @@ export interface OutboxEntry {
   readonly providerMessageId: string | null;
   readonly status: 'sent' | 'failed' | 'logged';
   readonly errorDetail: string | null;
-  readonly createdAt: number;
-  readonly manuallyDispatchedAt: number | null;
+  readonly createdAt: DbBigInt;
+  readonly manuallyDispatchedAt: DbBigInt;
 }
 
 export interface CreateInviteResult {
