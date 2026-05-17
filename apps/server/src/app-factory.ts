@@ -66,6 +66,7 @@ import { myServersRoutes } from './routes/me/servers.js';
 import { createUserSubscriptionsService } from './services/user-subscriptions.js';
 import { createUserServerConfigService } from './services/user-server-config.js';
 import { createUserServerOAuthService } from './services/user-server-oauth.js';
+import { createUserServerToolDefaultsService } from './services/user-server-tool-defaults.js';
 import { gdprRoutes } from './routes/gdpr.js';
 import { approvalsRoutes } from './routes/approvals.js';
 import { createApprovalAssertionVerifier } from './auth/webauthn/approval-verify.js';
@@ -757,6 +758,10 @@ export async function createApp(
         config: userServerConfigService,
       })
     : undefined;
+  // Phase D UX-Refactor: per-Tool Defaults pro Server (Mig 0024).
+  const userServerToolDefaultsService = createUserServerToolDefaultsService({
+    db: server.db,
+  });
 
   app.route(
     '/',
@@ -788,6 +793,7 @@ export async function createApp(
       subscriptions: userSubscriptionsService,
       ...(userServerConfigService ? { config: userServerConfigService } : {}),
       ...(userServerOAuthService ? { oauth: userServerOAuthService } : {}),
+      toolDefaults: userServerToolDefaultsService,
     }),
   );
 

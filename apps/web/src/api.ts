@@ -104,6 +104,17 @@ export interface AddUserServerResult {
   readonly subscribed: boolean;
 }
 
+export interface ToolDefault {
+  readonly userId: string;
+  readonly subMcpName: string;
+  readonly toolName: string;
+  readonly fieldName: string;
+  readonly value: string;
+  readonly isSecret: boolean;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
 export interface InventoryAvailableServer {
   readonly name: string;
   readonly displayName: string;
@@ -177,6 +188,12 @@ export interface ApiClient {
   addUserServer(args: AddUserServerArgs): Promise<AddUserServerResult>;
   /** Phase 4: User-Added-Server entfernen (catalog-defaults werden 404). */
   deleteUserServer(name: string): Promise<void>;
+  /** Phase D UX-Refactor: per-Tool Defaults listen. */
+  listToolDefaults(name: string): Promise<ReadonlyArray<ToolDefault>>;
+  /** Phase D UX-Refactor: per-Tool Default upserten. */
+  setToolDefault(name: string, tool: string, field: string, value: string, isSecret?: boolean): Promise<ToolDefault>;
+  /** Phase D UX-Refactor: per-Tool Default entfernen. */
+  deleteToolDefault(name: string, tool: string, field: string): Promise<void>;
 
   // Credentials
   listCredentials(): Promise<CredentialMeta[]>;
@@ -481,6 +498,27 @@ export function createApiClient(baseUrl?: string): ApiClient {
       await request<void>(`/v1/me/servers/${encodeURIComponent(name)}`, {
         method: 'DELETE',
       });
+    },
+
+    async listToolDefaults(name: string) {
+      const out = await request<{ defaults: ToolDefault[] }>(
+        `/v1/me/servers/${encodeURIComponent(name)}/tool-defaults`,
+      );
+      return out.defaults;
+    },
+
+    async setToolDefault(name: string, tool: string, field: string, value: string, isSecret?: boolean) {
+      return await request<ToolDefault>(
+        `/v1/me/servers/${encodeURIComponent(name)}/tool-defaults/${encodeURIComponent(tool)}/${encodeURIComponent(field)}`,
+        { method: 'PUT', body: { value, ...(isSecret !== undefined ? { isSecret } : {}) } },
+      );
+    },
+
+    async deleteToolDefault(name: string, tool: string, field: string) {
+      await request<void>(
+        `/v1/me/servers/${encodeURIComponent(name)}/tool-defaults/${encodeURIComponent(tool)}/${encodeURIComponent(field)}`,
+        { method: 'DELETE' },
+      );
     },
 
     async listCredentials() {

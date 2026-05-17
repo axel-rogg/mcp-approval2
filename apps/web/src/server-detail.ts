@@ -560,38 +560,209 @@ async function renderOAuthFlow(
   card.appendChild(authzBox);
 }
 
-function renderDefaultsTabPlaceholder(body: HTMLElement, gw: InventoryGateway | null): void {
+async function renderDefaultsTab(
+  body: HTMLElement,
+  api: ApiClient,
+  serverName: string,
+  gw: InventoryGateway | null,
+): Promise<void> {
   const card = document.createElement('section');
   card.className = 'card server-detail-section';
   const h = document.createElement('h2');
   h.textContent = 'Tool-Defaults';
   card.appendChild(h);
+
+  const desc = document.createElement('p');
+  desc.className = 'muted small';
+  desc.textContent =
+    'Pro Tool kannst du Default-Werte hinterlegen. Sie werden automatisch in jeden ' +
+    'Tool-Call eingefüllt, sofern der Caller keinen eigenen Wert übergibt.';
+  card.appendChild(desc);
+
   if (!gw || (gw.tools?.length ?? 0) === 0) {
-    const p = document.createElement('p');
-    p.className = 'muted';
-    p.textContent =
-      'Keine Tools im Cache. Aktiviere den Server + entdecke Tools neu, um Defaults zu setzen.';
-    card.appendChild(p);
-  } else {
-    const p = document.createElement('p');
-    p.className = 'muted';
-    p.textContent = `${gw.tools.length} Tools verfügbar. Phase D befüllt diesen Tab mit per-Tool-Default-Forms.`;
-    card.appendChild(p);
-    const ul = document.createElement('ul');
-    ul.className = 'tool-list';
-    for (const t of gw.tools) {
-      const li = document.createElement('li');
-      li.className = 'tool-row';
-      const name = document.createElement('span');
-      name.className = 'tool-name';
-      name.textContent = t.name;
-      li.appendChild(name);
-      card.appendChild(li);
-      ul.appendChild(li);
-    }
-    card.appendChild(ul);
+    const empty = document.createElement('p');
+    empty.className = 'muted';
+    empty.textContent =
+      'Keine Tools im Cache. Aktiviere den Server + entdecke Tools neu (Übersicht), um Defaults zu setzen.';
+    card.appendChild(empty);
+    body.appendChild(card);
+    return;
   }
+
+  // Bestehende Defaults laden
+  let existing: ReadonlyArray<import('./api.js').ToolDefault> = [];
+  try {
+    existing = await api.listToolDefaults(serverName);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) {
+      renderSessionExpired(document.getElementById('app') ?? document.body);
+      return;
+    }
+    // 404 = keine Defaults gespeichert; weiter mit []
+  }
+
+  // Map: toolName -> fieldName -> value
+  const valueMap = new Map<string, Map<string, string>>();
+  for (const e of existing) {
+    if (!valueMap.has(e.toolName)) valueMap.set(e.toolName, new Map());
+    valueMap.get(e.toolName)!.set(e.fieldName, e.value);
+  }
+
+  const toolsHost = document.createElement('div');
+  toolsHost.className = 'tool-defaults-list';
+
+  for (const tool of gw.tools) {
+    const block = renderToolDefaultsBlock(api, serverName, tool.name, tool.description ?? '', valueMap.get(tool.name));
+    toolsHost.appendChild(block);
+  }
+
+  card.appendChild(toolsHost);
   body.appendChild(card);
+}
+
+function renderToolDefaultsBlock(
+  api: ApiClient,
+  serverName: string,
+  toolName: string,
+  toolDesc: string,
+  existing: Map<string, string> | undefined,
+): HTMLElement {
+  const wrap = document.createElement('details');
+  wrap.className = 'tool-defaults-tool card-section';
+  // Erst-aufklappen wenn schon defaults existieren
+  if (existing && existing.size > 0) wrap.open = true;
+
+  const summary = document.createElement('summary');
+  summary.className = 'tool-defaults-tool-head';
+  const nameEl = document.createElement('span');
+  nameEl.className = 'tool-name';
+  nameEl.textContent = toolName;
+  summary.appendChild(nameEl);
+  if (existing && existing.size > 0) {
+    const pill = document.createElement('span');
+    pill.className = 'pill pill-ok';
+    pill.textContent = `${existing.size} default${existing.size === 1 ? '' : 's'}`;
+    summary.appendChild(pill);
+  }
+  wrap.appendChild(summary);
+
+  if (toolDesc) {
+    const desc = document.createElement('p');
+    desc.className = 'muted small';
+    desc.textContent = toolDesc;
+    wrap.appendChild(desc);
+  }
+
+  // Render existing fields + Add-Form
+  const list = document.createElement('div');
+  list.className = 'tool-defaults-fields';
+  if (existing) {
+    for (const [field, value] of existing.entries()) {
+      list.appendChild(renderDefaultRow(api, serverName, toolName, field, value));
+    }
+  }
+  wrap.appendChild(list);
+
+  // Add new field
+  const addForm = document.createElement('form');
+  addForm.className = 'tool-defaults-add-form row';
+  const addField = document.createElement('input');
+  addField.type = 'text';
+  addField.placeholder = 'field_name';
+  addField.pattern = '[a-zA-Z_][a-zA-Z0-9_]*';
+  addField.required = true;
+  const addValue = document.createElement('input');
+  addValue.type = 'text';
+  addValue.placeholder = 'default value';
+  addValue.required = true;
+  const addBtn = document.createElement('button');
+  addBtn.type = 'submit';
+  addBtn.className = 'btn btn-secondary btn-small';
+  addBtn.textContent = '+ Default';
+  addForm.appendChild(addField);
+  addForm.appendChild(addValue);
+  addForm.appendChild(addBtn);
+  addForm.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const field = addField.value.trim();
+    const value = addValue.value;
+    if (!field || !value) return;
+    addBtn.disabled = true;
+    try {
+      await api.setToolDefault(serverName, toolName, field, value);
+      const row = renderDefaultRow(api, serverName, toolName, field, value);
+      list.appendChild(row);
+      addField.value = '';
+      addValue.value = '';
+      showToast('Default gesetzt.', 'success');
+    } catch (err) {
+      showToast(`Fehler: ${(err as Error).message}`, 'error');
+    } finally {
+      addBtn.disabled = false;
+    }
+  });
+  wrap.appendChild(addForm);
+
+  return wrap;
+}
+
+function renderDefaultRow(
+  api: ApiClient,
+  serverName: string,
+  toolName: string,
+  fieldName: string,
+  currentValue: string,
+): HTMLElement {
+  const row = document.createElement('div');
+  row.className = 'tool-defaults-row';
+  row.dataset['field'] = fieldName;
+
+  const lbl = document.createElement('label');
+  lbl.className = 'tool-defaults-field-name';
+  lbl.textContent = fieldName;
+  row.appendChild(lbl);
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = currentValue;
+  input.className = 'tool-defaults-value-input';
+  row.appendChild(input);
+
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'button';
+  saveBtn.className = 'btn btn-secondary btn-small';
+  saveBtn.textContent = 'Speichern';
+  saveBtn.addEventListener('click', async () => {
+    saveBtn.disabled = true;
+    try {
+      await api.setToolDefault(serverName, toolName, fieldName, input.value);
+      showToast(`Default ${fieldName} gespeichert.`, 'success');
+    } catch (err) {
+      showToast(`Fehler: ${(err as Error).message}`, 'error');
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
+  row.appendChild(saveBtn);
+
+  const delBtn = document.createElement('button');
+  delBtn.type = 'button';
+  delBtn.className = 'btn btn-secondary btn-small btn-danger';
+  delBtn.textContent = '×';
+  delBtn.title = 'Default entfernen';
+  delBtn.addEventListener('click', async () => {
+    if (!window.confirm(`Default '${fieldName}' entfernen?`)) return;
+    try {
+      await api.deleteToolDefault(serverName, toolName, fieldName);
+      row.remove();
+      showToast('Default entfernt.', 'success');
+    } catch (err) {
+      showToast(`Fehler: ${(err as Error).message}`, 'error');
+    }
+  });
+  row.appendChild(delBtn);
+
+  return row;
 }
 
 function renderDiagnosticsTab(body: HTMLElement, gw: InventoryGateway | null, serverName: string): void {
@@ -731,7 +902,7 @@ export async function renderServerDetail(
       await renderAuthTab(body, api, serverName, gw);
       break;
     case 'defaults':
-      renderDefaultsTabPlaceholder(body, gw);
+      await renderDefaultsTab(body, api, serverName, gw);
       break;
     case 'diagnostics':
       renderDiagnosticsTab(body, gw, serverName);

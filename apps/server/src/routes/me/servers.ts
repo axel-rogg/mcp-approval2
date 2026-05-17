@@ -24,6 +24,7 @@ import type { SubMcpRegistry } from '../../mcp/gateway/registry.js';
 import type { UserSubscriptionsService } from '../../services/user-subscriptions.js';
 import type { UserServerConfigService } from '../../services/user-server-config.js';
 import type { UserServerOAuthService } from '../../services/user-server-oauth.js';
+import type { UserServerToolDefaultsService } from '../../services/user-server-tool-defaults.js';
 
 export interface MyServersRouteDeps {
   readonly server: ServerContext;
@@ -39,6 +40,11 @@ export interface MyServersRouteDeps {
    * oauth/callback nicht verfuegbar.
    */
   readonly oauth?: UserServerOAuthService;
+  /**
+   * Per-Tool Defaults pro Server (Phase D). Wenn nicht gesetzt, sind die
+   * tool-defaults-Endpoints nicht verfuegbar.
+   */
+  readonly toolDefaults?: UserServerToolDefaultsService;
 }
 
 interface MyServerEntry {
@@ -383,6 +389,77 @@ export function myServersRoutes(deps: MyServersRouteDeps): Hono<AppBindings> {
         return c.body(null, 204);
       },
     );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Phase D: Per-Tool Defaults
+  // ─────────────────────────────────────────────────────────────────────
+  // GET    /v1/me/servers/:name/tool-defaults                         → list all
+  // PUT    /v1/me/servers/:name/tool-defaults/:tool/:field            → upsert
+  // DELETE /v1/me/servers/:name/tool-defaults/:tool/:field            → remove
+  if (deps.toolDefaults) {
+    const tdSvc = deps.toolDefaults;
+    const TOOL_RE = /^[a-zA-Z_][a-zA-Z0-9_.:-]{0,127}$/;
+    const FIELD_RE = /^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/;
+    const ToolDefaultPutBody = z
+      .object({
+        value: z.string().max(8 * 1024),
+        isSecret: z.boolean().optional(),
+      })
+      .strict();
+
+    app.get('/v1/me/servers/:name/tool-defaults', guard, async (c) => {
+      const user = c.get('user');
+      if (!user) throw HttpError.unauthorized('authentication required');
+      const name = c.req.param('name');
+      const rows = await tdSvc.listByServer(user.userId, name);
+      return c.json({ defaults: rows });
+    });
+
+    app.put(
+      '/v1/me/servers/:name/tool-defaults/:tool/:field',
+      guard,
+      zValidator('json', ToolDefaultPutBody),
+      async (c) => {
+        const user = c.get('user');
+        if (!user) throw HttpError.unauthorized('authentication required');
+        const name = c.req.param('name');
+        const tool = c.req.param('tool');
+        const field = c.req.param('field');
+        if (!TOOL_RE.test(tool)) {
+          throw HttpError.badRequest('invalid_request', `invalid tool name '${tool}'`);
+        }
+        if (!FIELD_RE.test(field)) {
+          throw HttpError.badRequest('invalid_request', `invalid field name '${field}'`);
+        }
+        const body = c.req.valid('json');
+        const entry = await tdSvc.set(
+          user.userId,
+          name,
+          tool,
+          field,
+          body.value,
+          body.isSecret ?? false,
+        );
+        return c.json(entry);
+      },
+    );
+
+    app.delete('/v1/me/servers/:name/tool-defaults/:tool/:field', guard, async (c) => {
+      const user = c.get('user');
+      if (!user) throw HttpError.unauthorized('authentication required');
+      const name = c.req.param('name');
+      const tool = c.req.param('tool');
+      const field = c.req.param('field');
+      if (!TOOL_RE.test(tool)) {
+        throw HttpError.badRequest('invalid_request', `invalid tool name '${tool}'`);
+      }
+      if (!FIELD_RE.test(field)) {
+        throw HttpError.badRequest('invalid_request', `invalid field name '${field}'`);
+      }
+      await tdSvc.remove(user.userId, name, tool, field);
+      return c.body(null, 204);
+    });
   }
 
   return app;
