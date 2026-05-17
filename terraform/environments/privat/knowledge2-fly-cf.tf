@@ -33,8 +33,8 @@
 
 variable "enable_knowledge2_fly_cf" {
   type        = bool
-  default     = true
-  description = "Wenn true, legt CNAME knowledge2.ai-toolhub.org → mcp-knowledge2.fly.dev + WAF-Rules + Bot-Fight-Mode an. Default seit 2026-05-17 true (Hetzner-A-Record wurde 2026-05-14 destroyed, kein Konflikt mehr)."
+  default     = false
+  description = "Wenn true, legt CNAME knowledge2.ai-toolhub.org → mcp-knowledge2.fly.dev + fly_cert + ownership-TXT + Zone-Settings an. **Default seit Lockdown 2026-05-17 false**: KC2 ist Internal-Only via .flycast, approval2 spricht direkt via http://mcp-knowledge2.flycast (Audit SEC-K-003/009/015/028 Lockdown-Recommendation). Public-Reaktivierung: count = 1 → terraform apply + public-IP `fly ips allocate-v6 -a mcp-knowledge2`."
 }
 
 variable "knowledge2_fly_fqdn" {
