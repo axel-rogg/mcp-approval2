@@ -46,26 +46,37 @@ export async function renderCredentials(
 
   const main = document.createElement('main');
   main.className = 'credentials';
+  await renderCredentialsBody(main, api);
+  root.appendChild(main);
+}
 
+/**
+ * Rendert den Credentials-Inhalt (h1 + Desc + Add-Form + Liste) in einen
+ * existierenden Container — ohne eigene Topbar. Wird von Settings-Tab als
+ * Sub-Tab eingehaengt, kann aber auch eigenstaendig genutzt werden.
+ */
+export async function renderCredentialsBody(
+  container: HTMLElement,
+  api: ApiClient,
+): Promise<void> {
   const h1 = document.createElement('h1');
-  h1.textContent = 'Service credentials';
-  main.appendChild(h1);
+  h1.textContent = 'MCP credentials';
+  container.appendChild(h1);
 
   const desc = document.createElement('p');
   desc.className = 'muted';
   desc.textContent =
-    'Encrypted at rest with Vault KEK + WebAuthn-PRF (when supported). Only you can decrypt.';
-  main.appendChild(desc);
+    'Zugangsdaten fuer MCP-Server (API-Tokens, OAuth-Refresh, Service-Accounts). ' +
+    'Verschluesselt mit Vault-KEK + WebAuthn-PRF — nur du kannst entschluesseln.';
+  container.appendChild(desc);
 
-  // Add-Form
-  main.appendChild(renderAddForm(api));
+  container.appendChild(renderAddForm(api));
 
-  // List
   const listSection = document.createElement('section');
   listSection.className = 'list-section';
 
   const listTitle = document.createElement('h2');
-  listTitle.textContent = 'Stored credentials';
+  listTitle.textContent = 'Gespeicherte Credentials';
   listSection.appendChild(listTitle);
 
   const list = document.createElement('div');
@@ -73,8 +84,7 @@ export async function renderCredentials(
   list.id = 'credentials-list';
   listSection.appendChild(list);
 
-  main.appendChild(listSection);
-  root.appendChild(main);
+  container.appendChild(listSection);
 
   await refreshList(api);
 }

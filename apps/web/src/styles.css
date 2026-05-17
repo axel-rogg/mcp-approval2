@@ -1133,6 +1133,64 @@ code {
   transform: translateY(0.5rem);
 }
 
+/* Settings-Tab + Sub-Nav --------------------------------------------- */
+.settings-tab {
+  max-width: 720px;
+}
+
+.settings-subnav {
+  display: flex;
+  gap: 0.2rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.settings-subnav::-webkit-scrollbar {
+  display: none;
+}
+
+.settings-subnav-item {
+  color: var(--fg-muted);
+  padding: 0.5rem 0.85rem 0.6rem;
+  border-bottom: 2px solid transparent;
+  font-size: 0.9rem;
+  font-weight: 500;
+  white-space: nowrap;
+  margin-bottom: -1px;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.settings-subnav-item:hover {
+  color: var(--fg);
+  text-decoration: none;
+}
+
+.settings-subnav-item[aria-current='page'] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.app-info-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.3rem 0.85rem;
+  margin: 0;
+}
+
+.app-info-list dt {
+  font-weight: 600;
+  color: var(--fg-muted);
+  font-size: 0.875rem;
+}
+
+.app-info-list dd {
+  margin: 0;
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+}
+
 /* Defaults tab ------------------------------------------------------- */
 .defaults-tab .defaults-explainer p:last-child {
   margin-bottom: 0;

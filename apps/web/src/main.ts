@@ -34,12 +34,12 @@ import {
 } from './auth.js';
 import { renderApproval, stopApprovalPolling } from './approval.js';
 import { renderApprovalDetail } from './approval-detail.js';
-import { renderCredentials } from './credentials.js';
 import { renderStorageTab } from './storage-tab.js';
 import { renderStorageDetail } from './storage-detail.js';
 import { renderAppsTab } from './apps-tab.js';
 import { renderAppDetail } from './apps-detail.js';
 import { renderDefaultsTab } from './defaults-tab.js';
+import { renderSettings } from './settings-tab.js';
 import { subscribePush } from './push.js';
 import { renderDebugLog, debug } from './debug-log.js';
 
@@ -67,7 +67,7 @@ type Route =
   | 'login'
   | 'approvals'
   | 'approval-detail'
-  | 'credentials'
+  | 'settings'
   | 'defaults'
   | 'enroll-passkey'
   | 'storage'
@@ -79,7 +79,13 @@ type Route =
 function parseRoute(): Route {
   const hash = window.location.hash.replace(/^#\/?/, '');
   if (hash.startsWith('login')) return 'login';
-  if (hash.startsWith('credentials')) return 'credentials';
+  // Legacy #/credentials → redirect to #/settings/credentials (Phase 3
+  // migration: Credentials sind jetzt Sub-Tab unter Settings).
+  if (hash === 'credentials' || hash.startsWith('credentials?') || hash.startsWith('credentials/')) {
+    window.location.replace('#/settings/credentials');
+    return 'settings';
+  }
+  if (hash.startsWith('settings')) return 'settings';
   if (hash.startsWith('defaults')) return 'defaults';
   if (hash.startsWith('enroll-passkey')) return 'enroll-passkey';
   if (hash.startsWith('storage/')) return 'storage-detail';
@@ -165,8 +171,8 @@ async function boot(): Promise<void> {
     case 'debug':
       renderDebugLog(root);
       return;
-    case 'credentials':
-      await renderCredentialsSafe(root, api, session);
+    case 'settings':
+      await renderSettingsSafe(root, session);
       return;
     case 'storage':
       await renderStorageSafe(root, session);
@@ -282,11 +288,11 @@ async function renderApprovalSafe(root: HTMLElement, c: ApiClient, s: Session): 
   }
 }
 
-async function renderCredentialsSafe(root: HTMLElement, c: ApiClient, s: Session): Promise<void> {
+async function renderSettingsSafe(root: HTMLElement, s: Session): Promise<void> {
   try {
-    await renderCredentials(root, c, s);
+    await renderSettings(root, api, s);
   } catch (err) {
-    console.error('credentials render failed', err);
+    console.error('settings render failed', err);
     renderSessionExpired(root);
   }
 }
