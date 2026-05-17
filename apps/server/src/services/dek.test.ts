@@ -75,14 +75,17 @@ function makeMemoryDb(): DbAdapter & {
     }
 
     if (t.startsWith('INSERT INTO audit_log')) {
+      // Schema-Match mit services/audit.ts:
+      //   (ts, actor_user_id, actor_type, action, request_id, ip, user_agent, result, details)
       const [
-        action,
+        _ts,
         actorUserId,
-        _targetUserId,
-        result,
+        _actorType,
+        action,
         requestId,
         _ip,
         _userAgent,
+        result,
         details,
       ] = params as readonly unknown[];
       audit.push({
@@ -280,8 +283,10 @@ describe('DekService', () => {
     vi.spyOn(kek, 'wrap').mockRejectedValue(new Error('vault sealed'));
     const svc = createDekService({ db, kekProvider: kek });
     await expect(svc.resolveUserDek({ userId: USER_A })).rejects.toThrow(/vault sealed/);
+    // services/audit.ts mapResult() maps 'failure' → 'error' damit der
+    // audit_log_result_check Constraint passt (success|denied|error).
     const failure = db._audit.find(
-      (a) => a.action === 'dek.resolved' && a.result === 'failure',
+      (a) => a.action === 'dek.resolved' && a.result === 'error',
     );
     expect(failure).toBeTruthy();
     expect((failure?.details as { error?: string } | undefined)?.error).toContain('vault sealed');

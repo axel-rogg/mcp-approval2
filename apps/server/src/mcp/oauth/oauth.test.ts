@@ -199,10 +199,12 @@ function makeStubDb(state: StubState): ServerContext['db'] {
       ] as unknown as T[];
     }
     // audit_log insert — swallow + record action
+    // Schema-Match mit services/audit.ts: (ts, actor_user_id, actor_type,
+    // action, request_id, ip, user_agent, result, details). action=$4, result=$8.
     if (s.startsWith('INSERT INTO AUDIT_LOG')) {
       state.auditEvents.push({
-        action: String(params[0]),
-        result: String(params[3]),
+        action: String(params[3]),
+        result: String(params[7]),
       });
       return [];
     }

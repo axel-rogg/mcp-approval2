@@ -296,30 +296,34 @@ function makeDb(state: State): DbAdapter {
     }
 
     // ----- audit_log INSERT -----
+    // Shape muss mit services/audit.ts INSERT-Statement uebereinstimmen:
+    //   INSERT INTO audit_log
+    //     (ts, actor_user_id, actor_type, action, request_id, ip, user_agent, result, details)
+    //   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    // (target_user_id wandert in details.targetUserId; column existiert nicht im DB-Schema —
+    //  siehe migrations/0001_initial.sql + services/audit.ts header-Kommentar)
     if (t.startsWith('INSERT INTO audit_log')) {
-      const [
-        action,
-        actorUserId,
-        targetUserId,
-        result,
-        requestId,
-        ip,
-        userAgent,
-        details,
-        createdAt,
-      ] = params as readonly unknown[];
+      const [ts, actorUserId, actorType, action, requestId, ip, userAgent, result, details] =
+        params as readonly unknown[];
+      const parsedDetails = details
+        ? (JSON.parse(String(details)) as Record<string, unknown>)
+        : null;
       state.audit.push({
         id: `audit-${state.audit.length + 1}`,
-        ts: Number(createdAt),
+        ts: Number(ts),
         action: String(action),
         actor_user_id: actorUserId === null ? null : String(actorUserId),
-        target_user_id: targetUserId === null ? null : String(targetUserId),
+        target_user_id:
+          parsedDetails && typeof parsedDetails['targetUserId'] === 'string'
+            ? (parsedDetails['targetUserId'] as string)
+            : null,
         result: String(result),
-        details: details ? (JSON.parse(String(details)) as Record<string, unknown>) : null,
+        details: parsedDetails,
         request_id: requestId === null ? null : String(requestId),
         ip: ip === null ? null : String(ip),
         user_agent: userAgent === null ? null : String(userAgent),
-        created_at: Number(createdAt),
+        created_at: Number(ts),
+        actor_type: String(actorType),
       });
       return [] as unknown as T[];
     }

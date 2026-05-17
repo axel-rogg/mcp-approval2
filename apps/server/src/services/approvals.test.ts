@@ -415,7 +415,8 @@ describe('ApprovalService', () => {
     expect(rejected.rejectedAt).toBeGreaterThan(0);
 
     // Audit-Trail: created + rejected
-    const actions = db._audit.map((p) => (p as ReadonlyArray<unknown>)[0]);
+    // Schema-Match mit services/audit.ts: action ist params[3] (Schema-Drift-Fix 2026-05-17).
+    const actions = db._audit.map((p) => (p as ReadonlyArray<unknown>)[3]);
     expect(actions).toContain('tool.approval.created');
     expect(actions).toContain('tool.approval.rejected');
   });

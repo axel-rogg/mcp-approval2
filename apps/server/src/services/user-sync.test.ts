@@ -21,7 +21,9 @@ function makeDbStub(): DbAdapter & { audits: Array<Record<string, unknown>> } {
   const scoped = {
     async query(sql: string, params?: ReadonlyArray<unknown>): Promise<unknown[]> {
       if (sql.includes('INSERT INTO audit_log')) {
-        audits.push({ action: params?.[0], result: params?.[3], details: params?.[6] });
+        // Schema-Match mit services/audit.ts:
+        //   (ts, actor_user_id, actor_type, action, request_id, ip, user_agent, result, details)
+        audits.push({ action: params?.[3], result: params?.[7], details: params?.[8] });
       }
       return [];
     },
@@ -100,7 +102,8 @@ describe('UserSyncService.push', () => {
     });
     expect(ok).toBe(false);
     expect(db.audits).toHaveLength(1);
-    expect(db.audits[0]?.['result']).toBe('failure');
+    // mapResult() in services/audit.ts maps 'failure' → 'error' (Schema-CHECK)
+    expect(db.audits[0]?.['result']).toBe('error');
   });
 });
 
