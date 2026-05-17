@@ -128,9 +128,20 @@ export async function finishAuthentication(
   const cred = rows[0];
   if (!cred) throw HttpError.unauthorized('webauthn_credential_unknown');
 
-  const credentialTransports = cred.transports
-    ? (JSON.parse(cred.transports) as AuthenticatorTransportFuture[])
-    : undefined;
+  // transports-Spalte ist JSONB; postgres-js parsed JSONB automatisch.
+  const credentialTransports = (() => {
+    const t = cred.transports as unknown;
+    if (!t) return undefined;
+    if (Array.isArray(t)) return t as AuthenticatorTransportFuture[];
+    if (typeof t === 'string') {
+      try {
+        return JSON.parse(t) as AuthenticatorTransportFuture[];
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
+  })();
   const credIdString =
     typeof cred.credentialId === 'string' ? cred.credentialId : credId;
   const credentialBase = {

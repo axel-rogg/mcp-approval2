@@ -114,9 +114,21 @@ export async function verifyWritemodeActivation(
         : {}),
     },
   };
-  const credentialTransports = cred.transports
-    ? (JSON.parse(cred.transports) as AuthenticatorTransportFuture[])
-    : undefined;
+  // transports-Spalte ist JSONB; postgres-js parsed JSONB automatisch zurueck.
+  // → Array kommt schon als JS-Array an. Nur bei TEXT-Fallback JSON.parse.
+  const credentialTransports = (() => {
+    const t = cred.transports as unknown;
+    if (!t) return undefined;
+    if (Array.isArray(t)) return t as AuthenticatorTransportFuture[];
+    if (typeof t === 'string') {
+      try {
+        return JSON.parse(t) as AuthenticatorTransportFuture[];
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
+  })();
   // simplewebauthn erwartet id als base64url-string. Wenn die DB ein
   // Uint8Array zurueck-geliefert hat, gibt's zwei moegliche Bedeutungen:
   //   a) ASCII-bytes des b64url-Strings (legacy-INSERT) → TextDecoder
