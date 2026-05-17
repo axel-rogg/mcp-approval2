@@ -32,9 +32,31 @@ CREATE INDEX IF NOT EXISTS idx_submcp_owner
 -- schiedlich (user-A hat 'mygithub' UND user-B hat 'mygithub' = OK). Aber
 -- innerhalb owner_user_id muss name unique sein. Catalog-Defaults
 -- (owner_user_id IS NULL) sind auch unique.
+--
+-- 0018 + 0019 haben FKs REFERENCES sub_mcp_servers(name). Postgres laesst
+-- den Index nicht droppen solange die FKs auf dem unique-constraint haengen.
+-- Loesung: erst FKs droppen, dann index swap, dann FKs gegen neuen unique-
+-- composite re-erstellen. ON DELETE CASCADE bleibt.
+ALTER TABLE user_sub_mcp_subscriptions DROP CONSTRAINT IF EXISTS user_sub_mcp_subscriptions_sub_mcp_name_fkey;
+ALTER TABLE user_sub_mcp_config        DROP CONSTRAINT IF EXISTS user_sub_mcp_config_sub_mcp_name_fkey;
+
 DROP INDEX IF EXISTS idx_sub_mcp_name;
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_submcp_name_per_owner
   ON sub_mcp_servers(name, COALESCE(owner_user_id, '00000000-0000-0000-0000-000000000000'::UUID));
+
+-- Catalog-only FK rekonstituieren: 0018/0019-Tabellen referenzieren NUR
+-- Catalog-Defaults (owner_user_id IS NULL). Daher partial unique-index
+-- mit WHERE-clause genug fuer Catalog-FK-Target. Wenn spaeter user-added
+-- subscriptions noetig, eigene Tabelle dafuer mit FK auf (name, owner_user_id).
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_submcp_catalog_name
+  ON sub_mcp_servers(name) WHERE owner_user_id IS NULL;
+
+ALTER TABLE user_sub_mcp_subscriptions
+  ADD CONSTRAINT user_sub_mcp_subscriptions_sub_mcp_name_fkey
+  FOREIGN KEY (sub_mcp_name) REFERENCES sub_mcp_servers(name) ON DELETE CASCADE;
+ALTER TABLE user_sub_mcp_config
+  ADD CONSTRAINT user_sub_mcp_config_sub_mcp_name_fkey
+  FOREIGN KEY (sub_mcp_name) REFERENCES sub_mcp_servers(name) ON DELETE CASCADE;
 
 -- RLS: catalog-defaults sind fuer alle sichtbar (owner_user_id IS NULL),
 -- user-added nur fuer den Owner. Operator-Pool (BYPASSRLS) sieht alles.
