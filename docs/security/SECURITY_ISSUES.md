@@ -154,6 +154,7 @@ Findings sind innerhalb der Severity nach **Schweregrad/Wahrscheinlichkeit** sor
 - `decodeJwt(tokens.id_token)` ohne JWKS-Verify. Eine funktionierende `verifyIdToken()`-Helper existiert ~50 Zeilen drüber, ungenutzt. Nonce-Check ist conditional (`if (claims.nonce && ...)`).
 - Mitigiert durch authentifizierten TLS-Pfad zu Google's Token-Endpoint — aber fail-open by design. Ein MitM-fähiger Egress-Proxy oder eine TLS-lockernde Refactor-PR kippt das Identitätsmodell.
 - **Fix:** `decodeJwt` durch `await verifyIdToken({ token, expectedAudiences: [GOOGLE_CLIENT_ID, ...GOOGLE_ALLOWED_AUDIENCES], nonce: p.nonce })` ersetzen. Nonce-Check unconditional.
+- **Status:** ✅ FIXED 2026-05-17 (Phase A) — `GoogleOAuthProvider.complete()` in [google.ts](../../apps/server/src/auth/idp/google.ts) ruft jetzt `verifyIdToken(...)` mit JWKS-Signature-Verify (RS256) + Nonce-Pflicht (unconditional, vorher `if (claims.nonce && ...)`). Audiences: neue `effectiveGoogleAudiences(config)` Helper liefert `[GOOGLE_CLIENT_ID, ...GOOGLE_ALLOWED_AUDIENCES]`. `decodeJwt` ist aus dem auth-Path entfernt. Test-Suite ergaenzt mit 3 Tests fuer `effectiveGoogleAudiences()`. End-to-End-Verify gegen Google's JWKS-Endpoint laeuft im Tier-3-E2E (in Cutover-Window).
 
 ### SEC-003 — `resolveOrigin` echo't beliebigen Origin bei leerer `ALLOWED_ORIGINS`
 

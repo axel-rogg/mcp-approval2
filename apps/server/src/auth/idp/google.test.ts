@@ -15,7 +15,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { SignJWT, generateKeyPair, exportJWK } from 'jose';
-import { verifyIdToken } from './google.js';
+import { verifyIdToken, effectiveGoogleAudiences } from './google.js';
 
 // Wir stubben jose.createRemoteJWKSet im internen google.ts Modul nicht
 // direkt — das wuerde Test-Hostname-Kontamination geben. Stattdessen
@@ -48,3 +48,30 @@ describe('verifyIdToken — input validation', () => {
 // einen lokalen JWKS-Stub mit network-mock. Das machen wir in Tier 3 mit
 // MSW oder Google-OIDC-Mock. Der hier abgedeckte Defense-Pfad reicht fuer
 // Tier 2.
+
+// SEC-002: effectiveGoogleAudiences sammelt die Liste fuer JWKS-Verify.
+describe('effectiveGoogleAudiences', () => {
+  it('returns [GOOGLE_CLIENT_ID] when GOOGLE_ALLOWED_AUDIENCES leer', () => {
+    const out = effectiveGoogleAudiences({
+      GOOGLE_CLIENT_ID: 'primary',
+      GOOGLE_ALLOWED_AUDIENCES: [],
+    });
+    expect(out).toEqual(['primary']);
+  });
+
+  it('appendet GOOGLE_ALLOWED_AUDIENCES + dedupliziert', () => {
+    const out = effectiveGoogleAudiences({
+      GOOGLE_CLIENT_ID: 'primary',
+      GOOGLE_ALLOWED_AUDIENCES: ['kc2-client', 'primary', 'third'],
+    });
+    expect(out).toEqual(['primary', 'kc2-client', 'third']);
+  });
+
+  it('filtert leere Strings raus', () => {
+    const out = effectiveGoogleAudiences({
+      GOOGLE_CLIENT_ID: 'primary',
+      GOOGLE_ALLOWED_AUDIENCES: ['', 'kc2'],
+    });
+    expect(out).toEqual(['primary', 'kc2']);
+  });
+});

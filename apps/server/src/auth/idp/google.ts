@@ -5,8 +5,13 @@
  *
  * Scope minimal: `openid email profile` — wir wollen NUR Identity. Workspace-
  * Tokens lebt in mcp-gws / mcp-knowledge2.
+ *
+ * SEC-002: id_token-Signatur wird via Google's JWKS verifiziert (jwtVerify
+ * mit RS256). Der Fallback auf decodeJwt war fail-open — ein MitM-Proxy
+ * konnte ein gefaelschtes id_token einschleusen ohne dass approval2 es
+ * merkt. Nonce-Pflicht ist jetzt unconditional.
  */
-import { createRemoteJWKSet, decodeJwt, jwtVerify } from 'jose';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 import type { AppConfig } from '../../lib/config.js';
 import { HttpError } from '../../lib/errors.js';
 import type {
@@ -28,15 +33,6 @@ interface GoogleTokenResponse {
   readonly id_token: string;
   readonly token_type: string;
   readonly expires_in: number;
-}
-
-interface GoogleIdTokenClaims {
-  readonly sub: string;
-  readonly email: string;
-  readonly email_verified?: boolean;
-  readonly name?: string;
-  readonly given_name?: string;
-  readonly nonce?: string;
 }
 
 /**
@@ -184,23 +180,53 @@ export class GoogleOAuthProvider implements IdentityProvider {
     }
     const tokens = (await res.json()) as GoogleTokenResponse;
 
-    // JWT-Signatur-Verify gegen Google's JWKS lassen wir hier weg (keine
-    // crypto-Library im Scope). PRODUCTION: verifizieren via jose-Remote-JWKS.
-    // TODO(verify): use `createRemoteJWKSet('https://www.googleapis.com/oauth2/v3/certs')`.
-    const claims = decodeJwt(tokens.id_token) as unknown as GoogleIdTokenClaims;
-
-    if (!claims.sub || !claims.email) {
-      throw HttpError.badRequest('invalid_request', 'google id_token missing sub/email');
-    }
-    if (claims.nonce && claims.nonce !== p.nonce) {
-      throw HttpError.badRequest('invalid_request', 'google id_token nonce mismatch');
+    // SEC-002: id_token MUSS gegen Google's JWKS verifiziert werden — vorher
+    // war hier nur ein decodeJwt() ohne Signature-Check (fail-open). Eine
+    // GOOGLE_CLIENT_ID-Liste als expectedAudiences enthaelt die eigene
+    // Client-ID plus optional GOOGLE_ALLOWED_AUDIENCES (Multi-Audience-
+    // Setup fuer KC2-cross-IdP). Nonce ist jetzt unconditional Pflicht
+    // (vorher: `if (claims.nonce && ...)` — claim absent → kein check).
+    let verified: VerifiedIdTokenProfile;
+    try {
+      verified = await verifyIdToken({
+        token: tokens.id_token,
+        expectedAudiences: effectiveGoogleAudiences(this.config),
+        nonce: p.nonce,
+      });
+    } catch (err) {
+      // Re-throw als invalid_request damit Google-callback-Logging
+      // klar zeigt, dass das Token vom Google-Token-Endpoint kam aber
+      // nicht durch JWKS-Verify ging.
+      throw HttpError.badRequest(
+        'invalid_request',
+        `google id_token verification failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
 
     return {
-      externalId: claims.sub,
-      email: claims.email.toLowerCase(),
-      displayName: claims.name ?? claims.given_name ?? claims.email,
-      emailVerified: claims.email_verified === true,
+      externalId: verified.externalId,
+      email: verified.email,
+      displayName: verified.displayName,
+      emailVerified: verified.emailVerified,
     };
   }
+}
+
+/**
+ * Sammelt die Liste der akzeptierten Google-Audiences:
+ *   - Unsere eigene GOOGLE_CLIENT_ID (Pflicht)
+ *   - Zusaetzliche GOOGLE_ALLOWED_AUDIENCES (optional — Multi-Audience-Setup)
+ *
+ * Wird auch fuer inbound `verifyIdToken` aus mcp/oauth/authorize.ts (Google-
+ * IdP-Redirect-Path) wiederverwendet — exportiert um Duplikation zu
+ * vermeiden.
+ */
+export function effectiveGoogleAudiences(
+  config: Pick<AppConfig, 'GOOGLE_CLIENT_ID' | 'GOOGLE_ALLOWED_AUDIENCES'>,
+): string[] {
+  const out = new Set<string>([config.GOOGLE_CLIENT_ID]);
+  for (const a of config.GOOGLE_ALLOWED_AUDIENCES) {
+    if (a) out.add(a);
+  }
+  return Array.from(out);
 }
