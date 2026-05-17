@@ -30,7 +30,6 @@ import { renderEmptyState } from './components/empty-state.js';
 interface StorageFilters {
   readonly subtype: string | undefined;
   readonly q: string | undefined;
-  readonly embeddedFlag: 'embedded' | 'not-embedded' | undefined;
 }
 
 /** Apps-Filter-Sentinel — matched alle subtypes mit `app:`-Prefix. */
@@ -79,19 +78,15 @@ function subtypeIcon(subtype: string | null | undefined): string {
 }
 
 export function parseFilters(hash: string): StorageFilters {
-  // Hash forms: '#/storage', '#/storage?subtype=doc&q=foo&embedded=embedded'
+  // Hash forms: '#/storage', '#/storage?subtype=doc&q=foo'
   const qIdx = hash.indexOf('?');
-  if (qIdx < 0) return { subtype: undefined, q: undefined, embeddedFlag: undefined };
+  if (qIdx < 0) return { subtype: undefined, q: undefined };
   const params = new URLSearchParams(hash.slice(qIdx + 1));
   const subtype = params.get('subtype') ?? undefined;
   const q = params.get('q') ?? undefined;
-  const embedded = params.get('embedded');
-  const embeddedFlag =
-    embedded === 'embedded' || embedded === 'not-embedded' ? embedded : undefined;
   return {
     subtype: subtype && subtype !== '' ? subtype : undefined,
     q: q && q !== '' ? q : undefined,
-    embeddedFlag,
   };
 }
 
@@ -99,7 +94,6 @@ function buildHash(filters: StorageFilters): string {
   const params = new URLSearchParams();
   if (filters.subtype) params.set('subtype', filters.subtype);
   if (filters.q) params.set('q', filters.q);
-  if (filters.embeddedFlag) params.set('embedded', filters.embeddedFlag);
   const qs = params.toString();
   return qs ? `#/storage?${qs}` : '#/storage';
 }
@@ -141,7 +135,6 @@ export async function renderStorageTab(
       const next: StorageFilters = {
         subtype: chip.value === '' ? undefined : chip.value,
         q: filters.q,
-        embeddedFlag: filters.embeddedFlag,
       };
       window.location.hash = buildHash(next);
     });
@@ -149,7 +142,9 @@ export async function renderStorageTab(
   }
   header.appendChild(nav);
 
-  // Search input
+  // Search input — geht IMMER ueber alles (kein embedded/non-embedded-Filter).
+  // User-Entscheidung 2026-05-17: Suche soll Search-Index-agnostisch sein,
+  // egal ob ein Item vector-embedded ist oder nur in FTS5.
   const searchRow = document.createElement('div');
   searchRow.className = 'row storage-search-row';
 
@@ -166,40 +161,11 @@ export async function renderStorageTab(
       const next: StorageFilters = {
         subtype: filters.subtype,
         q: search.value.trim() === '' ? undefined : search.value.trim(),
-        embeddedFlag: filters.embeddedFlag,
       };
       window.location.hash = buildHash(next);
     }, 250);
   });
   searchRow.appendChild(search);
-
-  // Embedded-Filter
-  const flagSelect = document.createElement('select');
-  flagSelect.className = 'storage-flag-filter';
-  const flagOptions: ReadonlyArray<{ value: string; label: string }> = [
-    { value: '', label: 'Alle' },
-    { value: 'embedded', label: 'Nur embedded' },
-    { value: 'not-embedded', label: 'Nur ohne Embedding' },
-  ];
-  for (const opt of flagOptions) {
-    const o = document.createElement('option');
-    o.value = opt.value;
-    o.textContent = opt.label;
-    if (filters.embeddedFlag === opt.value || (!filters.embeddedFlag && opt.value === '')) {
-      o.selected = true;
-    }
-    flagSelect.appendChild(o);
-  }
-  flagSelect.addEventListener('change', () => {
-    const v = flagSelect.value;
-    const next: StorageFilters = {
-      subtype: filters.subtype,
-      q: filters.q,
-      embeddedFlag: v === 'embedded' || v === 'not-embedded' ? v : undefined,
-    };
-    window.location.hash = buildHash(next);
-  });
-  searchRow.appendChild(flagSelect);
 
   header.appendChild(searchRow);
   main.appendChild(header);
@@ -244,7 +210,6 @@ async function loadAndRender(
       ...(filters.subtype && !isAppsFilter ? { subtype: filters.subtype } : {}),
       ...(isAppsFilter ? { subtypePrefix: 'app:' } : {}),
       ...(filters.q ? { q: filters.q } : {}),
-      ...(filters.embeddedFlag ? { embeddedFlag: filters.embeddedFlag } : {}),
       ...(cursor !== undefined ? { cursor } : {}),
     };
     const result: ListObjectsResult = await api.listObjects(args);

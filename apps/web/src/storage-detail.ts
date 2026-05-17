@@ -48,6 +48,22 @@ function decodeBody(obj: KnowledgeObject): string {
   return obj.body;
 }
 
+/**
+ * IPI-Wrapper-Tags aus migrierten v1-Items strippen.
+ *
+ * v1's MCP-Server wrapped tool-outputs mit
+ *   `<external-content source="kc:..." untrusted="true">...</external-content>`
+ * als instruction-injection-Schutz fuer LLM-Kontext. Bei der v1→v2-Migration
+ * landeten diese Wrapper im persisted body/description-String drin. Im PWA-
+ * Display sind sie nicht hilfreich. Defensive Strip mit Regex.
+ */
+function stripIpiWrappers(s: string): string {
+  if (!s) return s;
+  return s
+    .replace(/<external-content\s+source="[^"]*"\s+untrusted="[^"]*">/g, '')
+    .replace(/<\/external-content>/g, '');
+}
+
 function showToast(msg: string): void {
   const t = document.createElement('div');
   t.className = 'storage-toast';
@@ -95,13 +111,13 @@ export async function renderStorageDetail(
 
   main.innerHTML = '';
 
-  // Header
+  // ─── Header: Back-Link + Title + Action-Row ────────────────────────
   const header = document.createElement('header');
   header.className = 'storage-detail-head';
 
   const back = document.createElement('button');
   back.type = 'button';
-  back.className = 'btn btn-secondary back-btn';
+  back.className = 'btn btn-secondary btn-small back-btn';
   back.textContent = '← Back';
   back.addEventListener('click', () => {
     window.location.hash = '#/storage';
@@ -112,11 +128,52 @@ export async function renderStorageDetail(
   title.textContent = obj.title ?? obj.filename ?? obj.id;
   header.appendChild(title);
 
+  // Action-Buttons rechts (Info-Toggle + Delete). KEIN card-wrapper, nur
+  // inline icon-Buttons (User-Feedback 2026-05-17: weniger Rahmen).
+  const actions = document.createElement('div');
+  actions.className = 'storage-detail-actions';
+
+  const infoBtn = document.createElement('button');
+  infoBtn.type = 'button';
+  infoBtn.className = 'icon-btn storage-info-toggle';
+  infoBtn.setAttribute('aria-label', 'Meta-Infos anzeigen');
+  infoBtn.setAttribute('title', 'Meta-Infos');
+  infoBtn.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`;
+  actions.appendChild(infoBtn);
+
+  let forceCheckbox: HTMLInputElement | null = null;
+  const delBtn = document.createElement('button');
+  delBtn.type = 'button';
+  delBtn.className = 'icon-btn storage-delete-btn';
+  delBtn.setAttribute('aria-label', `Object loeschen`);
+  delBtn.setAttribute('title', 'Object loeschen');
+  delBtn.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>`;
+  delBtn.addEventListener('click', () => {
+    void handleDelete(api, obj, forceCheckbox, delBtn);
+  });
+  actions.appendChild(delBtn);
+
+  header.appendChild(actions);
   main.appendChild(header);
 
-  // Meta
+  // ─── Force-Delete Toggle (nur wenn refcount > 0) ────────────────────
+  if ((obj.refcount ?? 0) > 0) {
+    const wrap = document.createElement('label');
+    wrap.className = 'force-delete-label';
+    forceCheckbox = document.createElement('input');
+    forceCheckbox.type = 'checkbox';
+    forceCheckbox.id = 'force-delete';
+    wrap.appendChild(forceCheckbox);
+    const span = document.createElement('span');
+    span.textContent = ` Force delete (refcount=${obj.refcount})`;
+    wrap.appendChild(span);
+    main.appendChild(wrap);
+  }
+
+  // ─── Meta-Section (hidden by default, Toggle via Info-Button) ───────
   const metaSection = document.createElement('section');
   metaSection.className = 'storage-meta card';
+  metaSection.hidden = true;
   const dl = document.createElement('dl');
   const metaPairs: ReadonlyArray<[string, string]> = [
     ['Subtype', obj.subtype ?? '-'],
@@ -138,84 +195,103 @@ export async function renderStorageDetail(
   metaSection.appendChild(dl);
   main.appendChild(metaSection);
 
-  // Summary (with Edit-Pencil)
-  if (obj.description !== undefined && obj.description !== null) {
-    const summary = document.createElement('section');
-    summary.className = 'storage-summary card';
+  infoBtn.addEventListener('click', () => {
+    metaSection.hidden = !metaSection.hidden;
+    infoBtn.classList.toggle('active', !metaSection.hidden);
+  });
 
-    const sh = document.createElement('h2');
-    sh.textContent = 'Summary';
-    if (obj.subtype === 'doc') {
-      const pencil = document.createElement('button');
-      pencil.type = 'button';
-      pencil.className = 'edit-pencil';
-      pencil.textContent = '✏️';
-      pencil.title = 'Summary bearbeiten';
-      pencil.addEventListener('click', () => {
-        openSummaryModal(api, obj);
-      });
-      sh.appendChild(pencil);
-    }
-    summary.appendChild(sh);
+  // ─── Accordion: Summary + Body (eines aufgeklappt schliesst das andere) ─
+  // <details>-Elemente mit gemeinsamen "toggle"-Listener fuer Sync.
+  const summaryDetails =
+    obj.description !== undefined && obj.description !== null
+      ? (() => {
+          const d = document.createElement('details');
+          d.className = 'storage-summary card';
+          // Default OPEN — User sieht erstmal die Zusammenfassung
+          d.open = true;
+          const s = document.createElement('summary');
+          s.textContent = 'Summary';
+          if (obj.subtype === 'doc') {
+            const pencil = document.createElement('button');
+            pencil.type = 'button';
+            pencil.className = 'edit-pencil';
+            pencil.textContent = '✏️';
+            pencil.title = 'Summary bearbeiten';
+            pencil.addEventListener('click', (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              openSummaryModal(api, obj);
+            });
+            s.appendChild(pencil);
+          }
+          d.appendChild(s);
+          const p = document.createElement('p');
+          p.textContent = stripIpiWrappers(obj.description) || '(leer)';
+          d.appendChild(p);
+          return d;
+        })()
+      : null;
 
-    const p = document.createElement('p');
-    p.textContent = obj.description || '(leer)';
-    summary.appendChild(p);
+  if (summaryDetails) main.appendChild(summaryDetails);
 
-    main.appendChild(summary);
-  }
-
-  // Body — Subtype-aware Renderer + Raw-Toggle (Fallback)
-  const bodySection = document.createElement('section');
-  bodySection.className = 'storage-body card';
-  const bh = document.createElement('h2');
-  bh.textContent = 'Body';
-  bodySection.appendChild(bh);
+  // Body — Renderer-Dispatch. KEIN Raw-Toggle innen mehr; falls Renderer
+  // leer ist (z.B. weil decodeBody nichts liefert), zeigen wir den raw
+  // decoded text als pre. EINE einzige Body-Section.
+  const bodyDetails = document.createElement('details');
+  bodyDetails.className = 'storage-body card';
+  bodyDetails.open = false; // default zu, Summary ist genug fuer overview
+  const bs = document.createElement('summary');
+  bs.textContent = 'Body';
+  bodyDetails.appendChild(bs);
 
   const rendered = dispatchRenderer(obj);
-  bodySection.appendChild(rendered);
+  // Defensive: strip IPI-Wrappers aus rendered DOM-Text-Nodes
+  walkAndStripIpi(rendered);
 
-  const rawToggle = document.createElement('details');
-  rawToggle.className = 'storage-body-raw';
-  const summary = document.createElement('summary');
-  summary.textContent = 'Raw';
-  rawToggle.appendChild(summary);
-  const pre = document.createElement('pre');
-  pre.className = 'storage-body-pre';
-  pre.textContent = decodeBody(obj) || '(empty)';
-  rawToggle.appendChild(pre);
-  bodySection.appendChild(rawToggle);
-
-  main.appendChild(bodySection);
-
-  // Actions footer
-  const footer = document.createElement('footer');
-  footer.className = 'storage-actions card';
-
-  let forceCheckbox: HTMLInputElement | null = null;
-  if ((obj.refcount ?? 0) > 0) {
-    const wrap = document.createElement('label');
-    wrap.className = 'force-delete-label';
-    forceCheckbox = document.createElement('input');
-    forceCheckbox.type = 'checkbox';
-    forceCheckbox.id = 'force-delete';
-    wrap.appendChild(forceCheckbox);
-    const span = document.createElement('span');
-    span.textContent = ` Force delete (refcount=${obj.refcount})`;
-    wrap.appendChild(span);
-    footer.appendChild(wrap);
+  // Wenn rendered keinen sichtbaren Inhalt hat, fall-back auf decoded raw.
+  if (!rendered.textContent || rendered.textContent.trim().length === 0) {
+    const raw = decodeBody(obj);
+    if (raw) {
+      const pre = document.createElement('pre');
+      pre.className = 'storage-body-pre';
+      pre.textContent = stripIpiWrappers(raw);
+      bodyDetails.appendChild(pre);
+    } else {
+      const empty = document.createElement('p');
+      empty.className = 'muted';
+      empty.textContent = '(kein Body)';
+      bodyDetails.appendChild(empty);
+    }
+  } else {
+    bodyDetails.appendChild(rendered);
   }
+  main.appendChild(bodyDetails);
 
-  const delBtn = document.createElement('button');
-  delBtn.type = 'button';
-  delBtn.className = 'btn btn-danger delete-btn';
-  delBtn.textContent = '🗑 Delete';
-  delBtn.addEventListener('click', () => {
-    void handleDelete(api, obj, forceCheckbox, delBtn);
-  });
-  footer.appendChild(delBtn);
+  // Accordion-Sync: Body-open → Summary-close (und vice versa).
+  if (summaryDetails) {
+    bodyDetails.addEventListener('toggle', () => {
+      if (bodyDetails.open) summaryDetails.open = false;
+    });
+    summaryDetails.addEventListener('toggle', () => {
+      if (summaryDetails.open) bodyDetails.open = false;
+    });
+  }
+}
 
-  main.appendChild(footer);
+/**
+ * Walks ein DOM-Subtree und ersetzt jeden Text-Node-Inhalt mit dem
+ * IPI-Wrapper-getrippten Pendant. Ueber den Renderer hinausgegangener
+ * Defense-Layer fuer migrierte Items.
+ */
+function walkAndStripIpi(root: Node): void {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let n: Node | null = walker.nextNode();
+  while (n !== null) {
+    if (n.textContent && /external-content/.test(n.textContent)) {
+      n.textContent = stripIpiWrappers(n.textContent);
+    }
+    n = walker.nextNode();
+  }
 }
 
 async function handleDelete(

@@ -611,7 +611,7 @@ code {
 .storage-detail .storage-detail-head {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.5rem;
   margin-bottom: 1rem;
   flex-wrap: wrap;
 }
@@ -621,6 +621,63 @@ code {
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.storage-detail-actions {
+  display: flex;
+  gap: 0.2rem;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.storage-info-toggle {
+  color: var(--fg-muted);
+}
+
+.storage-info-toggle:hover,
+.storage-info-toggle.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--bg);
+}
+
+.storage-delete-btn {
+  color: var(--fg-muted);
+}
+
+.storage-delete-btn:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.storage-summary > summary,
+.storage-body > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 1.05rem;
+  padding: 0.25rem 0;
+  user-select: none;
+  list-style: none;
+}
+
+.storage-summary > summary::-webkit-details-marker,
+.storage-body > summary::-webkit-details-marker {
+  display: none;
+}
+
+.storage-summary > summary::before,
+.storage-body > summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 0.4rem;
+  color: var(--fg-muted);
+  transition: transform 0.15s ease;
+}
+
+.storage-summary[open] > summary::before,
+.storage-body[open] > summary::before {
+  transform: rotate(90deg);
 }
 
 .storage-meta dl {
@@ -1533,24 +1590,33 @@ code {
   gap: 0.5rem;
 }
 
+/* Outline-style colored buttons — portiert von v1 (kein Solid-Fill).
+   Farbiger Rahmen + farbige Schrift, Hover/Active kippt zur Solid-
+   Variante als taktiles Bestaetigungs-Feedback. */
 .btn-approve {
-  background: var(--ok);
+  background: transparent;
+  color: var(--ok);
   border-color: var(--ok);
+  font-weight: 600;
 }
 
-.btn-approve:hover:not(:disabled) {
-  filter: brightness(1.08);
+.btn-approve:hover:not(:disabled),
+.btn-approve:active:not(:disabled) {
   background: var(--ok);
-  border-color: var(--ok);
+  color: #fff;
 }
 
 .btn-reject {
+  background: transparent;
   color: var(--danger);
   border-color: var(--danger);
+  font-weight: 600;
 }
 
-.btn-reject:hover:not(:disabled) {
-  background: var(--danger-bg);
+.btn-reject:hover:not(:disabled),
+.btn-reject:active:not(:disabled) {
+  background: var(--danger);
+  color: #fff;
 }
 
 .sensitivity-badge {
@@ -1586,6 +1652,197 @@ code {
 .approval-quick-actions {
   gap: 0.4rem;
   margin-top: 0.5rem;
+}
+
+/* ============================================================
+ * v1-Style Approval-Card (List-Row, sec-card Display, Badges)
+ * ------------------------------------------------------------
+ * Portiert 1:1 von mcp-approval (v1) damit der Look ueber beide
+ * Versionen konsistent ist. Klassen-Namen + Farben + Spacing
+ * matchen v1/assets/app/style.css. CSS-Variable-Mapping:
+ *   v1 --bg-card  -> v2 --bg-elev
+ *   v1 --approve  -> v2 --ok
+ *   v1 --reject   -> v2 --danger
+ *   v1 --info     -> v2 --fg-muted (kein extra Variable in v2)
+ * ============================================================ */
+
+/* List-Card im Pending- und History-Verlauf */
+.approval-card {
+  display: block;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  color: var(--fg);
+  background: var(--bg-elev);
+  margin-bottom: 0.4rem;
+}
+.approval-card .card-row1 {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+}
+.approval-card .card-row2 {
+  font-size: 0.8rem;
+  margin-top: 0.15rem;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.approval-card .tool-name { color: var(--accent); font-weight: 600; }
+.approval-card .ttl       { margin-left: auto; color: var(--fg-muted); font-size: 0.8rem; }
+.approval-card .when      { margin-left: auto; font-size: 0.8rem; color: var(--fg-muted); }
+.approval-card.pending    { border-left: 3px solid var(--accent); }
+.approval-card.history    { background: transparent; padding: 0.4rem 0.6rem; }
+.approval-card .st-icon   { font-size: 1rem; width: 1.2em; display: inline-block; text-align: center; }
+.approval-card.st-approved .st-icon { color: var(--ok); }
+.approval-card.st-rejected .st-icon { color: var(--danger); }
+.approval-card.st-expired  .st-icon { color: var(--fg-muted); }
+.approval-card:hover      { border-color: var(--accent); }
+
+/* Detail-Header: Badge + Tool-Name kombiniert als h2. */
+.approval-tool-header {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin: 0.25rem 0 0.4rem;
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+.approval-tool-header .tool-name {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--fg);
+  word-break: break-all;
+}
+
+/* Back-link chip oben in Detail-View */
+.back-link {
+  display: inline-block;
+  margin-bottom: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  text-decoration: none;
+  color: var(--fg-muted);
+  font-size: 0.9rem;
+  background: var(--bg-elev);
+}
+.back-link:hover { color: var(--fg); border-color: var(--accent); }
+
+/* Approve/Reject Button-Row */
+.btn-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+
+/* Status-Banner fuer read-only Verlauf (approved/rejected/expired) */
+.status-banner {
+  padding: 0.55rem 0.85rem;
+  margin: 0.25rem 0 0.6rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  background: var(--bg);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.status-banner.status-approved { border-left-color: var(--ok);     color: var(--ok); }
+.status-banner.status-rejected { border-left-color: var(--danger); color: var(--danger); }
+.status-banner.status-expired  { border-left-color: var(--fg-muted); color: var(--fg-muted); }
+
+/* Sensitivity-Badges (3-Wege: read / write / danger) */
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+}
+.badge-read     { background: #e6f4ea; color: #0b6630; border-color: #b7dfc1; }
+.badge-write,
+.badge-approval { background: #fff4e1; color: #7c4a03; border-color: #f0d29a; }
+.badge-danger   { background: #ffeaea; color: #8b1f1f; border-color: #f3b3b3; }
+@media (prefers-color-scheme: dark) {
+  .badge-read     { background: #08311a; color: #7ee2a3; border-color: #1d5c34; }
+  .badge-write,
+  .badge-approval { background: #3a2a06; color: #f5c977; border-color: #6a4d12; }
+  .badge-danger   { background: #3a1212; color: #ff9b9b; border-color: #6a1f1f; }
+}
+
+/* Sectioned approval display — vom Server emittierter display_string
+   mit "=== Label ===" Markern wird in eine Karte pro Section gerendert,
+   lange Bodies in <details>-Foldout. */
+.sec-host { display: flex; flex-direction: column; gap: 0.5rem; margin: 0.5rem 0; }
+.sec-host-quick { gap: 0.4rem; }
+.sec-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.75rem;
+}
+.sec-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  margin: 0 0 0.35rem;
+}
+.sec-label-compact { font-size: 0.68rem; margin: 0 0 0.25rem; }
+.sec-body {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.sec-details > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 0.15rem 0;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.sec-details > summary::-webkit-details-marker { display: none; }
+.sec-details > summary::after {
+  content: ' ▾ tap to expand';
+  font-family: var(--font-sys, sans-serif);
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+  letter-spacing: 0.03em;
+}
+.sec-details[open] > summary::after { content: ' ▴ tap to collapse'; }
+.sec-details[open] > summary { color: var(--fg-muted); font-size: 0.78rem; margin-bottom: 0.25rem; }
+.sec-details > .sec-body { margin-top: 0.25rem; }
+
+/* Live-TTL Countdown in Detail-View */
+.approval-ttl {
+  margin: 0.75rem 0 0.25rem;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--fg-muted);
+}
+
+/* Detail-Hints (DANGER warning, Step-up grace hint, etc.) */
+.approval-hint {
+  display: block;
+  padding: 0.6rem;
+  margin: 0.5rem 0;
+  border-radius: var(--radius-sm);
+  font-size: 0.9rem;
+}
+.approval-hint.muted {
+  background: var(--bg-elev);
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
 }
 
 /* ============================================================
