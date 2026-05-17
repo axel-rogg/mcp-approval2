@@ -360,7 +360,7 @@ export function createApiClient(baseUrl?: string): ApiClient {
 
     async rediscoverGateways(name?: string) {
       return await request<RediscoverGatewaysResponse>(
-        '/v1/admin/gateways/rediscover',
+        '/v1/gateways/rediscover',
         {
           method: 'POST',
           body: name ? { name } : {},

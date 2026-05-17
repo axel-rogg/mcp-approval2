@@ -1,5 +1,5 @@
 /**
- * Admin-Route: POST /v1/admin/gateways/rediscover
+ * Admin-Route: POST /v1/gateways/rediscover
  *
  * Plan-Ref: PLAN-architecture-v1.md §5.4.
  *
@@ -8,9 +8,11 @@
  * Button), damit der User nicht auf den Cron warten + nicht approval2 neu
  * starten muss um geaenderte Sub-MCP-Tools zu sehen.
  *
- * Auth: admin-only. Hono-Route-Tree erwartet `auth(server)` davor + `adminOnly()`
- * als inner-most Middleware. Wir wrappen beides direkt, um keine externe
- * Mount-Reihenfolge anzunehmen.
+ * Auth: admin-only. Wir wrappen `authMiddleware` + `adminOnly()` direkt in
+ * der Route — der Pfad liegt bewusst NICHT unter `/v1/admin/*`, weil dort
+ * der admin-router ein `app.use('*', adminOnly())` ohne authMiddleware-davor
+ * hat (SEC-NEW-106: fail-closed-401 auf neue admin-paths bis das fix
+ * landet). Eigenstaendiger Pfad → eigenstaendige Auth-Kette.
  */
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -53,7 +55,7 @@ export function adminGatewayRoutes(deps: AdminGatewayRouteDeps): Hono<AppBinding
   const app = new Hono<AppBindings>();
 
   app.post(
-    '/v1/admin/gateways/rediscover',
+    '/v1/gateways/rediscover',
     authMiddleware(deps.server, { required: true }),
     adminOnly(),
     zValidator('json', RediscoverBody.optional()),

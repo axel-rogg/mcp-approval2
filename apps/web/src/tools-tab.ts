@@ -25,6 +25,32 @@ import { ApiError } from './api.js';
 import { logout, renderSessionExpired } from './auth.js';
 import { renderHeader } from './components/header.js';
 
+/**
+ * Modernes Refresh-Icon (orange-rost) als inline-SVG. Variante "arrow-path"
+ * inspiriert von Heroicons — clean, neutral, ohne Emoji-Render-Drift.
+ *
+ * Farbe + Spin-Animation kommen aus styles.css via `.btn-refresh`.
+ */
+function makeRefreshIcon(): SVGElement {
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  // Zwei pfeil-pfade die einen Kreis bilden — "rotate / refresh" Symbol.
+  const p = document.createElementNS(NS, 'path');
+  p.setAttribute(
+    'd',
+    'M21 12a9 9 0 0 1-15.5 6.4M3 12a9 9 0 0 1 15.5-6.4M21 4v5h-5M3 20v-5h5',
+  );
+  svg.appendChild(p);
+  return svg;
+}
+
 function sensitivityClass(s: 'read' | 'write' | 'danger'): string {
   return `tool-sens tool-sens-${s}`;
 }
@@ -131,9 +157,10 @@ function renderServerCard(s: ServerSection, cb: ServerCardCallbacks): HTMLElemen
   if (s.isGateway && cb.onRefresh) {
     const refreshBtn = document.createElement('button');
     refreshBtn.type = 'button';
-    refreshBtn.className = 'btn btn-secondary btn-small server-card-refresh';
-    refreshBtn.textContent = '🔄';
+    refreshBtn.className = 'btn btn-icon btn-refresh server-card-refresh';
+    refreshBtn.setAttribute('aria-label', `Tools von ${s.displayName} neu entdecken`);
     refreshBtn.title = `Tools von ${s.displayName} neu entdecken`;
+    refreshBtn.appendChild(makeRefreshIcon());
     refreshBtn.addEventListener('click', (ev) => {
       // Klick auf den Refresh-Button soll das <details>-Toggle nicht triggern.
       ev.preventDefault();
@@ -233,8 +260,11 @@ export async function renderToolsTab(
   if (session.role === 'admin') {
     refreshAllBtn = document.createElement('button');
     refreshAllBtn.type = 'button';
-    refreshAllBtn.className = 'btn btn-secondary btn-small';
-    refreshAllBtn.textContent = '🔄 Gateways neu entdecken';
+    refreshAllBtn.className = 'btn btn-refresh btn-small';
+    refreshAllBtn.appendChild(makeRefreshIcon());
+    const lbl = document.createElement('span');
+    lbl.textContent = 'Gateways neu entdecken';
+    refreshAllBtn.appendChild(lbl);
     refreshAllBtn.title =
       'Aktualisiert Sub-MCP-Tool-Cache + registriert live neu in der Tool-Registry. ' +
       'Kein approval2-Restart noetig.';
@@ -294,12 +324,21 @@ export async function renderToolsTab(
   }
 
   async function handleRefresh(name: string | null): Promise<void> {
-    // Lock alle relevanten Buttons + Status zeigen.
-    if (refreshAllBtn) refreshAllBtn.disabled = true;
+    // Lock alle relevanten Buttons + Spin-Animation zeigen.
+    if (refreshAllBtn) {
+      refreshAllBtn.disabled = true;
+      refreshAllBtn.classList.add('is-loading');
+    }
     const perCardBtns = Array.from(
       listHost.querySelectorAll<HTMLButtonElement>('.server-card-refresh'),
     );
-    for (const b of perCardBtns) b.disabled = true;
+    for (const b of perCardBtns) {
+      b.disabled = true;
+      // Nur den geklickten Per-Card-Button animieren, nicht alle anderen.
+      if (name && b.getAttribute('aria-label')?.includes(name)) {
+        b.classList.add('is-loading');
+      }
+    }
     status.classList.remove('err');
     status.textContent = name
       ? `Aktualisiere ${name}…`
@@ -328,7 +367,19 @@ export async function renderToolsTab(
         status.textContent = `Refresh fehlgeschlagen: ${String(err)}`;
       }
     } finally {
-      if (refreshAllBtn) refreshAllBtn.disabled = false;
+      if (refreshAllBtn) {
+        refreshAllBtn.disabled = false;
+        refreshAllBtn.classList.remove('is-loading');
+      }
+      // Per-card-Spinner werden mit dem Re-Render von loadAndRender() auto-
+      // entfernt; falls der re-render nicht stattfand (z.B. fruehzeitiger
+      // Return bei 401), reset hier sicherheitshalber.
+      for (const b of listHost.querySelectorAll<HTMLButtonElement>(
+        '.server-card-refresh',
+      )) {
+        b.disabled = false;
+        b.classList.remove('is-loading');
+      }
     }
   }
 
