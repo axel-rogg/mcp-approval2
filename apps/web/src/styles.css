@@ -998,10 +998,19 @@ code {
   position: relative;
 }
 
-.body-copy-btn,
-.body-edit-pencil {
+/* Flex-Wrapper für Body-Actions — Copy links, Edit-Pencil rechts,
+   gemeinsam top-right schwebend. Robust gegen Button-Größen-Drift. */
+.body-actions {
   position: absolute;
   top: 0.5rem;
+  right: 0.5rem;
+  display: flex;
+  gap: 0.4rem;
+  z-index: 1;
+}
+
+.body-copy-btn,
+.body-edit-pencil {
   background: transparent;
   border: 0;
   padding: 0.3rem;
@@ -1009,18 +1018,7 @@ code {
   cursor: pointer;
   color: var(--fg-muted);
   opacity: 0.45;
-  z-index: 1;
   transition: opacity 0.12s ease, background 0.12s ease;
-}
-
-/* Beide rechts (User-Wunsch 2026-05-17). Edit-Pencil ganz aussen,
-   Copy daneben mit etwas Abstand. */
-.body-edit-pencil {
-  right: 0.5rem;
-}
-
-.body-copy-btn {
-  right: 2.4rem;
 }
 
 .body-copy-btn:hover,

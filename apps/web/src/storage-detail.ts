@@ -377,9 +377,13 @@ export async function renderStorageDetail(
     const bodySection = document.createElement('section');
     bodySection.className = 'storage-body card';
 
-    // ─── Floating Action-Buttons über dem Body (User-Wunsch 2026-05-17):
-    //   - top-left: Copy-Content-Button (transparent, hover-reveal)
-    //   - top-right: Edit-Pencil (conditional auf isBodyTextEditable)
+    // ─── Floating Action-Buttons über dem Body (User-Wunsch 2026-05-17).
+    // Beide rechts oben in einem Flex-Container — Copy links, Edit-Pencil
+    // ganz rechts. Transparent + hover-reveal damit sie den Content nicht
+    // dominieren.
+    const bodyActions = document.createElement('div');
+    bodyActions.className = 'body-actions';
+
     const copyBodyBtn = document.createElement('button');
     copyBodyBtn.type = 'button';
     copyBodyBtn.className = 'icon-btn body-copy-btn';
@@ -395,7 +399,7 @@ export async function renderStorageDetail(
         showToast('Kopieren fehlgeschlagen');
       }
     });
-    bodySection.appendChild(copyBodyBtn);
+    bodyActions.appendChild(copyBodyBtn);
 
     if (isBodyTextEditable(obj)) {
       const editBodyBtn = document.createElement('button');
@@ -407,8 +411,10 @@ export async function renderStorageDetail(
       editBodyBtn.addEventListener('click', () => {
         openBodyModal(api, obj);
       });
-      bodySection.appendChild(editBodyBtn);
+      bodyActions.appendChild(editBodyBtn);
     }
+
+    bodySection.appendChild(bodyActions);
 
     // Interaktiver List-Toggle (PLAN 2026-05-17 User-Wunsch): wenn der
     // body-renderer eine Liste ist, persistieren wir Checkbox-Ticks direkt
