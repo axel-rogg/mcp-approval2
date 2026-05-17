@@ -82,6 +82,7 @@ import { internalCredentialsRoutes } from './routes/internal/credentials.js';
 import { internalDekRoutes } from './routes/internal/dek.js';
 import { internalCronRoutes } from './routes/internal/cron.js';
 import { internalAppsImportRoutes } from './routes/internal/apps-import.js';
+import { internalObjectsImportRoutes } from './routes/internal/objects-import.js';
 import { createDekService } from './services/dek.js';
 import { createAdminService } from './services/admin.js';
 import { createEmailOutboxService } from './services/email-outbox.js';
@@ -891,6 +892,20 @@ export async function createApp(
         internalAppsImportRoutes({
           server,
           apps: optionalServices.apps,
+          ...(userSyncService ? { userSync: userSyncService } : {}),
+        }),
+      );
+    }
+
+    // POST /internal/v1/objects/import — generic Memos/Docs/Notes/Bookmarks
+    // v1 → v2 Migration. Schreibt direkt via KnowledgeService.createObject.
+    if (deps.knowledge) {
+      app.use('/internal/v1/objects/*', serviceTokenGuard);
+      app.route(
+        '/',
+        internalObjectsImportRoutes({
+          server,
+          knowledge: deps.knowledge,
           ...(userSyncService ? { userSync: userSyncService } : {}),
         }),
       );

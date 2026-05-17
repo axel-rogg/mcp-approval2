@@ -292,8 +292,7 @@ export type MemorizeDeleteInput = z.infer<typeof MemorizeDeleteInput>;
 
 export const LIST_SUBTYPE = 'list' as const;
 export const NOTE_SUBTYPE = 'note' as const;
-export const BOOKMARK_SUBTYPE = 'bookmark' as const;
-export const RECIPE_SUBTYPE = 'recipe' as const;
+// BOOKMARK_SUBTYPE + RECIPE_SUBTYPE entfernt 2026-05-17.
 
 // =============================================================================
 // Lists-Tools (subtype='list', Body=Markdown-Checkbox)
@@ -413,96 +412,9 @@ export const NotesDeleteInput = z
 export type NotesDeleteInput = z.infer<typeof NotesDeleteInput>;
 
 // =============================================================================
-// Bookmarks-Tools (subtype='bookmark', Body=Markdown notes, meta.url)
+// Bookmarks-Tools + Recipes-Tools — entfernt 2026-05-17.
+// Soft-Delete unter apps/server/src/_to_delete/2026-05-17/.
 // =============================================================================
-
-export const BookmarksCreateInput = z
-  .object({
-    title: z.string().min(1).max(200),
-    url: z.string().url().max(2048),
-    notes: z.string().max(8000).optional(),
-    keywords: z.array(z.string().min(1).max(64)).max(32).optional(),
-  })
-  .strict();
-export type BookmarksCreateInput = z.infer<typeof BookmarksCreateInput>;
-
-export const BookmarksListInput = z
-  .object({
-    limit: z.number().int().min(1).max(200).optional(),
-    cursor: z.number().int().nonnegative().optional(),
-  })
-  .strict();
-export type BookmarksListInput = z.infer<typeof BookmarksListInput>;
-
-export const BookmarksGetInput = z
-  .object({
-    id: z.string().min(1).max(128),
-  })
-  .strict();
-export type BookmarksGetInput = z.infer<typeof BookmarksGetInput>;
-
-export const BookmarksDeleteInput = z
-  .object({
-    id: z.string().min(1).max(128),
-  })
-  .strict();
-export type BookmarksDeleteInput = z.infer<typeof BookmarksDeleteInput>;
-
-// =============================================================================
-// Recipes-Tools (subtype='recipe', Body=Markdown + optional YAML-Frontmatter)
-// =============================================================================
-
-export const RecipesCreateInput = z
-  .object({
-    title: z.string().min(1).max(200),
-    body: z.string().min(1).max(32_768),
-    description: z.string().min(1).max(2000).optional(),
-    keywords: z.array(z.string().min(1).max(64)).max(32).optional(),
-  })
-  .strict();
-export type RecipesCreateInput = z.infer<typeof RecipesCreateInput>;
-
-export const RecipesUpdateInput = z
-  .object({
-    id: z.string().min(1).max(128),
-    title: z.string().min(1).max(200).optional(),
-    body: z.string().min(1).max(32_768).optional(),
-    description: z.string().max(2000).optional(),
-    keywords: z.array(z.string().min(1).max(64)).max(32).optional(),
-    expected_version: z.number().int().nonnegative().optional(),
-  })
-  .strict()
-  .refine(
-    (v) =>
-      v.title !== undefined ||
-      v.body !== undefined ||
-      v.description !== undefined ||
-      v.keywords !== undefined,
-    { message: 'at least one of title/body/description/keywords must be provided' },
-  );
-export type RecipesUpdateInput = z.infer<typeof RecipesUpdateInput>;
-
-export const RecipesListInput = z
-  .object({
-    limit: z.number().int().min(1).max(200).optional(),
-    cursor: z.number().int().nonnegative().optional(),
-  })
-  .strict();
-export type RecipesListInput = z.infer<typeof RecipesListInput>;
-
-export const RecipesGetInput = z
-  .object({
-    id: z.string().min(1).max(128),
-  })
-  .strict();
-export type RecipesGetInput = z.infer<typeof RecipesGetInput>;
-
-export const RecipesDeleteInput = z
-  .object({
-    id: z.string().min(1).max(128),
-  })
-  .strict();
-export type RecipesDeleteInput = z.infer<typeof RecipesDeleteInput>;
 
 // =============================================================================
 // Objects-Tools  (technical view, all kinds)

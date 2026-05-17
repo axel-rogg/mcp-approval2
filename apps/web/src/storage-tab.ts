@@ -41,6 +41,8 @@ const SUBTYPE_LABEL: Record<string, string> = {
   file: 'Docs',
   skill_manifest: 'Skills',
   memo: 'Memos',
+  list: 'Lists',
+  note: 'Notes',
   [APP_FILTER]: 'Apps',
 };
 
@@ -48,6 +50,8 @@ const SUBTYPE_ICON: Record<string, string> = {
   file: '📄',
   skill_manifest: '🧠',
   memo: '💭',
+  list: '☑',
+  note: '📝',
 };
 
 const FILTER_CHIPS: ReadonlyArray<{ value: string; label: string }> = [
@@ -56,6 +60,8 @@ const FILTER_CHIPS: ReadonlyArray<{ value: string; label: string }> = [
   { value: 'skill_manifest', label: 'Skills' },
   { value: APP_FILTER, label: 'Apps' },
   { value: 'memo', label: 'Memos' },
+  { value: 'list', label: 'Lists' },
+  { value: 'note', label: 'Notes' },
 ];
 
 function subtypeLabel(subtype: string | null | undefined): string {

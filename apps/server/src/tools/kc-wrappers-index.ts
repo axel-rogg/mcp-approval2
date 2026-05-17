@@ -3,12 +3,12 @@
  *
  * Plan-Ref: PLAN-architecture-v1.md §2.1 (Storage-Boundary)
  *
- * Wrappers fuer docs.*, skills.*, memorize.*, objects.*, lists.*, notes.*,
- * bookmarks.*, recipes.* — alle forwarden an KnowledgeService → mcp-knowledge2
- * (HttpKnowledgeAdapter).
+ * Wrappers fuer docs.*, skills.*, memorize.*, objects.*, lists.*, notes.* —
+ * alle forwarden an KnowledgeService → mcp-knowledge2 (HttpKnowledgeAdapter).
  *
- * Total: 40 Tools (7 docs + 7 skills + 4 memorize + 2 objects + 6 lists +
- *                  5 notes + 4 bookmarks + 5 recipes).
+ * Total: 31 Tools (7 docs + 7 skills + 4 memorize + 2 objects + 6 lists +
+ *                  5 notes). bookmarks/recipes wurden 2026-05-17 entfernt
+ *                  (siehe apps/server/src/_to_delete/2026-05-17/).
  *
  * Wird vom Caller (createApp) AUFTRAGSGEMAESS getrennt von den existierenden
  * registerCoreTools registriert. Hot-Path: registerKcWrapperTools(registry, {knowledge}).
@@ -65,21 +65,9 @@ import {
   makeNotesUpdateTool,
   type NotesToolsDeps,
 } from './notes-tools.js';
-import {
-  makeBookmarksCreateTool,
-  makeBookmarksDeleteTool,
-  makeBookmarksGetTool,
-  makeBookmarksListTool,
-  type BookmarksToolsDeps,
-} from './bookmarks-tools.js';
-import {
-  makeRecipesCreateTool,
-  makeRecipesDeleteTool,
-  makeRecipesGetTool,
-  makeRecipesListTool,
-  makeRecipesUpdateTool,
-  type RecipesToolsDeps,
-} from './recipes-tools.js';
+// bookmarks-tools + recipes-tools entfernt 2026-05-17 (User-Entscheidung:
+// Solo-Pilot braucht keine URL-Save-Surface oder Recipe-DB; bessere Tools
+// existieren extern). Soft-Delete unter apps/server/src/_to_delete/2026-05-17/.
 
 export interface KcWrapperDeps {
   readonly knowledge: KnowledgeService;
@@ -105,8 +93,6 @@ export function registerKcWrapperTools(
   const oDeps: ObjectsToolsDeps = { knowledge: deps.knowledge };
   const liDeps: ListsToolsDeps = { knowledge: deps.knowledge };
   const nDeps: NotesToolsDeps = { knowledge: deps.knowledge };
-  const bDeps: BookmarksToolsDeps = { knowledge: deps.knowledge };
-  const rDeps: RecipesToolsDeps = { knowledge: deps.knowledge };
 
   // Docs (7)
   registry.register(makeDocsPutTool(dDeps));
@@ -151,18 +137,7 @@ export function registerKcWrapperTools(
   registry.register(makeNotesGetTool(nDeps));
   registry.register(makeNotesDeleteTool(nDeps));
 
-  // Bookmarks (4)
-  registry.register(makeBookmarksCreateTool(bDeps));
-  registry.register(makeBookmarksListTool(bDeps));
-  registry.register(makeBookmarksGetTool(bDeps));
-  registry.register(makeBookmarksDeleteTool(bDeps));
-
-  // Recipes (5)
-  registry.register(makeRecipesCreateTool(rDeps));
-  registry.register(makeRecipesUpdateTool(rDeps));
-  registry.register(makeRecipesListTool(rDeps));
-  registry.register(makeRecipesGetTool(rDeps));
-  registry.register(makeRecipesDeleteTool(rDeps));
+  // Bookmarks + Recipes — entfernt 2026-05-17 (siehe Header-Kommentar).
 }
 
 // ---------------------------------------------------------------------------
@@ -224,19 +199,4 @@ export {
 } from './notes-tools.js';
 export type { NotesToolsDeps } from './notes-tools.js';
 
-export {
-  makeBookmarksCreateTool,
-  makeBookmarksDeleteTool,
-  makeBookmarksGetTool,
-  makeBookmarksListTool,
-} from './bookmarks-tools.js';
-export type { BookmarksToolsDeps } from './bookmarks-tools.js';
-
-export {
-  makeRecipesCreateTool,
-  makeRecipesDeleteTool,
-  makeRecipesGetTool,
-  makeRecipesListTool,
-  makeRecipesUpdateTool,
-} from './recipes-tools.js';
-export type { RecipesToolsDeps } from './recipes-tools.js';
+// bookmarks-tools / recipes-tools Re-exports entfernt 2026-05-17.
