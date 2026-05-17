@@ -27,6 +27,7 @@ import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
 import type { AppBindings, ServerContext } from '../lib/context.js';
 import { HttpError } from '../lib/errors.js';
+import { resolveOrigin, resolveRpId } from '../lib/config.js';
 import { auth } from '../middleware/auth.js';
 import type { PendingApproval, ApprovalStatus } from '../schema/types.js';
 import {
@@ -36,20 +37,40 @@ import {
 import { resumeApproval } from '../mcp/protocol/approval-resume.js';
 import type { ToolRegistry } from '../mcp/protocol/registry.js';
 import type { AuditService } from '../mcp/protocol/tool.js';
+import type { VerifyApprovalAssertionArgs } from '../auth/webauthn/approval-verify.js';
+
+/**
+ * Verifier-Callback fuer WebAuthn-Assertion (SEC-001). In tests koennen wir
+ * den injizieren (no-op); in production wird `createApprovalAssertionVerifier`
+ * verwendet (siehe app-factory.ts).
+ */
+export type ApprovalAssertionVerifier = (args: VerifyApprovalAssertionArgs) => Promise<void>;
 
 export interface ApprovalsRouteDeps {
   readonly server: ServerContext;
   readonly approvals: ApprovalService;
   readonly registry: ToolRegistry;
   readonly audit: AuditService;
+  /** Optional fuer Tests; in Production zwingend gesetzt (SEC-001). */
+  readonly verifyAssertion?: ApprovalAssertionVerifier;
 }
 
 // ---------------------------------------------------------------------------
 // Schemas
 // ---------------------------------------------------------------------------
 
+// SEC-001: ein /approve-Call MUSS die vollstaendige WebAuthn-Assertion mit-
+// senden (credentialId + authenticatorData + clientDataJson + signature). Ohne
+// diese Felder kann der Server keine Verifikation gegen die in
+// pending_approvals.approval_challenge gespeicherte Challenge fahren. Die
+// Felder sind required — wer nur signature alleine schickt, wird mit 400
+// abgelehnt.
 const approveSchema = z.object({
+  credentialIdB64: z.string().min(1).max(1024),
+  authenticatorDataB64: z.string().min(1).max(8192),
+  clientDataJsonB64: z.string().min(1).max(8192),
   signatureB64: z.string().min(1).max(8192),
+  userHandleB64: z.string().min(1).max(256).optional(),
   prfSessionId: z.string().min(1).max(128).optional(),
 });
 
@@ -84,7 +105,10 @@ function bytesToB64(b: Uint8Array): string {
 // Serialization (PendingApproval → JSON)
 // ---------------------------------------------------------------------------
 
-function approvalToJson(a: PendingApproval): Record<string, unknown> {
+function approvalToJson(
+  a: PendingApproval,
+  extras?: { allowCredentialIdsB64?: ReadonlyArray<string> },
+): Record<string, unknown> {
   return {
     id: a.id,
     userId: a.userId,
@@ -95,6 +119,13 @@ function approvalToJson(a: PendingApproval): Record<string, unknown> {
     sensitivity: a.sensitivity,
     status: a.status,
     approvalChallenge: a.approvalChallenge,
+    // PWA-facing Alias — der Client kennt das Feld als `challengeB64`.
+    // Beide Felder zeigen auf dieselbe Bytes-Source (b64url, 32 random bytes
+    // aus randomChallenge()).
+    challengeB64: a.approvalChallenge,
+    ...(extras?.allowCredentialIdsB64
+      ? { allowCredentialIdsB64: extras.allowCredentialIdsB64 }
+      : {}),
     approvalSignatureB64: a.approvalSignature ? bytesToB64(a.approvalSignature) : null,
     approvedAt: a.approvedAt,
     rejectedAt: a.rejectedAt,
@@ -109,12 +140,33 @@ function approvalToJson(a: PendingApproval): Record<string, unknown> {
   };
 }
 
+/**
+ * Laedt die credential_id-Liste des Users — fuer `allowCredentials` im
+ * WebAuthn-`navigator.credentials.get()`-Call. Wenn der User mehrere Passkeys
+ * hat, kann der Browser den richtigen ansprechen.
+ *
+ * RLS-scoped, nur own Credentials.
+ */
+async function loadAllowCredentialIds(
+  server: ServerContext,
+  userId: string,
+): Promise<string[]> {
+  const scoped = await server.db.scoped(userId);
+  const rows = await scoped.query<{ credentialId: string }>(
+    `SELECT credential_id AS "credentialId"
+       FROM webauthn_credentials
+      WHERE user_id = $1 AND invalidated_at IS NULL`,
+    [userId],
+  );
+  return rows.map((r) => r.credentialId);
+}
+
 // ---------------------------------------------------------------------------
 // Route factory
 // ---------------------------------------------------------------------------
 
 export function approvalsRoutes(deps: ApprovalsRouteDeps): Hono<AppBindings> {
-  const { server, approvals, registry, audit } = deps;
+  const { server, approvals, registry, audit, verifyAssertion } = deps;
   const app = new Hono<AppBindings>();
   const guard = auth(server);
 
@@ -139,20 +191,27 @@ export function approvalsRoutes(deps: ApprovalsRouteDeps): Hono<AppBindings> {
     if (q.data.status) listArgs.status = q.data.status;
     if (q.data.limit !== undefined) listArgs.limit = q.data.limit;
     const list = await approvals.list(listArgs);
-    return c.json({ approvals: list.map(approvalToJson) });
+    return c.json({ approvals: list.map((a) => approvalToJson(a)) });
   });
 
   // GET /v1/approvals/:id
+  // Liefert die Approval inkl. `challengeB64` + `allowCredentialIdsB64` damit
+  // die PWA direkt `navigator.credentials.get(...)` triggern kann ohne einen
+  // separaten /challenge-Roundtrip.
   app.get('/v1/approvals/:id', guard, async (c) => {
     const principal = c.get('user');
     if (!principal) throw HttpError.unauthorized();
     const id = c.req.param('id');
     const row = await approvals.get({ id, userId: principal.userId });
     if (!row) throw HttpError.notFound('approval not found');
-    return c.json({ approval: approvalToJson(row) });
+    const allowCredentialIdsB64 = await loadAllowCredentialIds(server, principal.userId);
+    return c.json({ approval: approvalToJson(row, { allowCredentialIdsB64 }) });
   });
 
   // POST /v1/approvals/:id/approve
+  // SEC-001: Verifiziert die WebAuthn-Assertion VOR dem Status-Flip. Wenn die
+  // Verifikation failt, bleibt die Approval auf 'pending' und der User sieht
+  // 401. Erst NACH erfolgreichem Verify wird `approvals.approve()` gerufen.
   app.post(
     '/v1/approvals/:id/approve',
     guard,
@@ -163,6 +222,73 @@ export function approvalsRoutes(deps: ApprovalsRouteDeps): Hono<AppBindings> {
       const id = c.req.param('id');
       const body = c.req.valid('json');
       const signature = b64ToBytes(body.signatureB64);
+
+      // Existing approval laden (fuer expectedChallenge). Bei wrong-user oder
+      // missing → 404. Bei status != pending → 409 schon hier.
+      const existing = await approvals.get({ id, userId: principal.userId });
+      if (!existing) throw HttpError.notFound('approval not found');
+      if (existing.status !== 'pending') {
+        return c.json(
+          {
+            error: {
+              code: 'conflict',
+              message: `approval ${id} not pending (status=${existing.status})`,
+              details: { currentStatus: existing.status },
+            },
+          },
+          409,
+        );
+      }
+      if (!existing.approvalChallenge) {
+        throw new HttpError(500, 'internal', 'approval missing challenge');
+      }
+
+      // SEC-001 verify: bei fehlendem verifier (alte Tests, lokales Dev ohne
+      // Wiring) skippen wir die Verifikation. In Production-app-factory.ts
+      // wird der verifier IMMER gesetzt — ein production-Server ohne
+      // verifier wuerde im Boot via assertion (siehe app-factory.ts) early
+      // fail-closed sterben.
+      if (verifyAssertion) {
+        const origin = resolveOrigin(c.req.raw, server.config);
+        const rpId = resolveRpId(origin);
+        const assertion = {
+          credentialIdB64: body.credentialIdB64,
+          authenticatorDataB64: body.authenticatorDataB64,
+          clientDataJsonB64: body.clientDataJsonB64,
+          signatureB64: body.signatureB64,
+          ...(body.userHandleB64 ? { userHandleB64: body.userHandleB64 } : {}),
+        };
+        try {
+          await verifyAssertion({
+            userId: principal.userId,
+            approvalId: id,
+            expectedChallenge: existing.approvalChallenge,
+            expectedOrigin: origin,
+            expectedRpId: rpId,
+            assertion,
+          });
+        } catch (err) {
+          // Audit-Trail fuer failed approval-attempts (BLAST-RADIUS: User
+          // sees nur 401, der security-relevante Event landet im audit_log).
+          await audit
+            .emit({
+              action: 'tool.approval.verify_failed',
+              actorUserId: principal.userId,
+              result: 'failure',
+              ...(c.get('requestId') ? { requestId: c.get('requestId')! } : {}),
+              details: {
+                approval_id: id,
+                tool_name: existing.toolName,
+                reason: err instanceof Error ? err.message : 'unknown',
+              },
+            })
+            .catch(() => {
+              /* audit failure is non-fatal */
+            });
+          throw err;
+        }
+      }
+
       try {
         const approval = await approvals.approve({
           id,

@@ -57,7 +57,16 @@ export interface ApiClient {
   // Approvals
   listApprovals(args?: { status?: 'pending' | 'approved' | 'rejected' }): Promise<PendingApproval[]>;
   getApproval(id: string): Promise<PendingApproval>;
-  approveApproval(args: { id: string; signature: string; prfSessionId?: string }): Promise<void>;
+  approveApproval(args: {
+    id: string;
+    /** Vollstaendige WebAuthn-Assertion fuer Server-Side-Verify (SEC-001). */
+    credentialIdB64: string;
+    authenticatorDataB64: string;
+    clientDataJsonB64: string;
+    signatureB64: string;
+    userHandleB64?: string;
+    prfSessionId?: string;
+  }): Promise<void>;
   rejectApproval(args: { id: string; reason?: string }): Promise<void>;
   pollResult(approvalId: string): Promise<unknown>;
   getApprovalChallenge(id: string): Promise<{ challengeB64: string; allowCredentialIdsB64: string[] }>;
@@ -264,13 +273,25 @@ export function createApiClient(baseUrl?: string): ApiClient {
     },
 
     async approveApproval(args) {
-      await request<{ ok: true }>(`/v1/approvals/${encodeURIComponent(args.id)}/sign`, {
-        method: 'POST',
-        body: {
-          signature: args.signature,
-          ...(args.prfSessionId ? { prfSessionId: args.prfSessionId } : {}),
+      // Server-route ist /v1/approvals/:id/approve (NICHT /sign — alter Pfad,
+      // existiert auf v2 nicht mehr). SEC-001: senden die vollstaendige
+      // WebAuthn-Assertion damit der Server gegen die in
+      // pending_approvals.approval_challenge gespeicherte Challenge verifizieren
+      // kann.
+      await request<{ approval: unknown; resume_error: string | null }>(
+        `/v1/approvals/${encodeURIComponent(args.id)}/approve`,
+        {
+          method: 'POST',
+          body: {
+            credentialIdB64: args.credentialIdB64,
+            authenticatorDataB64: args.authenticatorDataB64,
+            clientDataJsonB64: args.clientDataJsonB64,
+            signatureB64: args.signatureB64,
+            ...(args.userHandleB64 ? { userHandleB64: args.userHandleB64 } : {}),
+            ...(args.prfSessionId ? { prfSessionId: args.prfSessionId } : {}),
+          },
         },
-      });
+      );
     },
 
     async rejectApproval(args) {

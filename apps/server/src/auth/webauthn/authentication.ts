@@ -66,7 +66,9 @@ export async function beginAuthentication(
 
   const baseOpts: GenerateAuthenticationOptionsOpts = {
     rpID: config.RP_ID,
-    userVerification: 'preferred',
+    // SEC-009: PIN/Biometrie pflicht bei Login. Authenticators die UV nicht
+    // koennen werden gar nicht erst angeboten (Hardware-Keys ohne PIN-Setup).
+    userVerification: 'required',
     ...(allowCredentials ? { allowCredentials } : {}),
   };
   const opts: GenerateAuthenticationOptionsOpts = prfEval
@@ -132,7 +134,8 @@ export async function finishAuthentication(
     expectedOrigin: config.RP_ORIGIN,
     expectedRPID: config.RP_ID,
     credential: credentialForVerify,
-    requireUserVerification: false,
+    // SEC-009: UV-Bit muss in der Assertion gesetzt sein.
+    requireUserVerification: true,
   });
   if (!verification.verified) {
     throw HttpError.unauthorized('webauthn_verification_failed');

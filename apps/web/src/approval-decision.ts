@@ -19,7 +19,7 @@
  */
 import type { ApiClient, PendingApproval } from './api.js';
 import { ApiError } from './api.js';
-import { evalPrf, bytesToB64, b64UrlToBytes } from './webauthn-prf.js';
+import { evalPrf, bytesToB64, bytesToB64Url, b64UrlToBytes } from './webauthn-prf.js';
 import { showToast } from './components/toast.js';
 
 export type Decision = 'approve' | 'reject';
@@ -106,11 +106,20 @@ async function handleApprove(api: ApiClient, approval: PendingApproval): Promise
       prfSessionId = session.sessionId;
     }
 
-    // 4. Signature an Server schicken
-    const signature = bytesToB64(prfResult.signature);
+    // 4. Vollstaendige Assertion an Server schicken (SEC-001).
+    //   credentialId, authenticatorData, signature → base64 (Server konvertiert
+    //   intern via SimpleWebAuthn's `isoBase64URL.toBuffer`, akzeptiert beide
+    //   b64-Varianten).
+    //   clientDataJSON wird ohne re-encode durchgereicht — der WebAuthn-Standard
+    //   verlangt, dass der Server EXAKT die clientDataJSON sieht die der
+    //   Authenticator gesignt hat, byte-fuer-byte.
     await api.approveApproval({
       id: approval.id,
-      signature,
+      credentialIdB64: bytesToB64Url(prfResult.credentialId),
+      authenticatorDataB64: bytesToB64(prfResult.authenticatorData),
+      clientDataJsonB64: bytesToB64(prfResult.clientDataJson),
+      signatureB64: bytesToB64(prfResult.signature),
+      ...(prfResult.userHandle ? { userHandleB64: bytesToB64(prfResult.userHandle) } : {}),
       ...(prfSessionId ? { prfSessionId } : {}),
     });
 

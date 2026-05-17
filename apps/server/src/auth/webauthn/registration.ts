@@ -55,7 +55,9 @@ export async function beginRegistration(
     attestationType: 'none',
     authenticatorSelection: {
       residentKey: 'preferred',
-      userVerification: 'preferred',
+      // SEC-009: Biometrie / PIN-Pflicht ab Enrollment-Zeit. Authenticators
+      // ohne UV (z.B. Sicherheits-Keys ohne Pin-Setup) werden NICHT enrolled.
+      userVerification: 'required',
     },
     extensions: {
       // PRF-Extension nicht im DOM-Type, aber im Spec.
@@ -91,7 +93,9 @@ export async function finishRegistration(
     expectedChallenge: input.expectedChallenge,
     expectedOrigin: config.RP_ORIGIN,
     expectedRPID: config.RP_ID,
-    requireUserVerification: false,
+    // SEC-009: zur Enrollment-Time pruefen wir, dass der Authenticator UV
+    // tatsaechlich performed hat (Flag im authData). Ohne UV → 400.
+    requireUserVerification: true,
   });
   if (!verification.verified || !verification.registrationInfo) {
     throw HttpError.badRequest('webauthn_verification_failed', 'registration verification failed');

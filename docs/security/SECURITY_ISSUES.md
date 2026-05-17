@@ -52,7 +52,7 @@ Findings sind innerhalb der Severity nach **Schweregrad/Wahrscheinlichkeit** sor
 - Eigen-Kommentar im Code: *"Phase-4-Variante: opaque-bytes-store; echte Assertion-Verifikation … ist hier injection-point."* Der Injection-Point ist leer.
 - **Exploit:** Jede authentifizierte Session-Inhaber-Cookie kann mit `POST /v1/approvals/:id/approve` + `{"signatureB64":"QQ=="}` ihre eigenen pending Approvals approven. `resumeApproval` dispatched dann das Tool mit voller Server-Authorität. Damit ist die komplette WYSIWYS-/IPI-Defense im aktuellen Code wirkungslos.
 - **Fix:** `verifyAuthenticationResponse({ response, expectedChallenge: row.approval_challenge, expectedRPID: resolveRpId(originHdr), expectedOrigin, credential: { id, publicKey, counter }, requireUserVerification: true })`. Bei `verified !== true` reject, Counter atomar inkrementieren, Challenge entwerten (Column `challenge_consumed_at` setzen).
-- **Status:** OPEN — **Cutover-Blocker**.
+- **Status:** ✅ FIXED 2026-05-17 (Phase A) — neuer Verifier in [apps/server/src/auth/webauthn/approval-verify.ts](../../apps/server/src/auth/webauthn/approval-verify.ts) wird in [routes/approvals.ts](../../apps/server/src/routes/approvals.ts) VOR dem Status-Flip aufgerufen. Schema verlangt jetzt vollstaendige Assertion (`credentialIdB64`, `authenticatorDataB64`, `clientDataJsonB64`, `signatureB64`). Counter wird atomar inkrementiert via `webauthn_credentials.counter`-UPDATE. Challenge-Entwertung wird durch den CAS auf `status='pending'` mit-erledigt (zweiter approve → 409). PWA aktualisiert: [apps/web/src/api.ts](../../apps/web/src/api.ts) + [apps/web/src/approval-decision.ts](../../apps/web/src/approval-decision.ts) senden jetzt die volle Assertion. Tests: 2 neue Regression-Tests in [apps/server/src/routes/approvals.test.ts](../../apps/server/src/routes/approvals.test.ts).
 
 ### SEC-004 — MCP-Wire-Approval-Resume dispatcht client-supplied `arguments` statt `row.toolInput` <a id="sec-004"></a>
 
@@ -173,6 +173,7 @@ Findings sind innerhalb der Severity nach **Schweregrad/Wahrscheinlichkeit** sor
   - `userVerification: 'required'` in beiden Options.
   - `requireUserVerification: true` in beiden `verify*Response`-Calls.
   - Spalte `uv_used` pro Approval-Row, refuse wenn `authenticationInfo.userVerified === false` und Tool sensitivity ≥ write.
+- **Status:** ✅ FIXED 2026-05-17 (Phase A) — UV required in [registration.ts](../../apps/server/src/auth/webauthn/registration.ts) (`authenticatorSelection.userVerification='required'` + `requireUserVerification:true`) und [authentication.ts](../../apps/server/src/auth/webauthn/authentication.ts) (`generateAuthenticationOptions.userVerification='required'` + `requireUserVerification:true`). Approval-Verifier in [approval-verify.ts](../../apps/server/src/auth/webauthn/approval-verify.ts) verlangt ebenfalls `requireUserVerification:true` — alle Write/Danger-Approvals MUESSEN Biometrie oder PIN haben. Separate `uv_used`-Spalte als reine Audit-Info ist nicht hinzugefuegt (Enforcement laeuft ueber SimpleWebAuthn-Verify-Throw, kein Bypass moeglich).
 
 ### SEC-010 — Invite-Accept resurrected suspended Users + überschreibt `external_id` ohne Re-Vetting
 

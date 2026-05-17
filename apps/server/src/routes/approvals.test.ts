@@ -253,11 +253,21 @@ function buildApp(deps: {
   approvals: ApprovalService;
   registry: ToolRegistry;
   audit: AuditService;
+  verifyAssertion?: (args: unknown) => Promise<void>;
 }): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
   app.use('*', requestId());
   app.onError(errorHandler());
-  app.route('/', approvalsRoutes(deps));
+  const routeDeps = {
+    server: deps.server,
+    approvals: deps.approvals,
+    registry: deps.registry,
+    audit: deps.audit,
+    ...(deps.verifyAssertion
+      ? { verifyAssertion: deps.verifyAssertion as never }
+      : {}),
+  };
+  app.route('/', approvalsRoutes(routeDeps));
   return app;
 }
 
@@ -406,7 +416,12 @@ describe('approvals routes', () => {
     const res = await app.request(`/v1/approvals/${a.id}/approve`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: auth },
-      body: JSON.stringify({ signatureB64: btoa('sig') }),
+      body: JSON.stringify({
+        credentialIdB64: btoa('cred'),
+        authenticatorDataB64: btoa('authData'),
+        clientDataJsonB64: btoa('{"type":"webauthn.get"}'),
+        signatureB64: btoa('sig'),
+      }),
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -416,6 +431,72 @@ describe('approvals routes', () => {
     expect(body.approval.status).toBe('approved');
     expect(body.resume_error).toBeNull();
     expect(body.approval.resultEmittedAt).not.toBeNull();
+  });
+
+  // SEC-001: ohne gueltige WebAuthn-Assertion bleibt die Approval auf 'pending'.
+  it('POST /v1/approvals/:id/approve with failing verifier → 401 + status unchanged', async () => {
+    const config = makeConfig();
+    const state: MockState = { rows: new Map() };
+    const userId = randomUuidV4();
+    const approvalsSvc = makeMockApprovals(state);
+    const a = await approvalsSvc.create({
+      userId,
+      toolName: 'docs.put',
+      toolInput: { title: 'A' },
+      sensitivity: 'write',
+    });
+    const app = buildApp({
+      server: { config, db: makeStubDb() },
+      approvals: approvalsSvc,
+      registry: makeRegistryWithWriteTool(),
+      audit: auditNoop,
+      verifyAssertion: async () => {
+        throw HttpError.unauthorized('webauthn_verification_failed');
+      },
+    });
+    const auth = await makeBearer(userId, config);
+    const res = await app.request(`/v1/approvals/${a.id}/approve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: auth },
+      body: JSON.stringify({
+        credentialIdB64: btoa('cred'),
+        authenticatorDataB64: btoa('authData'),
+        clientDataJsonB64: btoa('{"type":"webauthn.get"}'),
+        signatureB64: btoa('sig'),
+      }),
+    });
+    expect(res.status).toBe(401);
+    // Approval MUSS auf 'pending' bleiben.
+    const after = await approvalsSvc.get({ id: a.id, userId });
+    expect(after?.status).toBe('pending');
+    expect(after?.approvalSignature).toBeNull();
+  });
+
+  // SEC-001: Schema-Validation lehnt Approvals ohne credentialId/etc ab.
+  it('POST /v1/approvals/:id/approve without assertion fields → 400', async () => {
+    const config = makeConfig();
+    const state: MockState = { rows: new Map() };
+    const userId = randomUuidV4();
+    const approvalsSvc = makeMockApprovals(state);
+    const a = await approvalsSvc.create({
+      userId,
+      toolName: 'docs.put',
+      toolInput: { title: 'A' },
+      sensitivity: 'write',
+    });
+    const app = buildApp({
+      server: { config, db: makeStubDb() },
+      approvals: approvalsSvc,
+      registry: makeRegistryWithWriteTool(),
+      audit: auditNoop,
+    });
+    const auth = await makeBearer(userId, config);
+    const res = await app.request(`/v1/approvals/${a.id}/approve`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: auth },
+      body: JSON.stringify({ signatureB64: btoa('sig') }),
+    });
+    expect(res.status).toBe(400);
   });
 
   it('POST /v1/approvals/:id/approve from wrong-user → 404 (RLS-like)', async () => {
@@ -440,7 +521,12 @@ describe('approvals routes', () => {
     const res = await app.request(`/v1/approvals/${a.id}/approve`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: auth },
-      body: JSON.stringify({ signatureB64: btoa('sig') }),
+      body: JSON.stringify({
+        credentialIdB64: btoa('cred'),
+        authenticatorDataB64: btoa('authData'),
+        clientDataJsonB64: btoa('{"type":"webauthn.get"}'),
+        signatureB64: btoa('sig'),
+      }),
     });
     expect(res.status).toBe(404);
   });
@@ -467,13 +553,23 @@ describe('approvals routes', () => {
     await app.request(`/v1/approvals/${a.id}/approve`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: auth },
-      body: JSON.stringify({ signatureB64: btoa('sig') }),
+      body: JSON.stringify({
+        credentialIdB64: btoa('cred'),
+        authenticatorDataB64: btoa('authData'),
+        clientDataJsonB64: btoa('{"type":"webauthn.get"}'),
+        signatureB64: btoa('sig'),
+      }),
     });
     // 2nd: 409
     const res2 = await app.request(`/v1/approvals/${a.id}/approve`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: auth },
-      body: JSON.stringify({ signatureB64: btoa('sig2') }),
+      body: JSON.stringify({
+        credentialIdB64: btoa('cred'),
+        authenticatorDataB64: btoa('authData'),
+        clientDataJsonB64: btoa('{"type":"webauthn.get"}'),
+        signatureB64: btoa('sig2'),
+      }),
     });
     expect(res2.status).toBe(409);
     const body = (await res2.json()) as { error: { code: string } };
@@ -537,7 +633,12 @@ describe('approvals routes', () => {
     await app.request(`/v1/approvals/${a.id}/approve`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: auth },
-      body: JSON.stringify({ signatureB64: btoa('sig') }),
+      body: JSON.stringify({
+        credentialIdB64: btoa('cred'),
+        authenticatorDataB64: btoa('authData'),
+        clientDataJsonB64: btoa('{"type":"webauthn.get"}'),
+        signatureB64: btoa('sig'),
+      }),
     });
     const r2 = await app.request(`/v1/approvals/${a.id}/result`, {
       headers: { authorization: auth },
