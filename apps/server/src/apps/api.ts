@@ -114,6 +114,8 @@ export interface AppsService {
 
   updateState(args: {
     userId: string;
+    userEmail?: string;
+    approvalId?: string;
     id: string;
     statePatch: unknown; // full new state — composable replaces wholesale
     expectedVersion: number;
@@ -126,10 +128,17 @@ export interface AppsService {
     limit?: number;
   }): Promise<AppInstance[]>;
 
-  deleteApp(args: { userId: string; id: string }): Promise<void>;
+  deleteApp(args: {
+    userId: string;
+    userEmail?: string;
+    approvalId?: string;
+    id: string;
+  }): Promise<void>;
 
   invoke(args: {
     userId: string;
+    userEmail?: string;
+    approvalId?: string;
     id: string;
     block_id: string;
     action: string;
@@ -138,6 +147,7 @@ export interface AppsService {
 
   query(args: {
     userId: string;
+    userEmail?: string;
     id: string;
     block_id: string;
     query: string;
@@ -146,6 +156,8 @@ export interface AppsService {
 
   updateLayout(args: {
     userId: string;
+    userEmail?: string;
+    approvalId?: string;
     id: string;
     layoutDoc: LayoutDoc;
     expectedVersion: number;
@@ -348,14 +360,19 @@ class AppsServiceImpl implements AppsService {
 
   async updateState(args: {
     userId: string;
+    userEmail?: string;
+    approvalId?: string;
     id: string;
     statePatch: unknown;
     expectedVersion: number;
   }): Promise<AppInstance> {
-    // Read current to verify type + current_version baseline.
     let cur: KnowledgeObject;
     try {
-      cur = await this.knowledge.getObject({ id: args.id, userId: args.userId });
+      cur = await this.knowledge.getObject({
+        id: args.id,
+        userId: args.userId,
+        ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      });
     } catch (e) {
       throw mapNotFound(e, args.id);
     }
@@ -386,6 +403,8 @@ class AppsServiceImpl implements AppsService {
       updated = await this.knowledge.updateObject({
         id: args.id,
         userId: args.userId,
+        ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+        ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
         patch,
       });
     } catch (e) {
@@ -422,20 +441,35 @@ class AppsServiceImpl implements AppsService {
     return list.items.filter(isAppObject).map((o) => toAppInstance(o));
   }
 
-  async deleteApp(args: { userId: string; id: string }): Promise<void> {
-    await this.knowledge.deleteObject({ id: args.id, userId: args.userId });
+  async deleteApp(args: {
+    userId: string;
+    userEmail?: string;
+    approvalId?: string;
+    id: string;
+  }): Promise<void> {
+    await this.knowledge.deleteObject({
+      id: args.id,
+      userId: args.userId,
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
+    });
     await this.emitAudit('apps.delete', args.userId, 'app', args.id, {});
   }
 
   async invoke(args: {
     userId: string;
+    userEmail?: string;
+    approvalId?: string;
     id: string;
     block_id: string;
     action: string;
     payload: Record<string, unknown>;
   }): Promise<InvokeResult> {
-    // Read fresh state.
-    const read = await this.readApp<LayoutDoc>({ userId: args.userId, id: args.id });
+    const read = await this.readApp<LayoutDoc>({
+      userId: args.userId,
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      id: args.id,
+    });
     if (read.app.type !== 'composable') {
       throw new AppsServiceError(
         'INVALID_ACTION',
@@ -443,26 +477,31 @@ class AppsServiceImpl implements AppsService {
       );
     }
     const layout = read.state;
-    // Route the action — pure compute, throws ActionRoutingError on lookup-fail.
     const exec = routeAction(layout, args.block_id, args.action, args.payload);
     const newLayout = applyPatches(layout, args.block_id, exec.patches);
-    // Persist via CAS (1 retry on CONCURRENT_UPDATE — KC might race on rapid clicks).
     let updated: AppInstance;
     try {
       updated = await this.updateState({
         userId: args.userId,
+        ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+        ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
         id: args.id,
         statePatch: newLayout,
         expectedVersion: read.app.state_version,
       });
     } catch (e) {
       if (e instanceof AppsServiceError && e.code === 'CONCURRENT_UPDATE' && e.retriable) {
-        // Re-read & re-apply once.
-        const fresh = await this.readApp<LayoutDoc>({ userId: args.userId, id: args.id });
+        const fresh = await this.readApp<LayoutDoc>({
+          userId: args.userId,
+          ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+          id: args.id,
+        });
         const freshExec = routeAction(fresh.state, args.block_id, args.action, args.payload);
         const freshLayout = applyPatches(fresh.state, args.block_id, freshExec.patches);
         updated = await this.updateState({
           userId: args.userId,
+          ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+          ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
           id: args.id,
           statePatch: freshLayout,
           expectedVersion: fresh.app.state_version,
@@ -486,12 +525,17 @@ class AppsServiceImpl implements AppsService {
 
   async query(args: {
     userId: string;
+    userEmail?: string;
     id: string;
     block_id: string;
     query: string;
     args?: Record<string, unknown>;
   }): Promise<unknown> {
-    const read = await this.readApp<LayoutDoc>({ userId: args.userId, id: args.id });
+    const read = await this.readApp<LayoutDoc>({
+      userId: args.userId,
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      id: args.id,
+    });
     if (read.app.type !== 'composable') {
       throw new AppsServiceError(
         'INVALID_ACTION',
@@ -504,13 +548,16 @@ class AppsServiceImpl implements AppsService {
 
   async updateLayout(args: {
     userId: string;
+    userEmail?: string;
+    approvalId?: string;
     id: string;
     layoutDoc: LayoutDoc;
     expectedVersion: number;
   }): Promise<AppInstance> {
-    // updateState does the validation via composable.validate already.
     return this.updateState({
       userId: args.userId,
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
       id: args.id,
       statePatch: args.layoutDoc,
       expectedVersion: args.expectedVersion,

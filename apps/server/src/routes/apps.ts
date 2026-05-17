@@ -18,6 +18,7 @@
  *
  * Multi-User: jeder Call uebergibt principal.userId an den AppsService.
  */
+import { randomUUID } from 'node:crypto';
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
@@ -178,6 +179,8 @@ export function appsRoutes(deps: AppsRouteDeps): Hono<AppBindings> {
     try {
       const inst = await apps.updateState({
         userId: principal.userId,
+        userEmail: principal.email,
+        approvalId: randomUUID(),
         id,
         statePatch: body.newState,
         expectedVersion: body.expectedVersion,
@@ -195,7 +198,12 @@ export function appsRoutes(deps: AppsRouteDeps): Hono<AppBindings> {
     if (!principal) throw HttpError.unauthorized();
     const id = c.req.param('id');
     try {
-      await apps.deleteApp({ userId: principal.userId, id });
+      await apps.deleteApp({
+        userId: principal.userId,
+        userEmail: principal.email,
+        approvalId: randomUUID(),
+        id,
+      });
       return c.json({ ok: true, deleted: id });
     } catch (e) {
       if (e instanceof AppsServiceError) mapAppsError(e);
@@ -204,6 +212,10 @@ export function appsRoutes(deps: AppsRouteDeps): Hono<AppBindings> {
   });
 
   // POST /v1/apps/:id/invoke — block action
+  // K-D4-Notiz: invoke schreibt state-version+1 nach KC2. PWA-direkte Calls
+  // (iframe_auto_approve=true Block-Actions) haben keinen User-Approval —
+  // wir generieren synthetic approval_id pro Request. Audit-Log haelt fest,
+  // dass es PWA-direkt war (kein User-Sign-Off).
   app.post('/v1/apps/:id/invoke', guard, zValidator('json', invokeSchema), async (c) => {
     const principal = c.get('user');
     if (!principal) throw HttpError.unauthorized();
@@ -212,6 +224,8 @@ export function appsRoutes(deps: AppsRouteDeps): Hono<AppBindings> {
     try {
       const r = await apps.invoke({
         userId: principal.userId,
+        userEmail: principal.email,
+        approvalId: randomUUID(),
         id,
         block_id: body.block_id,
         action: body.action,
@@ -230,7 +244,7 @@ export function appsRoutes(deps: AppsRouteDeps): Hono<AppBindings> {
     }
   });
 
-  // POST /v1/apps/:id/query — block query
+  // POST /v1/apps/:id/query — block query (read-only, kein approval_id)
   app.post('/v1/apps/:id/query', guard, zValidator('json', querySchema), async (c) => {
     const principal = c.get('user');
     if (!principal) throw HttpError.unauthorized();
@@ -239,6 +253,7 @@ export function appsRoutes(deps: AppsRouteDeps): Hono<AppBindings> {
     try {
       const value = await apps.query({
         userId: principal.userId,
+        userEmail: principal.email,
         id,
         block_id: body.block_id,
         query: body.query,
@@ -261,6 +276,8 @@ export function appsRoutes(deps: AppsRouteDeps): Hono<AppBindings> {
     try {
       const inst = await apps.updateLayout({
         userId: principal.userId,
+        userEmail: principal.email,
+        approvalId: randomUUID(),
         id,
         layoutDoc: body.layoutDoc as LayoutDoc,
         expectedVersion: body.expectedVersion,
