@@ -1,0 +1,414 @@
+/**
+ * Unit-Tests: Sub-MCP-Wiring (user-JWT signer, wrapper-tool factory, CF-Seed).
+ *
+ * Plan-Ref: PLAN-architecture-v1.md §5.4, §9.
+ */
+import { describe, it, expect } from 'vitest';
+import { jwtVerify } from 'jose';
+import type { DbAdapter, RawDb, ScopedDb } from '@mcp-approval2/adapters';
+import { signSubMcpUserJwt } from './user_jwt.js';
+import {
+  buildSubMcpWrapperTools,
+  makeForwardingTool,
+  resolveSubMcpSensitivity,
+} from './wrapper_tools.js';
+import { DEFAULT_CF_GATEWAYS, seedCfGateways } from './seed.js';
+import { SubMcpForwarder } from './forwarder.js';
+import { SubMcpNotFoundError, type SubMcpServerConfig } from './types.js';
+import type { ToolContext } from '../protocol/tool.js';
+import type { SubMcpRegistry } from './registry.js';
+
+// ---------------------------------------------------------------------------
+// user_jwt
+// ---------------------------------------------------------------------------
+
+describe('signSubMcpUserJwt', () => {
+  const config = { JWT_SECRET: 'a'.repeat(32), JWT_ISSUER: 'mcp-approval2' };
+
+  it('signs HS256 with sub/aud/iss + 60s default expiry', async () => {
+    const token = await signSubMcpUserJwt({
+      userId: 'u-123',
+      subMcpName: 'gws',
+      config,
+    });
+    const { payload, protectedHeader } = await jwtVerify(
+      token,
+      new TextEncoder().encode(config.JWT_SECRET),
+      { issuer: 'mcp-approval2', audience: 'gws', algorithms: ['HS256'] },
+    );
+    expect(protectedHeader.alg).toBe('HS256');
+    expect(payload.sub).toBe('u-123');
+    expect(payload.aud).toBe('gws');
+    expect(payload.iss).toBe('mcp-approval2');
+    expect(typeof payload.exp).toBe('number');
+    expect(typeof payload.iat).toBe('number');
+    const exp = payload.exp as number;
+    const iat = payload.iat as number;
+    expect(exp - iat).toBe(60);
+  });
+
+  it('honours custom ttlSec', async () => {
+    const token = await signSubMcpUserJwt({
+      userId: 'u-1',
+      subMcpName: 'utils',
+      config,
+      ttlSec: 10,
+    });
+    const { payload } = await jwtVerify(token, new TextEncoder().encode(config.JWT_SECRET), {
+      audience: 'utils',
+    });
+    const exp = payload.exp as number;
+    const iat = payload.iat as number;
+    expect(exp - iat).toBe(10);
+  });
+
+  it('verifies-fail for wrong audience (replay-protection across sub-MCPs)', async () => {
+    const token = await signSubMcpUserJwt({
+      userId: 'u-1',
+      subMcpName: 'gws',
+      config,
+    });
+    await expect(
+      jwtVerify(token, new TextEncoder().encode(config.JWT_SECRET), { audience: 'gcloud' }),
+    ).rejects.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveSubMcpSensitivity — fail-closed default 'write' (SEC-006-Pattern)
+// ---------------------------------------------------------------------------
+
+describe('resolveSubMcpSensitivity', () => {
+  it('defaults to write when no annotations', () => {
+    expect(resolveSubMcpSensitivity(undefined)).toBe('write');
+  });
+
+  it('defaults to write when empty annotations', () => {
+    expect(resolveSubMcpSensitivity({} as never)).toBe('write');
+  });
+
+  it('respects explicit sensitivity=read', () => {
+    expect(resolveSubMcpSensitivity({ sensitivity: 'read' } as never)).toBe('read');
+  });
+
+  it('respects explicit sensitivity=write', () => {
+    expect(resolveSubMcpSensitivity({ sensitivity: 'write' } as never)).toBe('write');
+  });
+
+  it('respects explicit sensitivity=danger', () => {
+    expect(resolveSubMcpSensitivity({ sensitivity: 'danger' } as never)).toBe('danger');
+  });
+
+  it('ignores unknown sensitivity strings (fail-closed)', () => {
+    expect(resolveSubMcpSensitivity({ sensitivity: 'medium' } as never)).toBe('write');
+  });
+
+  it('destructiveHint=true → danger', () => {
+    expect(resolveSubMcpSensitivity({ destructiveHint: true } as never)).toBe('danger');
+  });
+
+  it('write=true → write', () => {
+    expect(resolveSubMcpSensitivity({ write: true } as never)).toBe('write');
+  });
+
+  it('readOnlyHint=true → read', () => {
+    expect(resolveSubMcpSensitivity({ readOnlyHint: true } as never)).toBe('read');
+  });
+
+  it('sensitivity wins over hints when both present', () => {
+    expect(
+      resolveSubMcpSensitivity({ sensitivity: 'read', destructiveHint: true } as never),
+    ).toBe('read');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// makeForwardingTool — wraps forwarder + signs JWT in execute
+// ---------------------------------------------------------------------------
+
+function makeStubRegistry(cfg: SubMcpServerConfig): SubMcpRegistry {
+  return {
+    async getByName(n: string) {
+      if (n !== cfg.name) throw new SubMcpNotFoundError(n);
+      return cfg;
+    },
+    async listEnabled() {
+      return [cfg];
+    },
+    async listAll() {
+      return [cfg];
+    },
+    async updateToolsCache() {},
+    async verifyServiceToken() {
+      return null;
+    },
+    async register() {
+      throw new Error('not supported in stub');
+    },
+    invalidate() {},
+  };
+}
+
+const STUB_CFG: SubMcpServerConfig = {
+  id: 'id-utils',
+  name: 'utils',
+  displayName: 'Utils',
+  baseUrl: 'https://utils.test',
+  authMode: 'service_bearer',
+  authConfig: { service_token_hash: 'hash' },
+  enabled: true,
+  serviceToken: 'plain-token',
+  toolsCache: [
+    {
+      name: 'now',
+      description: 'Return current time',
+      annotations: { sensitivity: 'read' as const },
+    },
+    {
+      name: 'diagram.render',
+      description: 'Render a diagram',
+      annotations: { destructiveHint: false, write: true },
+    },
+  ],
+  toolsCachedAt: 1,
+  createdAt: 1,
+  updatedAt: 1,
+};
+
+const TEST_CONFIG = { JWT_SECRET: 'b'.repeat(32), JWT_ISSUER: 'mcp-approval2' };
+
+function makeTestCtx(): ToolContext {
+  return {
+    userId: 'u-1',
+    email: 'u@example.com',
+    role: 'admin',
+    requestId: 'req-1',
+    audit: { async emit() {} },
+    db: undefined as unknown as DbAdapter,
+    signal: new AbortController().signal,
+  };
+}
+
+describe('makeForwardingTool', () => {
+  it('builds a Tool with correct name + sensitivity from annotations', () => {
+    const tool = makeForwardingTool({
+      def: {
+        name: 'utils.now',
+        remoteName: 'now',
+        subMcpName: 'utils',
+        description: 'Return current time',
+        inputSchema: { type: 'object' } as never,
+        annotations: { sensitivity: 'read' as const },
+      },
+      forwarder: new SubMcpForwarder({ registry: makeStubRegistry(STUB_CFG), fetchImpl: fetch }),
+      config: TEST_CONFIG,
+    });
+    expect(tool.name).toBe('utils.now');
+    expect(tool.sensitivity).toBe('read');
+    expect(tool.description).toBe('Return current time');
+  });
+
+  it('execute() signs user-JWT + forwards to remote with X-User-JWT header', async () => {
+    const captured: { url?: string; headers?: Record<string, string>; body?: unknown } = {};
+    const fakeFetch: typeof fetch = async (url, init) => {
+      captured.url = String(url);
+      captured.headers = (init?.headers as Record<string, string>) ?? {};
+      captured.body = init?.body ? JSON.parse(String(init.body)) : null;
+      return new Response(
+        JSON.stringify({ jsonrpc: '2.0', id: '1', result: { content: [{ type: 'text', text: 'ok' }] } }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+    const forwarder = new SubMcpForwarder({
+      registry: makeStubRegistry(STUB_CFG),
+      fetchImpl: fakeFetch,
+    });
+    const tool = makeForwardingTool({
+      def: {
+        name: 'utils.now',
+        remoteName: 'now',
+        subMcpName: 'utils',
+        description: 'Return current time',
+        inputSchema: { type: 'object' } as never,
+      },
+      forwarder,
+      config: TEST_CONFIG,
+    });
+    const result = await tool.execute(makeTestCtx(), { tz: 'UTC' });
+
+    expect(captured.url).toBe('https://utils.test/mcp');
+    expect(captured.headers?.authorization).toBe('Bearer plain-token');
+    expect(typeof captured.headers?.['x-user-jwt']).toBe('string');
+    // user-jwt has correct aud
+    const userJwt = captured.headers?.['x-user-jwt'] ?? '';
+    const { payload } = await jwtVerify(userJwt, new TextEncoder().encode(TEST_CONFIG.JWT_SECRET), {
+      audience: 'utils',
+    });
+    expect(payload.sub).toBe('u-1');
+    expect(payload.aud).toBe('utils');
+    // payload args round-tripped
+    const body = captured.body as { method: string; params: { name: string; arguments: unknown } };
+    expect(body.method).toBe('tools/call');
+    expect(body.params.name).toBe('now');
+    expect(body.params.arguments).toEqual({ tz: 'UTC' });
+    // result returned verbatim
+    expect(result).toEqual({ content: [{ type: 'text', text: 'ok' }] });
+  });
+
+  it('defaults to write when annotations missing (fail-closed SEC-006-pattern)', () => {
+    const tool = makeForwardingTool({
+      def: {
+        name: 'gws.calendar.list',
+        remoteName: 'calendar.list',
+        subMcpName: 'gws',
+        description: 'List calendars',
+        inputSchema: { type: 'object' } as never,
+      },
+      forwarder: new SubMcpForwarder({ registry: makeStubRegistry(STUB_CFG), fetchImpl: fetch }),
+      config: TEST_CONFIG,
+    });
+    expect(tool.sensitivity).toBe('write');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildSubMcpWrapperTools — iterate registry + per-server counts
+// ---------------------------------------------------------------------------
+
+describe('buildSubMcpWrapperTools', () => {
+  it('builds wrappers per enabled sub-mcp + skips empty caches', async () => {
+    const multi = makeStubRegistry(STUB_CFG);
+    // Override listEnabled to return two configs
+    const both = await new Promise<readonly SubMcpServerConfig[]>((resolve) => {
+      resolve([
+        STUB_CFG,
+        { ...STUB_CFG, id: 'id-empty', name: 'gws', toolsCache: null },
+      ]);
+    });
+    const stub: SubMcpRegistry = {
+      ...multi,
+      async listEnabled() {
+        return both;
+      },
+    };
+    const result = await buildSubMcpWrapperTools({
+      registry: stub,
+      forwarder: new SubMcpForwarder({ registry: stub, fetchImpl: fetch }),
+      config: TEST_CONFIG,
+    });
+    expect(result.tools.map((t) => t.name).sort()).toEqual([
+      'utils.diagram.render',
+      'utils.now',
+    ]);
+    expect(result.perSubMcp.get('utils')).toBe(2);
+    expect(result.perSubMcp.get('gws')).toBe(0);
+    expect(result.skipped).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// seedCfGateways — idempotent INSERT/UPDATE per env-var
+// ---------------------------------------------------------------------------
+
+interface CapturedSql {
+  sql: string;
+  params: ReadonlyArray<unknown>;
+}
+
+function makeStubDb(
+  responses: ReadonlyArray<ReadonlyArray<unknown>>,
+): { db: DbAdapter; captured: CapturedSql[] } {
+  const captured: CapturedSql[] = [];
+  let callIdx = 0;
+
+  const rawDb: RawDb = {
+    async query<T>(sql: string, params?: ReadonlyArray<unknown>): Promise<T[]> {
+      captured.push({ sql, params: params ?? [] });
+      const out = responses[callIdx] ?? [];
+      callIdx += 1;
+      return out as T[];
+    },
+  };
+  const db: DbAdapter = {
+    unsafe: () => rawDb,
+    scoped: () => {
+      throw new Error('scoped not used in seed.ts');
+    },
+    transaction: () => {
+      throw new Error('tx not used in seed.ts');
+    },
+  } as unknown as DbAdapter;
+  return { db, captured };
+}
+
+describe('seedCfGateways', () => {
+  it('skips entries without env-var (fail-closed)', async () => {
+    const { db, captured } = makeStubDb([]);
+    const result = await seedCfGateways({ db, env: {} });
+    expect(result.registered).toEqual([]);
+    expect(result.updated).toEqual([]);
+    expect(result.skipped.map((s) => s.name).sort()).toEqual(['gcloud', 'gws', 'utils']);
+    expect(captured).toEqual([]);
+  });
+
+  it('INSERTs new row when env-var set + reports registered', async () => {
+    const { db, captured } = makeStubDb([
+      // Only utils-token set; INSERT returns the new row (was_new=true).
+      [{ name: 'utils', was_new: true }],
+    ]);
+    const result = await seedCfGateways({
+      db,
+      env: { SUB_MCP_TOKEN_UTILS: 'plain-utils-token' },
+    });
+    expect(result.registered).toEqual(['utils']);
+    expect(result.updated).toEqual([]);
+    expect(result.skipped.map((s) => s.name).sort()).toEqual(['gcloud', 'gws']);
+    expect(captured).toHaveLength(1);
+    const sql = captured[0]?.sql ?? '';
+    expect(sql).toContain('INSERT INTO sub_mcp_servers');
+    expect(sql).toContain('ON CONFLICT (name) DO UPDATE');
+    expect(captured[0]?.params[0]).toBe('utils');
+    // Token-hash ist sha256-hex (64 chars), nicht plain-token
+    const authConfigStr = captured[0]?.params[3];
+    expect(typeof authConfigStr).toBe('string');
+    const auth = JSON.parse(String(authConfigStr)) as { service_token_hash: string };
+    expect(auth.service_token_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(auth.service_token_hash).not.toBe('plain-utils-token');
+  });
+
+  it('reports updated when ON CONFLICT branch fires with was_new=false', async () => {
+    const { db } = makeStubDb([[{ name: 'gws', was_new: false }]]);
+    const result = await seedCfGateways({
+      db,
+      env: { SUB_MCP_TOKEN_GWS: 'plain-gws-token' },
+    });
+    expect(result.registered).toEqual([]);
+    expect(result.updated).toEqual(['gws']);
+  });
+
+  it('treats empty INSERT return as already-in-sync (no entry in either array)', async () => {
+    const { db } = makeStubDb([[]]);
+    const result = await seedCfGateways({
+      db,
+      env: { SUB_MCP_TOKEN_GCLOUD: 'plain-gcloud-token' },
+    });
+    expect(result.registered).toEqual([]);
+    expect(result.updated).toEqual([]);
+    // gcloud token war gesetzt → kein skip, aber auch kein write (idempotent-noop)
+    expect(result.skipped.map((s) => s.name).sort()).toEqual(['gws', 'utils']);
+  });
+
+  it('DEFAULT_CF_GATEWAYS contains the three expected entries with correct URLs', () => {
+    expect(DEFAULT_CF_GATEWAYS).toHaveLength(3);
+    const byName = new Map(DEFAULT_CF_GATEWAYS.map((g) => [g.name, g]));
+    expect(byName.get('utils')?.baseUrl).toBe('https://utils.ai-toolhub.org');
+    expect(byName.get('gws')?.baseUrl).toBe('https://gws.ai-toolhub.org');
+    expect(byName.get('gcloud')?.baseUrl).toBe('https://gcloud.ai-toolhub.org');
+    expect(byName.get('utils')?.serviceTokenEnvVar).toBe('SUB_MCP_TOKEN_UTILS');
+    expect(byName.get('gws')?.serviceTokenEnvVar).toBe('SUB_MCP_TOKEN_GWS');
+    expect(byName.get('gcloud')?.serviceTokenEnvVar).toBe('SUB_MCP_TOKEN_GCLOUD');
+  });
+});
+
+// Suppress unused-warning for ScopedDb-import (kept for symmetry with other tests)
+type _Unused = ScopedDb;

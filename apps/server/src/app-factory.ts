@@ -62,6 +62,7 @@ import { kcProxyRoutes } from './routes/kc-proxy.js';
 import { adminRoutes } from './routes/admin.js';
 import { gdprRoutes } from './routes/gdpr.js';
 import { approvalsRoutes } from './routes/approvals.js';
+import { createApprovalAssertionVerifier } from './auth/webauthn/approval-verify.js';
 import { appsRoutes } from './routes/apps.js';
 import { pushRoutes } from './routes/push.js';
 import { writemodeRoutes, type WritemodeState } from './routes/writemode.js';
@@ -100,8 +101,12 @@ import { oauthRoutes } from './mcp/oauth/index.js';
 
 // Sub-MCP-Gateway
 import {
+  buildSubMcpWrapperTools,
   createSubMcpRegistry,
+  refreshSubMcpToolCache,
+  seedCfGateways,
   subMcpDiscoverRoutes,
+  SubMcpForwarder,
   type SubMcpRegistry,
 } from './mcp/gateway/index.js';
 
@@ -452,6 +457,97 @@ export async function createApp(
         );
       }
     }
+
+    // Sub-MCP-Gateway-Wrapper-Tools (utils / gws / gcloud auf Cloudflare).
+    //
+    // Pflicht-Voraussetzung: SUB_MCP_TOKEN_<NAME> env-vars (per Gateway) im
+    // Doppler/Fly-Secret-Store. Kein Token → Sub-MCP wird nicht registriert.
+    // Damit ist die ganze Phase opt-in pro Gateway und ohne Token harmless.
+    //
+    // Ablauf:
+    //   1. seedCfGateways — INSERT/UPDATE der drei sub_mcp_servers-Rows
+    //      idempotent. Token-Hash aus env, base_url/display_name aus
+    //      DEFAULT_CF_GATEWAYS. Wenn kein Token → skip.
+    //   2. refreshSubMcpToolCache — initialer tools/list-Roundtrip pro
+    //      enabled Sub-MCP, damit tools_cache befuellt ist. Discovery-Cron
+    //      laeuft danach periodisch (siehe internal/v1/cron-Pfad).
+    //   3. buildSubMcpWrapperTools — pro gecachten Tool ein
+    //      ForwardingTool, das SubMcpForwarder ruft. User-JWT wird pro
+    //      execute() kurzlebig signed (60s, aud=<subMcpName>).
+    //
+    // Errors pro Phase werden geloggt + non-fatal — ein nicht-erreichbarer
+    // gws darf approval2-Boot nicht stoppen.
+    try {
+      const subMcpRegistryForBoot =
+        deps.subMcpRegistry ?? createSubMcpRegistry({ db: server.db });
+      const seedResult = await seedCfGateways({ db: server.db });
+      if (
+        seedResult.registered.length > 0 ||
+        seedResult.updated.length > 0 ||
+        seedResult.skipped.length > 0
+      ) {
+        // eslint-disable-next-line no-console
+        console.info(
+          `[mcp-approval2] sub-mcp seed: registered=${seedResult.registered.join(',') || '-'} ` +
+            `updated=${seedResult.updated.join(',') || '-'} ` +
+            `skipped(no-token)=${seedResult.skipped.map((s) => s.name).join(',') || '-'}`,
+        );
+      }
+      subMcpRegistryForBoot.invalidate();
+
+      // Initialer Discovery-Pass — sonst sind tools_cache=NULL und wrapper-build
+      // ergibt 0 Tools. Pro-Server fail-soft: ein offline-gws blockt nicht den
+      // ganzen Boot.
+      const discoverResults = await refreshSubMcpToolCache({
+        registry: subMcpRegistryForBoot,
+      });
+      for (const r of discoverResults) {
+        if (r.error) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[mcp-approval2] sub-mcp discovery '${r.subMcpName}' failed: ${r.error}`,
+          );
+        } else {
+          // eslint-disable-next-line no-console
+          console.info(
+            `[mcp-approval2] sub-mcp discovery '${r.subMcpName}' ok: ${r.count} tools`,
+          );
+        }
+      }
+
+      // Wrapper-Tools registrieren.
+      const forwarder = new SubMcpForwarder({ registry: subMcpRegistryForBoot });
+      const wrappers = await buildSubMcpWrapperTools({
+        registry: subMcpRegistryForBoot,
+        forwarder,
+        config: server.config,
+      });
+      let registered = 0;
+      for (const t of wrappers.tools) {
+        if (!registry.has(t.name)) {
+          registry.register(t);
+          registered += 1;
+        }
+      }
+      if (wrappers.skipped.length > 0) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[mcp-approval2] sub-mcp wrapper-tools skipped (invalid name): ${wrappers.skipped.join(', ')}`,
+        );
+      }
+      // eslint-disable-next-line no-console
+      console.info(
+        `[mcp-approval2] sub-mcp wrapper-tools registered: ${registered} ` +
+          `(per-server: ${[...wrappers.perSubMcp.entries()].map(([n, c]) => `${n}=${c}`).join(', ') || 'none'})`,
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[mcp-approval2] sub-mcp gateway boot-build failed: ${
+          err instanceof Error ? err.message : String(err)
+        }. Native + kc_wrappers tools remain available.`,
+      );
+    }
   }
 
   // ─────────────────────────────────────────────────────────────────────
@@ -495,6 +591,9 @@ export async function createApp(
   }
 
   // Approvals-Routes (Bearer-gated; pro-Route via auth-Middleware).
+  // SEC-001: WebAuthn-Assertion-Verifier ist in Production immer gesetzt —
+  // ohne ihn wuerden approvals.approve() opaque signature-bytes ohne Verify
+  // durchwinken. Wir bauen ihn hier mit der server-DB.
   app.route(
     '/',
     approvalsRoutes({
@@ -502,6 +601,7 @@ export async function createApp(
       approvals: approvalService,
       registry,
       audit: deps.audit ?? makeDefaultAudit(server),
+      verifyAssertion: createApprovalAssertionVerifier({ db: server.db }),
     }),
   );
 

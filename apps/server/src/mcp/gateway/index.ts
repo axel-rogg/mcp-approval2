@@ -47,3 +47,22 @@ export {
 } from './types.js';
 
 export { subMcpDiscoverRoutes } from './routes.js';
+
+export { signSubMcpUserJwt, type SignSubMcpUserJwtArgs } from './user_jwt.js';
+
+export {
+  makeForwardingTool,
+  buildSubMcpWrapperTools,
+  resolveSubMcpSensitivity,
+  type MakeForwardingToolArgs,
+  type BuildSubMcpWrapperToolsArgs,
+  type BuildSubMcpWrapperToolsResult,
+} from './wrapper_tools.js';
+
+export {
+  seedCfGateways,
+  DEFAULT_CF_GATEWAYS,
+  type CfGatewaySeedEntry,
+  type SeedCfGatewaysArgs,
+  type SeedResult,
+} from './seed.js';

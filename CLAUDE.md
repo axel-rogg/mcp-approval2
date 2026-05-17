@@ -100,6 +100,15 @@ Detail-Status in [docs/STATUS.md](docs/STATUS.md).
 - **Approval-Flow**: `ToolContext.approvalId` propagiert via `resumeApproval` durch in den OBO-JWT — KC2-Audit-Trail hat `approval_id` + `via_proxy=true`.
 - **`MCP_KNOWLEDGE_URL` optional**: approval2 startet ohne KC2-Anbindung sauber (Native Tools + Gateways verfügbar, KC-Wrappers fehlen).
 - **Contract-Tests** (`apps/server/tests/contract/`): Wire-Format zwischen approval2 ↔ KC2 ist hier ausführbar fixiert. Bei Änderungen am OBO-Format / kc_wrappers / kc-proxy: Tests anfassen, sonst bricht der Cutover.
+- **Sub-MCP-Gateways** (`apps/server/src/mcp/gateway/`, live 2026-05-17): drei Cloudflare-Worker-Gateways sind via SubMcpForwarder verfügbar in approval2. Boot-Sequenz: `seedCfGateways` (idempotenter INSERT/UPDATE auf `sub_mcp_servers` aus env-vars) → initialer `refreshSubMcpToolCache` (tools/list-Roundtrip pro Gateway) → `buildSubMcpWrapperTools` (registriert pro discovered Tool ein Forwarding-Wrapper in der Haupt-Registry). User-JWT pro Call kurzlebig HS256-signed (aud=`<subMcpName>`, 60s) — sub-MCPs validieren über `/internal/v1/credentials/resolve`. Default-Sensitivity ist `'write'` (fail-closed, SEC-006-Pattern); sub-MCPs überschreiben über `annotations.sensitivity` / `readOnlyHint`. Opt-in pro Gateway via env-var — ohne Token kein Insert, kein Wrapper:
+
+  | Gateway | URL | Env-Var (Doppler) | Tools |
+  |---|---|---|---|
+  | `utils` | `https://utils.ai-toolhub.org` | `SUB_MCP_TOKEN_UTILS` | 8 (now/cal/diagram) |
+  | `gws` | `https://gws.ai-toolhub.org` | `SUB_MCP_TOKEN_GWS` | 59 (Google Workspace) |
+  | `gcloud` | `https://gcloud.ai-toolhub.org` | `SUB_MCP_TOKEN_GCLOUD` | 4 (GCP) |
+
+  Tool-Naming: `<gw>.<remote-name>` (z.B. `utils.now`, `gws.calendar.list`, `gcloud.projects.list`). Discovery-Refresh läuft via `*/5`-Cron. Worker bleiben auf Cloudflare; ihr SERVICE_TOKEN ist beidseits identisch zwischen v1-Hub und approval2 — keine Worker-Code-Änderung.
 
 ## Repo-Struktur (Wiederholung aus README)
 
