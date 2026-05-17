@@ -30,48 +30,69 @@ import { setCookie } from 'hono/cookie';
 import { findUserByEmail } from '../../services/user.js';
 
 /**
- * Minimaler In-Memory-Challenge-Store. PRODUCTION-TODO: in DB persistieren.
- * Single-Instance-only.
+ * DB-backed Challenge-Store (Migration 0022). In-Memory war Single-Instance-
+ * only — Fly hat 2+ Machines, begin/finish hatten oft separate Targets →
+ * 'webauthn_challenge_mismatch'. Postgres ist die Source-of-Truth, alle
+ * Instances sehen denselben Zustand.
+ *
+ * Key-Konvention: "reg:<challengeId>" | "login:<challengeId>" — gleich wie
+ * vorher, aber wir splitten beim Insert in kind+id.
  */
-const challengeStore = new Map<
-  string,
-  {
-    challenge: string;
-    userId: string | null;
-    rpId: string;
-    origin: string;
-    expiresAt: number;
-  }
->();
-
-function putChallenge(
+async function putChallenge(
+  db: ServerContext['db'],
   key: string,
   challenge: string,
   userId: string | null,
   rpId: string,
   origin: string,
-): void {
-  challengeStore.set(key, {
-    challenge,
-    userId,
-    rpId,
-    origin,
-    expiresAt: Date.now() + 5 * 60 * 1000,
-  });
+): Promise<void> {
+  const colonIdx = key.indexOf(':');
+  const kind = colonIdx > 0 ? key.slice(0, colonIdx) : 'reg';
+  const challengeId = colonIdx > 0 ? key.slice(colonIdx + 1) : key;
+  const now = Date.now();
+  const expiresAt = now + 5 * 60 * 1000;
+  const raw = db.unsafe('webauthn_challenge_put');
+  await raw.query(
+    `INSERT INTO webauthn_challenges (challenge_id, challenge, kind, user_id, rp_id, origin, created_at, expires_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT (challenge_id) DO UPDATE SET
+       challenge=EXCLUDED.challenge, kind=EXCLUDED.kind, user_id=EXCLUDED.user_id,
+       rp_id=EXCLUDED.rp_id, origin=EXCLUDED.origin, created_at=EXCLUDED.created_at,
+       expires_at=EXCLUDED.expires_at`,
+    [challengeId, challenge, kind, userId, rpId, origin, now, expiresAt],
+  );
 }
 
-function takeChallenge(
+async function takeChallenge(
+  db: ServerContext['db'],
   key: string,
-): { challenge: string; userId: string | null; rpId: string; origin: string } | null {
-  const v = challengeStore.get(key);
-  if (!v) return null;
-  challengeStore.delete(key);
-  if (v.expiresAt < Date.now()) return null;
+): Promise<{ challenge: string; userId: string | null; rpId: string; origin: string } | null> {
+  const colonIdx = key.indexOf(':');
+  const kind = colonIdx > 0 ? key.slice(0, colonIdx) : 'reg';
+  const challengeId = colonIdx > 0 ? key.slice(colonIdx + 1) : key;
+  const now = Date.now();
+  const raw = db.unsafe('webauthn_challenge_take');
+  // DELETE ... RETURNING ist atomic — kein TOCTOU-Race zwischen 2 finish-Calls.
+  const rows = await raw.query<{
+    challenge: string;
+    user_id: string | null;
+    rp_id: string;
+    origin: string;
+    expires_at: number | string;
+  }>(
+    `DELETE FROM webauthn_challenges
+      WHERE challenge_id = $1 AND kind = $2
+      RETURNING challenge, user_id, rp_id, origin, expires_at`,
+    [challengeId, kind],
+  );
+  if (rows.length === 0) return null;
+  const row = rows[0]!;
+  if (Number(row.expires_at) < now) return null;
   return {
-    challenge: v.challenge,
-    userId: v.userId,
-    rpId: v.rpId,
-    origin: v.origin,
+    challenge: row.challenge,
+    userId: row.user_id,
+    rpId: row.rp_id,
+    origin: row.origin,
   };
 }
 
@@ -112,7 +133,7 @@ export function webauthnRoutes(server: ServerContext): Hono<AppBindings> {
       rpId,
     });
     const challengeId = randomBytes(16).toString('base64url');
-    putChallenge(`reg:${challengeId}`, challenge, principal.userId, rpId, requestOrigin);
+    await putChallenge(server.db, `reg:${challengeId}`, challenge, principal.userId, rpId, requestOrigin);
     return c.json({ challengeId, options, prfSalt: Buffer.from(prfSalt).toString('base64url') });
   });
 
@@ -124,7 +145,7 @@ export function webauthnRoutes(server: ServerContext): Hono<AppBindings> {
       const principal = c.get('user');
       if (!principal) throw HttpError.unauthorized();
       const body = c.req.valid('json');
-      const stored = takeChallenge(`reg:${body.challengeId}`);
+      const stored = await takeChallenge(server.db, `reg:${body.challengeId}`);
       if (!stored) throw HttpError.badRequest('webauthn_challenge_mismatch', 'challenge expired or unknown');
       if (stored.userId !== principal.userId) {
         throw HttpError.forbidden('challenge userId mismatch');
@@ -161,7 +182,7 @@ export function webauthnRoutes(server: ServerContext): Hono<AppBindings> {
       userId ? { userId, rpId } : { rpId },
     );
     const challengeId = randomBytes(16).toString('base64url');
-    putChallenge(`login:${challengeId}`, challenge, userId ?? null, rpId, requestOrigin);
+    await putChallenge(server.db, `login:${challengeId}`, challenge, userId ?? null, rpId, requestOrigin);
     return c.json({ challengeId, options });
   });
 
@@ -170,7 +191,7 @@ export function webauthnRoutes(server: ServerContext): Hono<AppBindings> {
     zValidator('json', loginFinishSchema),
     async (c) => {
       const body = c.req.valid('json');
-      const stored = takeChallenge(`login:${body.challengeId}`);
+      const stored = await takeChallenge(server.db, `login:${body.challengeId}`);
       if (!stored) throw HttpError.badRequest('webauthn_challenge_mismatch', 'challenge expired or unknown');
 
       const result = await finishAuthentication(server.config, server.db, {
