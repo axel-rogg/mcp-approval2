@@ -191,9 +191,14 @@ export async function renderStorageDetail(
 
   main.innerHTML = '';
 
-  // ─── Header: Back-Link + Title + Action-Row ────────────────────────
+  // ─── Header: zwei Zeilen — oben Back + Action-Buttons, darunter Titel.
+  // User-Wunsch (2026-05-17): 1-Zeilen-Layout war zu voll bei langen Titeln.
+  // Pattern analog apps-detail (top-row + title underneath).
   const header = document.createElement('header');
   header.className = 'storage-detail-head';
+
+  const topRow = document.createElement('div');
+  topRow.className = 'storage-detail-top-row';
 
   const back = document.createElement('button');
   back.type = 'button';
@@ -202,11 +207,7 @@ export async function renderStorageDetail(
   back.addEventListener('click', () => {
     window.location.hash = '#/storage';
   });
-  header.appendChild(back);
-
-  const title = document.createElement('h1');
-  title.textContent = obj.title ?? obj.filename ?? obj.id;
-  header.appendChild(title);
+  topRow.appendChild(back);
 
   // Action-Buttons rechts (Info-Toggle + Copy-ID + Delete).
   const actions = document.createElement('div');
@@ -254,7 +255,13 @@ export async function renderStorageDetail(
   });
   actions.appendChild(delBtn);
 
-  header.appendChild(actions);
+  topRow.appendChild(actions);
+  header.appendChild(topRow);
+
+  const title = document.createElement('h1');
+  title.textContent = obj.title ?? obj.filename ?? obj.id;
+  header.appendChild(title);
+
   main.appendChild(header);
 
   // ─── Meta-Section (hidden by default, Toggle via Info-Button) ───────
