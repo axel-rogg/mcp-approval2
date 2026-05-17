@@ -669,40 +669,22 @@ code {
   background: var(--bg);
 }
 
+.storage-summary {
+  position: relative;
+}
+
 .storage-summary-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  margin: 0.5rem 0 0;
+  margin: 0;
   line-height: 1.55;
 }
 
-.storage-summary > summary,
-.storage-body > summary {
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 1.05rem;
-  padding: 0.25rem 0;
-  user-select: none;
-  list-style: none;
-}
-
-.storage-summary > summary::-webkit-details-marker,
-.storage-body > summary::-webkit-details-marker {
-  display: none;
-}
-
-.storage-summary > summary::before,
-.storage-body > summary::before {
-  content: '▸';
-  display: inline-block;
-  margin-right: 0.4rem;
-  color: var(--fg-muted);
-  transition: transform 0.15s ease;
-}
-
-.storage-summary[open] > summary::before,
-.storage-body[open] > summary::before {
-  transform: rotate(90deg);
+/* Edit-Pencil floated top-right inside summary card. */
+.storage-summary > .edit-pencil {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
 }
 
 .storage-meta dl {
@@ -724,8 +706,8 @@ code {
   overflow-wrap: anywhere;
 }
 
-.storage-summary h2,
-.storage-body h2 {
+.storage-summary-x-unused h2,
+.storage-body-x-unused h2 {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -838,14 +820,6 @@ code {
   gap: 1rem;
   flex-wrap: wrap;
   justify-content: flex-end;
-}
-
-.force-delete-label {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  color: var(--warn);
-  font-size: 0.875rem;
 }
 
 .btn-danger {

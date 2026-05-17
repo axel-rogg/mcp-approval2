@@ -242,7 +242,6 @@ export async function renderStorageDetail(
   });
   actions.appendChild(copyBtn);
 
-  let forceCheckbox: HTMLInputElement | null = null;
   const delBtn = document.createElement('button');
   delBtn.type = 'button';
   delBtn.className = 'icon-btn storage-delete-btn';
@@ -250,26 +249,12 @@ export async function renderStorageDetail(
   delBtn.setAttribute('title', 'Object loeschen');
   delBtn.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>`;
   delBtn.addEventListener('click', () => {
-    void handleDelete(api, obj, forceCheckbox, delBtn);
+    void handleDelete(api, obj, delBtn);
   });
   actions.appendChild(delBtn);
 
   header.appendChild(actions);
   main.appendChild(header);
-
-  // ─── Force-Delete Toggle (nur wenn refcount > 0) ────────────────────
-  if ((obj.refcount ?? 0) > 0) {
-    const wrap = document.createElement('label');
-    wrap.className = 'force-delete-label';
-    forceCheckbox = document.createElement('input');
-    forceCheckbox.type = 'checkbox';
-    forceCheckbox.id = 'force-delete';
-    wrap.appendChild(forceCheckbox);
-    const span = document.createElement('span');
-    span.textContent = ` Force delete (refcount=${obj.refcount})`;
-    wrap.appendChild(span);
-    main.appendChild(wrap);
-  }
 
   // ─── Meta-Section (hidden by default, Toggle via Info-Button) ───────
   const metaSection = document.createElement('section');
@@ -309,14 +294,12 @@ export async function renderStorageDetail(
     main.appendChild(refsSection);
   }
 
-  // ─── Summary + Body — beide default OPEN (User-Wunsch).
-  // Kein Accordion-Sync mehr: User soll beide gleichzeitig lesen koennen.
+  // ─── Summary + Body — Labels weggelassen (User-Wunsch Platz-Spar).
+  // Karten sind durch Card-Border + Spacing visuell getrennt — "Summary"/
+  // "Body"-Titel sind redundant. Edit-Pencil floated top-right.
   if (obj.description !== undefined && obj.description !== null && obj.description !== '') {
-    const summaryDetails = document.createElement('details');
-    summaryDetails.className = 'storage-summary card';
-    summaryDetails.open = true;
-    const s = document.createElement('summary');
-    s.textContent = 'Summary';
+    const summarySection = document.createElement('section');
+    summarySection.className = 'storage-summary card';
     if (obj.subtype === 'doc') {
       const pencil = document.createElement('button');
       pencil.type = 'button';
@@ -328,14 +311,13 @@ export async function renderStorageDetail(
         e.stopPropagation();
         openSummaryModal(api, obj);
       });
-      s.appendChild(pencil);
+      summarySection.appendChild(pencil);
     }
-    summaryDetails.appendChild(s);
     const p = document.createElement('p');
     p.className = 'storage-summary-text';
     p.textContent = stripIpiWrappers(obj.description);
-    summaryDetails.appendChild(p);
-    main.appendChild(summaryDetails);
+    summarySection.appendChild(p);
+    main.appendChild(summarySection);
   }
 
   // Body — nur rendern wenn tatsaechlich Body-Content da ist.
@@ -343,12 +325,8 @@ export async function renderStorageDetail(
   // body==='' (= leerer body) → kein Section.
   const hasBody = obj.body !== undefined && obj.body !== null && obj.body !== '';
   if (hasBody) {
-    const bodyDetails = document.createElement('details');
-    bodyDetails.className = 'storage-body card';
-    bodyDetails.open = true; // default open (User-Wunsch)
-    const bs = document.createElement('summary');
-    bs.textContent = 'Body';
-    bodyDetails.appendChild(bs);
+    const bodySection = document.createElement('section');
+    bodySection.className = 'storage-body card';
 
     const rendered = dispatchRenderer(obj);
     walkAndStripIpi(rendered);
@@ -360,12 +338,12 @@ export async function renderStorageDetail(
         const pre = document.createElement('pre');
         pre.className = 'storage-body-pre';
         pre.textContent = stripIpiWrappers(raw);
-        bodyDetails.appendChild(pre);
+        bodySection.appendChild(pre);
       }
     } else {
-      bodyDetails.appendChild(rendered);
+      bodySection.appendChild(rendered);
     }
-    main.appendChild(bodyDetails);
+    main.appendChild(bodySection);
   }
 }
 
@@ -388,14 +366,36 @@ function walkAndStripIpi(root: Node): void {
 async function handleDelete(
   api: ApiStorageClient,
   obj: KnowledgeObject,
-  forceCheckbox: HTMLInputElement | null,
   btn: HTMLButtonElement,
 ): Promise<void> {
-  const force = forceCheckbox?.checked ?? false;
   const label = obj.title ?? obj.filename ?? obj.id;
-  if (!window.confirm(`Delete "${label}"?\n\nEin Approval-Request wird erstellt; du musst ihn in der Approval-Queue signen.`)) {
-    return;
+  const refcount = obj.refcount ?? 0;
+
+  // Refcount=0 → einfacher Confirm.
+  // Refcount>0 → zwei Stufen: erst Standard-Confirm, dann Force-Frage,
+  //   weil ein "Force-Delete" andere Objekte beschädigen kann (incoming refs).
+  if (refcount === 0) {
+    if (!window.confirm(
+      `Delete "${label}"?\n\nEin Approval-Request wird erstellt; du musst ihn in der Approval-Queue signen.`,
+    )) {
+      return;
+    }
+  } else {
+    if (!window.confirm(
+      `Delete "${label}"?\n\n` +
+      `⚠ refcount=${refcount} — ${refcount} andere Objekt${refcount === 1 ? '' : 'e'} ` +
+      `referenzier${refcount === 1 ? 't' : 'en'} dieses Objekt. Ein Force-Delete kann ` +
+      `deren Refs hinterlassen.\n\nWeiter zur Force-Bestätigung?`,
+    )) {
+      return;
+    }
+    if (!window.confirm(
+      `⚠ FORCE DELETE bestätigen: "${label}" trotz refcount=${refcount} löschen?`,
+    )) {
+      return;
+    }
   }
+  const force = refcount > 0;
   btn.disabled = true;
   btn.textContent = 'Sending…';
   try {

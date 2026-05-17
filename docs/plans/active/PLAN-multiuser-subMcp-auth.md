@@ -3,7 +3,7 @@
 > **Status:** ✅ V2 + Worker-Patches code-complete 2026-05-17.
 > **Datum:** 2026-05-17
 > **Trigger:** User: "Jeder user muss bei gws seinen eigenen oauth client und secrets bringen. Meinen darf nur für Axel Rogg gelten."
-> **Threat-Modell:** siehe [SECRET.md](../../../SECRET.md) — Audit-Trail-basiertes Modell, Operator-Trust akzeptiert für Pilot.
+> **Threat-Modell:** siehe [THREAT-MODEL.md](../../../THREAT-MODEL.md) — Audit-Trail-basiertes Modell, Operator-Trust akzeptiert für Pilot.
 
 ## Problem (vorher)
 
@@ -76,14 +76,14 @@ mcp-gcloud Worker:
 
 ## Security-Modell
 
-Sieh [SECRET.md](../../../SECRET.md) für Threat-Modell-Details. Kurzfassung:
+Sieh [THREAT-MODEL.md](../../../THREAT-MODEL.md) für Threat-Modell-Details. Kurzfassung:
 
 - **Cross-User-Schutz:** RLS + KMS-DEK mit user-bound AAD (3 Schichten)
 - **External Attacker:** OAuth+JWT-Auth gates everything; Worker prüft Bearer
 - **Operator (Axel) mit DB+KMS-Access:** kann technisch decrypten, aber jeder Decrypt im GCP Audit-Log
 - **Compromised Worker:** sieht plaintext nur im Memory zur Call-Zeit, kein Persistieren
 
-Hardening-Roadmap (separat in SECRET.md): Per-User-KEK, KMS-Decrypt-Alerts, optional PRF-Wrap auf Client-Secret.
+Hardening-Roadmap (separat in THREAT-MODEL.md): Per-User-KEK, KMS-Decrypt-Alerts, optional PRF-Wrap auf Client-Secret.
 
 ## Migration-Pfad für `axelrogg@gmail.com`
 

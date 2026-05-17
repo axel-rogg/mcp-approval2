@@ -1,8 +1,10 @@
-# SECRET.md — Threat-Modell für User-Secrets in mcp-approval2
+# THREAT-MODEL.md — Threat-Modell für mcp-approval2
 
-> **Status:** ⚠️ Working-Doc 2026-05-17. Aktuelle Implementierung läuft mit **Status quo + Audit-Trail**.
-> **Trigger:** User-Frage 2026-05-17: "Admin darf nicht einfach so andere User-Passwörter lesen können"
-> **Decision (Pilot):** wir bleiben beim Audit-Trail-Modell, dokumentieren das Risiko hier, planen Hardening später.
+> **Status:** ⚠️ Working-Doc 2026-05-17 (umbenannt von SECRET.md, Scope erweitert: nicht nur Secret-Storage, sondern auch Daten-System-Zugriff, Identity-Theft, Deployment-Kontext-Risiken).
+> **Trigger:** User-Frage 2026-05-17: "Admin darf nicht einfach so andere User-Passwörter lesen können" — plus Folge-Frage: "Das wäre nur für Passwörter. Zugriff zu Datensystemen, ID-Diebstahl. Wie sieht ein Security-Experte das?"
+> **Decision (Pilot):** wir bleiben beim Audit-Trail-Modell für Secret-Storage, dokumentieren die breiteren Risiken hier, planen Hardening (M1–M4) priorisiert. Deployment-Kontext (private vs. corporate) wird in §Deployment-Kontext gegenübergestellt.
+>
+> Volle Experten-Review (cross-cutting, ~2400 Wörter, 2026-05-17): siehe `docs/security/THREAT-REVIEW-2026-05-17.md`.
 
 ## TL;DR — was heute geht und was nicht
 
@@ -150,3 +152,113 @@ Hardening Stufe 1 wird Pflicht wenn eine dieser Bedingungen eintritt:
 - [ ] DSGVO-Audit / Compliance-Anforderung
 - [ ] Erster User-Compromise-Incident (Lessons-Learned)
 - [ ] Migration auf Business-Mode (regulierte Industrie / GCP Cloud Run)
+
+---
+
+## Erweiterter Scope (Experten-Review 2026-05-17)
+
+Das oben dokumentierte Modell deckt **Secret-Storage at-rest** ab. Eine cross-cutting Security-Review (siehe `docs/security/THREAT-REVIEW-2026-05-17.md`) hat fünf zusätzliche Risikoklassen identifiziert, die das ursprüngliche SECRET.md nicht modelliert:
+
+1. **Token-Lifecycle nach Decrypt** — Refresh-Tokens, OBO-JWTs, Access-Tokens leben im Worker-Memory; kompromittierter Worker (npm-Supply-Chain, RCE) sieht plaintext.
+2. **Daten-System-Zugriff** — wer auf KC2 (Storage), Google Workspace, GCP-Projekt, GitHub zugreift, nicht nur wer das Passwort liest.
+3. **Identity-Theft** — Session-Cookie-Diebstahl, OAuth-Replay, JWKS-Compromise, WebAuthn-Recovery-Bypass, Approval-Replay, Admin-Account-Takeover.
+4. **God-Mode-Tokens** — `MCP_KNOWLEDGE_SERVICE_TOKEN` (KC2-wide), `JWT_SECRET` (HS256, alle MCP-Tokens), `JWT_RS256_PRIVATE_KEY_PEM` (alle OBO-JWTs) — Compromise jeder dieser drei = systemweiter GAU.
+5. **Audit-Log Integrität** — `audit.ts:71-74` ist fail-soft (schluckt Errors stumm), kein WORM-Mirror, Operator mit DB-Write kann nachträglich editieren.
+
+### M1–M4 Hardening-Pflichtprogramm vor breiterer Pilot-Öffnung
+
+| ID | Maßnahme | Aufwand | Trigger |
+|---|---|---|---|
+| **M1** | Audit-Log WORM-Mirror (GCS append-only-Bucket oder Pub/Sub-Stream) | ~3h | vor zweitem User |
+| **M2** | MCP-Access-Tokens HS256 → RS256 (gleicher Key-Pool wie OBO) | ~4h | vor Multi-User-Öffnung |
+| **M3** | KC2-Scope-Split-Tokens (`_ERASE` / `_SYNC` / `_OPS`) in Doppler aktivieren — Code ist da, Werte fehlen | ~30min Operator-Task | sofort |
+| **M4** | `JWT_RS256_PRIVATE_KEY_PEM` Key-Rotation-Mechanik (kid-rotation, JWKS-multi-key) | ~6h | vor zweitem User |
+
+---
+
+## Deployment-Kontext: Private Freunde vs. Corporate-VPC
+
+Das Threat-Modell ist **kontextabhängig**. Dieselbe Architektur (mcp-approval2 + KC2) hat in verschiedenen Deployment-Szenarien grundverschiedene Risiko-Prioritäten. Diese Sektion stellt die zwei realistischen Endpunkte gegenüber, damit M1–M4 + Hardening-Stufen nicht "one-size-fits-all" priorisiert werden.
+
+### Trust-Annahmen
+
+| Aspekt | Private (5-15 Freunde) | Corporate (VPC, 20-500 User) |
+|---|---|---|
+| **Operator** | Axel persönlich. Trust ist *sozial* gewachsen. Versehen > Vorsatz. | Mehrere Admins, formelle Rollen. Operator-Trust = *vertraglich/audit-trail-belegt*, nicht persönlich. |
+| **User-Pool** | Freunde, Familie. Identifizierbar persönlich. Phishing-Risiko = pro Person individuell. | Mitarbeiter / Externe. Wechsel, Kündigung, "böser Ex-MA" sind reale Vektoren. |
+| **Netzwerk** | Public Internet vor Fly.io. Cloudflare/Fly DDoS-Schicht. | Im internen VPC; "hinter der Firewall = trusted" ist verlockend, aber falsch. Lateral-Movement-Risiko. |
+| **Compliance** | Keine. GDPR-Grundsätze ja, aber kein formaler Auditor. | DSGVO-Auditor, ISO27001, evtl. BaFin/HIPAA, real existierende Aufsicht. |
+| **Datenwert** | Persönlich (eigene Calendar, eigene Memos, eigener GMail). Schaden = persönlich-individuell, *kein* Marktwert. | Geschäftsgeheimnisse, Kundendaten, regulierte Daten. Schaden = Reputation, Strafe, Klagen. |
+| **Recovery-Pfad** | Axel kennt User persönlich (Telefon, Treffen). Verlorener Passkey = Anruf. | Recovery muss formell laufen (Ticket, Helpdesk, MFA-Reset-Workflow). |
+
+### Gegenüberstellung: was wirklich zählt
+
+| Threat | Private (Freunde) | Corporate (VPC) |
+|---|---|---|
+| **Operator-Versehen (rm -rf, kaputter Restore)** | 🔴 **TOP-Risiko**. Höher als jeder Insider-Angriff. Realistisch alle 1-2 Jahre einmal. | 🟡 mitigiert durch 4-Augen, Change-Management, IaC-Reviews |
+| **Verlorener Passkey** | 🔴 **TOP-Risiko**. Tech-mixed Freunde verlieren regelmäßig Geräte/Browser. Kein Recovery = User gelockt. | 🟡 Helpdesk-Workflow gelöst |
+| **Cross-User-Lese-Bug (RLS-Bypass)** | 🔴 hoch — Privacy-Vertrauensbruch zwischen Freunden, sozial irreparabel | 🔴 hoch — Compliance-Verstoß, Klage |
+| **Externe Phishing eines Users (Google-Account-Takeover)** | 🔴 hoch — der eine User verliert seinen GMail/GitHub, persönliche Katastrophe; aber: *isoliert auf den User* dank Per-User-KEK | 🟠 mittel — kompromittierter User = Lateral-Movement in Firmen-Daten |
+| **VPC-Lateral-Movement (Nachbar-Workload → mcp-approval2)** | ⚪ N/A — kein VPC | 🔴 **TOP-Risiko**. Kein Default-Schutz; Metadata-Server-SSRF, internes DNS-Spoof, direktes Postgres |
+| **Insider-Admin missbraucht DB+KMS** | 🟠 mittel — sozialer Vertrauensbruch wäre dramatisch, aber Axel-Single-Operator | 🔴 hoch — mehrere Admins, kollegialer Trust nicht ausreichend |
+| **npm-Supply-Chain (RCE in Transitive-Dep)** | 🔴 hoch (identisch in beiden Szenarien) — 1.5k+ Transitive-Deps | 🔴 hoch (identisch) |
+| **`JWT_RS256_PRIVATE_KEY_PEM` Theft** | 🔴 hoch (identisch) — universeller GAU | 🔴 hoch (identisch) |
+| **Audit-Log fail-soft / nicht WORM** | 🟡 mittel — kein Auditor liest es; aber soziale Beweisbarkeit ("habe ich's gelöscht?") fehlt | 🔴 hoch — Compliance + Forensik unmöglich ohne |
+| **DSGVO-formaler Erase-Workflow** | 🟢 niedrig — Self-Service-Delete in PWA reicht, kein "Auskunftsersuchen-Workflow" nötig | 🔴 Pflicht — Art. 17, 15, 20 GDPR |
+| **DDoS / Rate-Limit** | 🟢 niedrig — Fly.io / CF in front, klein Volume | 🟠 mittel — abhängig von Außenanschluss |
+| **mTLS zwischen Services** | 🟢 niedrig — fly-internal Network reicht, alles im selben Org | 🔴 hoch — Zero-Trust-Architektur erwartet |
+
+### Top-3 Risiko-Reihenfolge je Kontext
+
+**Private (Freunde):**
+
+1. **Operator-Versehen + Backup/Restore-Drill** — was machst du wenn du *aus Versehen* die DB schrotest? Aktuell: Neon-PITR-Backup, aber **Restore wurde nie geübt**.
+2. **Verlorener Passkey + Recovery-Pfad** — was passiert wenn Freund-X sein Telefon verliert? Aktuell: kein dokumentierter Recovery-Flow. Risiko: Axel-bypass-Pfad könnte zu *Identitätsübernahme durch Operator* werden.
+3. **Per-User-Isolation (gestohlener User-Account → andere User safe)** — Hardening-Stufe 2 (Per-User-KEK) ist hier *wertvoller als Stufe 1 (Decrypt-Alerts)*, weil Blast-Radius pro Account-Compromise zählt, nicht Detection-Latenz.
+
+**Corporate (VPC):**
+
+1. **VPC-Network-Hardening** — kein Vertrauen ins interne Netz. mTLS, Cert-Pinning, SSRF-Mitigation (Egress-Allowlist, IMDSv2/Workload-Identity statt Metadata), Postgres nur via Sidecar-Proxy.
+2. **Audit-WORM + 4-Augen-Operator** — M1 wird Pflicht, plus formaler Admin-Workflow (jede Operator-Aktion 2-Personen).
+3. **Compliance-Workflows** — DSGVO Art. 17/15/20, Audit-Trail mit Retention-Policy, Incident-Response-Plan.
+
+### Was im Private-Kontext wichtig ist, das SECRET.md nicht abdeckt
+
+| # | Punkt | Bezug |
+|---|---|---|
+| P1 | **Backup-Restore-Drill** mindestens 1× pro Quartal manuell durchspielen | Operator-Versehen ist häufiger als Angriff |
+| P2 | **Verlorener-Passkey-Recovery-Pfad dokumentieren** — Axel-Reset *muss* User-Knowledge-Faktor oder Out-of-Band-Bestätigung verlangen, sonst ist Axel = Universal-ID-Diebstahl | Operator-bypass-Pfad wird sonst zur Hintertür |
+| P3 | **Per-User-KEK (Hardening-Stufe 2)** — Phishing eines Users darf andere User nicht gefährden | Blast-Radius klein halten |
+| P4 | **Self-Service-Erase pro User in PWA** — Freund kann *sehen* welche Daten er hat + *löschen* (Storage-Tab existiert teilweise) | Privacy-Transparenz, sozialer Vertrauensaufbau |
+| P5 | **Operator-Transparenz-Mechanik** — User sieht im Audit-Log seines Accounts wann Axel auf seine Daten zugegriffen hat (z.B. PWA-Sektion "Operator-Activity") | Sozialer Vertrauensvertrag braucht Sichtbarkeit, sonst "spioniert er mich aus?" |
+| P6 | **User-Exit-Protokoll** — Freund verlässt den Kreis: was passiert mit seinen Daten? Self-Export → Auto-Delete-after-X-Days vs. Soft-Delete-Recovery | Soziale Reversibilität |
+| P7 | **Phishing-Awareness pro User** — kurze Onboarding-Note: "Ich (Axel) werde dich *nie* per Mail nach deinem Passwort/Passkey fragen" | Externer Phishing-Vektor je User isolieren |
+
+### Was im Corporate-Kontext wichtig ist, das im Private-Kontext over-engineered wäre
+
+| # | Punkt | Warum private über-engineered |
+|---|---|---|
+| C1 | WORM-Audit-Log + Pub/Sub-Streaming | Niemand liest's; Operator-Trust ist sozial |
+| C2 | mTLS zwischen Workloads | Fly-Org ist single-trust-boundary |
+| C3 | Egress-Allowlist | Kein Lateral-Movement-Szenario |
+| C4 | 4-Augen-Operator-Workflow | Single-Operator Axel |
+| C5 | DSGVO Art. 15/17/20 formell mit SLA | Self-Service in PWA reicht |
+| C6 | Cloud HSM (Hardening-Stufe 4) | State-Actor-Threats irrelevant |
+| C7 | SIEM-Integration | Operator liest GCP-Audit selbst stichprobenartig |
+
+### Was in BEIDEN Szenarien identisch wichtig ist (Universal-Hardening)
+
+- **M3 (KC2-Scope-Split-Tokens)** — ändert nichts am Aufwand, fixt sofort einen god-mode-Token
+- **M4 (JWT-Key-Rotation)** — Single-Point-of-Failure für *alle* Identitäten
+- **npm-Supply-Chain-Hygiene** — `npm audit` 0 Vulns + dep-pinning + regelmäßiges Update-Audit
+- **Cookie-Domain + CSP + XSS-Hygiene** — eine XSS-Lücke killt beide Modelle gleich hart
+- **Single-Operator-Total-Compromise-Statement** — Doppler-Leak + Fly-Token-Leak + npm-RCE darf nicht versteckt sein, sondern explizit dokumentiert
+- **Recovery-Drill für KMS-Key + Doppler-Secrets** — wenn Cloud-KMS-Key oder Doppler-Account verloren geht, muss restore-from-backup-Pfad existieren
+
+### Aktueller Pilot-Status (Freundes-Modus)
+
+✅ vorhanden: RLS, KMS-Envelope, AAD-Binding, GCP-Audit, WebAuthn-Passkey, Per-User-Secrets
+🟡 teilweise: Backup (Neon-PITR vorhanden, Restore-Drill fehlt), Self-Service-Erase (PWA Storage-Tab partiell)
+🔴 fehlt: Verlorener-Passkey-Recovery, Per-User-KEK (Stufe 2), Operator-Activity-Sichtbarkeit pro User, User-Exit-Protokoll, KC2-Scope-Split-Token aktiviert (M3), JWT-Rotation (M4)
+
+**Empfehlung Freundes-Pilot:** vor Öffnung an Tester P1 (Restore-Drill) + P2 (Recovery-Pfad) + M3 + M4 — alles ~8h Operator-Arbeit, kein Tech-Risiko. Stufe-2-KEK (P3) und Operator-Transparenz (P5) parallel als Phase-2-Hardening.
