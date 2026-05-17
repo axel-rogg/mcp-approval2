@@ -37,11 +37,19 @@ export interface SubMcpAuthEnricherOpts {
   readonly strategy?: Map<string, AuthStrategy>;
 }
 
-export type AuthStrategy = 'google-oauth' | 'gcp-service-account' | 'none';
+export type AuthStrategy = 'google-oauth' | 'gcp-service-account' | 'oauth-bearer' | 'none';
 
+/**
+ * Default-Mapping subMcpName → strategy. `oauth-bearer` ist der generische
+ * Pfad fuer externe MCP-Server die per OAuth2 access_token authentifizieren
+ * (GitHub-MCP, Cloudflare-MCP-Pre-Registered, Notion, ...). Der token-URL
+ * kommt pro Server aus sub_mcp_servers.config_schema._meta.oauth.token_url
+ * (siehe enrich-Branch unten).
+ */
 export const DEFAULT_AUTH_STRATEGIES: ReadonlyMap<string, AuthStrategy> = new Map([
   ['gws', 'google-oauth'],
   ['gcloud', 'gcp-service-account'],
+  ['github', 'oauth-bearer'],
 ]);
 
 export interface SubMcpAuthEnricher {
@@ -57,6 +65,20 @@ export interface SubMcpAuthEnricher {
 
 /** Google-Access-Token Lifetime ist 1h. Wir cache 50 min damit Refresh-Headroom da ist. */
 const GOOGLE_TOKEN_CACHE_MS = 50 * 60 * 1000;
+
+/**
+ * Map: subMcpName → token_endpoint URL fuer OAuth-Bearer-Refresh.
+ * GitHub-Apps haben kein Standard-Discovery-Doc, daher hardcoded.
+ * Cloudflare-MCP nutzt DCR mit Discovery — landet hier nicht.
+ */
+const OAUTH_BEARER_TOKEN_ENDPOINTS: ReadonlyMap<string, string> = new Map([
+  ['github', 'https://github.com/login/oauth/access_token'],
+]);
+
+/** Standard OAuth-Access-Token cache duration. 50 min entspricht GitHub
+ *  User-to-Server-Token-TTL (8h) minus Buffer. Andere Provider haben
+ *  ggf. kuerzere TTL — der refresh-response-`expires_in` cappt das. */
+const OAUTH_BEARER_CACHE_MS = 50 * 60 * 1000;
 
 export function createSubMcpAuthEnricher(opts: SubMcpAuthEnricherOpts): SubMcpAuthEnricher {
   const { config } = opts;
@@ -148,6 +170,53 @@ export function createSubMcpAuthEnricher(opts: SubMcpAuthEnricherOpts): SubMcpAu
         const saJson = cfgMap.get('_service_account_json');
         if (!saJson) return {}; // Worker-Legacy-Fallback (eigene SA aus env)
         return { 'x-gcp-sa-json': saJson };
+      }
+
+      if (strat === 'oauth-bearer') {
+        const refreshToken = cfgMap.get('_oauth_refresh_token');
+        const clientId = cfgMap.get('_oauth_client_id');
+        const clientSecret = cfgMap.get('_oauth_client_secret');
+        const tokenUrl = OAUTH_BEARER_TOKEN_ENDPOINTS.get(subMcpName);
+        if (!refreshToken || !clientId || !clientSecret || !tokenUrl) {
+          return {};
+        }
+        // Cache-Check
+        const key = cacheKey(userId, subMcpName);
+        const cached = tokenCache.get(key);
+        const ts = now();
+        if (cached && cached.expiresAt > ts + 60_000) {
+          return { authorization: `Bearer ${cached.token}` };
+        }
+        // Refresh via Standard-OAuth2-refresh_token-grant.
+        const body = new URLSearchParams({
+          grant_type: 'refresh_token',
+          refresh_token: refreshToken,
+          client_id: clientId,
+          client_secret: clientSecret,
+        });
+        const resp = await fetchImpl(tokenUrl, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/x-www-form-urlencoded',
+            accept: 'application/json',
+          },
+          body: body.toString(),
+        });
+        if (!resp.ok) {
+          return {}; // Refresh failed → kein Header, downstream-401 ist erwartet
+        }
+        const json = (await resp.json()) as {
+          access_token?: string;
+          expires_in?: number;
+          error?: string;
+        };
+        if (!json.access_token || json.error) {
+          return {};
+        }
+        const expiresIn = typeof json.expires_in === 'number' ? json.expires_in : 3600;
+        const expiresAt = ts + Math.min(expiresIn * 1000, OAUTH_BEARER_CACHE_MS);
+        tokenCache.set(key, { token: json.access_token, expiresAt });
+        return { authorization: `Bearer ${json.access_token}` };
       }
 
       return {};

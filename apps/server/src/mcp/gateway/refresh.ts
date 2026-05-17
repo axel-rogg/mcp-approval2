@@ -85,6 +85,10 @@ export interface ApplyGatewayDiscoveryArgs {
   readonly fetchImpl?: typeof fetch;
   /** Falls gesetzt: nur diese Sub-MCPs refreshen (sonst alle enabled). */
   readonly only?: ReadonlyArray<string>;
+  /** OAuth-Bearer-Enricher fuer Sub-MCPs wie GitHub. */
+  readonly authEnricher?: import('../../services/sub-mcp-auth-enricher.js').SubMcpAuthEnricher;
+  /** User-ID dessen OAuth-Tokens fuer Discovery verwendet werden. */
+  readonly operatorUserId?: string;
 }
 
 export interface ApplyGatewayDiscoveryResult {
@@ -121,6 +125,8 @@ export async function applyGatewayDiscovery(
     registry: args.registry,
     ...(args.fetchImpl ? { fetchImpl: args.fetchImpl } : {}),
     ...(args.only ? { only: args.only } : {}),
+    ...(args.authEnricher ? { authEnricher: args.authEnricher } : {}),
+    ...(args.operatorUserId ? { operatorUserId: args.operatorUserId } : {}),
   };
   const results = await refreshSubMcpToolCache(refreshArgs);
 

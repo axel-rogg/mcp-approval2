@@ -49,6 +49,8 @@ export interface AdminGatewayRouteDeps {
   readonly config: Pick<AppConfig, 'JWT_SECRET' | 'JWT_ISSUER'>;
   /** Override fuer Tests. */
   readonly fetchImpl?: typeof fetch;
+  /** OAuth-Bearer-Enricher fuer Sub-MCP-Discovery (GitHub etc.). */
+  readonly authEnricher?: import('../../services/sub-mcp-auth-enricher.js').SubMcpAuthEnricher;
 }
 
 export function adminGatewayRoutes(deps: AdminGatewayRouteDeps): Hono<AppBindings> {
@@ -61,6 +63,10 @@ export function adminGatewayRoutes(deps: AdminGatewayRouteDeps): Hono<AppBinding
     zValidator('json', RediscoverBody.optional()),
     async (c) => {
       const body = (c.req.valid('json') ?? {}) as { name?: string };
+      // operatorUserId = der admin-User der den Refresh triggert. Sein
+      // _oauth_refresh_token wird vom Enricher fuer OAuth-Server (github
+      // etc.) genommen. utils/gws/gcloud bleiben unaffected.
+      const principal = c.get('user');
       const applyArgs: Parameters<typeof applyGatewayDiscovery>[0] = {
         registry: deps.registry,
         toolRegistry: deps.toolRegistry,
@@ -69,6 +75,8 @@ export function adminGatewayRoutes(deps: AdminGatewayRouteDeps): Hono<AppBinding
         config: deps.config,
         ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
         ...(body.name ? { only: [body.name] } : {}),
+        ...(deps.authEnricher ? { authEnricher: deps.authEnricher } : {}),
+        ...(principal?.userId ? { operatorUserId: principal.userId } : {}),
       };
       try {
         const out = await applyGatewayDiscovery(applyArgs);

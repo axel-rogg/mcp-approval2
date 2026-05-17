@@ -675,6 +675,7 @@ export async function createApp(
       forwarder: subMcpForwarder,
       cache: subMcpWrappersCache,
       config: server.config,
+      ...(subMcpAuthEnricher ? { authEnricher: subMcpAuthEnricher } : {}),
     }),
   );
 

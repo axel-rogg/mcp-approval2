@@ -34,6 +34,19 @@ export interface RefreshToolCacheArgs {
    * Useful fuer admin-getriggerte single-server refreshes.
    */
   readonly only?: ReadonlyArray<string>;
+  /**
+   * Optional: Auth-Enricher fuer OAuth-basierte Sub-MCPs (GitHub etc.).
+   * Wenn gesetzt + operatorUserId vorhanden, fragt Discovery den Enricher
+   * nach Authorization-Headern pro Server. Ohne Enricher faellt sie auf
+   * statisches `cfg.serviceToken` zurueck (Default fuer utils/gws/gcloud).
+   */
+  readonly authEnricher?: import('../../services/sub-mcp-auth-enricher.js').SubMcpAuthEnricher;
+  /**
+   * User-ID dessen Refresh-Token fuer OAuth-Discovery genommen wird.
+   * Solo-Pilot: erster authorisierter User. Multi-User-Cron: kann pro
+   * Tick rotieren oder einen designated operator nehmen.
+   */
+  readonly operatorUserId?: string;
 }
 
 export interface DiscoveryResult {
@@ -62,7 +75,24 @@ export async function refreshSubMcpToolCache(args: RefreshToolCacheArgs): Promis
   const results: DiscoveryResult[] = [];
   for (const cfg of filtered) {
     try {
-      const { tools, meta } = await fetchToolsListWithMeta(cfg, fetchImpl, timeoutMs);
+      // OAuth-aware Discovery: wenn ein Enricher uebergeben wurde + ein
+      // operatorUserId, schiesse den Enricher per-Server und uebergib die
+      // Headers an fetchToolsList. Bei utils/gcloud/gws bleibt es beim
+      // statischen cfg.serviceToken-Pfad (Enricher returnt {} fuer 'none').
+      let extraHeaders: Record<string, string> | undefined;
+      if (args.authEnricher && args.operatorUserId) {
+        try {
+          extraHeaders = await args.authEnricher.enrich({
+            userId: args.operatorUserId,
+            subMcpName: cfg.name,
+          });
+        } catch {
+          // Enricher-Fail (z.B. refresh-token revoked) ist non-fatal —
+          // wir versuchen es ohne und lassen tools/list 401-en damit der
+          // Error-Status korrekt im Audit landet.
+        }
+      }
+      const { tools, meta } = await fetchToolsListWithMeta(cfg, fetchImpl, timeoutMs, extraHeaders);
       await args.registry.updateToolsCache(cfg.id, tools);
       // Phase 2 (PLAN-per-user-server-store): _meta.config_fields + oauth
       // wird in sub_mcp_servers.config_schema gespeichert. updateConfigSchema
@@ -97,14 +127,16 @@ async function fetchToolsListWithMeta(
   cfg: SubMcpServerConfig,
   fetchImpl: typeof fetch,
   timeoutMs: number,
+  extraHeaders?: Record<string, string>,
 ): Promise<FetchToolsResult> {
-  return fetchToolsList(cfg, fetchImpl, timeoutMs);
+  return fetchToolsList(cfg, fetchImpl, timeoutMs, extraHeaders);
 }
 
 async function fetchToolsList(
   cfg: SubMcpServerConfig,
   fetchImpl: typeof fetch,
   timeoutMs: number,
+  extraHeaders?: Record<string, string>,
 ): Promise<FetchToolsResult> {
   const headers: Record<string, string> = {
     'content-type': 'application/json',
@@ -112,6 +144,13 @@ async function fetchToolsList(
   };
   if (cfg.serviceToken) {
     headers['authorization'] = `Bearer ${cfg.serviceToken}`;
+  }
+  // Enricher-Headers ueberschreiben die statischen — OAuth-Bearer-
+  // Authorization gewinnt gegen leeren cfg.serviceToken.
+  if (extraHeaders) {
+    for (const [k, v] of Object.entries(extraHeaders)) {
+      headers[k.toLowerCase()] = v;
+    }
   }
 
   const controller = new AbortController();
