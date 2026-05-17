@@ -291,24 +291,148 @@ export async function renderServerConfig(
 
   main.appendChild(cfgSection);
 
-  // --- Section: OAuth (Phase 3 placeholder)
+  // --- Section: OAuth (Phase 3)
   if (schema.oauth) {
     const oauthSection = document.createElement('section');
     oauthSection.className = 'card';
     const oauthTitle = document.createElement('h2');
-    oauthTitle.textContent = 'OAuth';
+    oauthTitle.textContent = 'OAuth-Authorisierung';
     oauthSection.appendChild(oauthTitle);
+
     const oauthDesc = document.createElement('p');
     oauthDesc.className = 'muted small';
     oauthDesc.textContent = `Provider: ${schema.oauth.provider ?? '—'} · Modus: ${schema.oauth.kind ?? 'pre'} · Scopes: ${(schema.oauth.scopes ?? []).join(', ') || '—'}`;
     oauthSection.appendChild(oauthDesc);
-    const oauthHint = document.createElement('p');
-    oauthHint.className = 'muted small';
-    oauthHint.textContent =
-      'OAuth-Authorize-Flow folgt in Phase 3. Du kannst aktuell deinen ' +
-      'OAuth-Refresh-Token manuell via "_oauth_refresh_token"-Config-Feld ' +
-      'oberhalb eintragen (Setup-URL: siehe Hinweis oben).';
-    oauthSection.appendChild(oauthHint);
+
+    // Status: refresh_token vorhanden?
+    const hasToken = !!cfgValues?.fields['_oauth_refresh_token'];
+    const statusRow = document.createElement('p');
+    if (hasToken) {
+      statusRow.className = 'ok small';
+      statusRow.textContent = '✓ Authorisiert — Refresh-Token gespeichert (KMS-encrypted).';
+    } else {
+      statusRow.className = 'muted small';
+      statusRow.textContent = '⚠ Noch nicht authorisiert. Trage zuerst _oauth_client_id (und ggf. _oauth_client_secret) oberhalb ein, dann starte den Authorize-Flow.';
+    }
+    oauthSection.appendChild(statusRow);
+
+    const authorizeBtn = document.createElement('button');
+    authorizeBtn.type = 'button';
+    authorizeBtn.className = 'btn btn-primary btn-small';
+    authorizeBtn.textContent = hasToken ? 'Re-Authorisieren' : 'OAuth starten';
+    const authorizeStatus = document.createElement('span');
+    authorizeStatus.className = 'muted small';
+    authorizeStatus.style.marginLeft = '0.5rem';
+
+    authorizeBtn.addEventListener('click', async () => {
+      authorizeBtn.disabled = true;
+      authorizeStatus.className = 'muted small';
+      authorizeStatus.textContent = 'Starte OAuth…';
+      try {
+        const redirectUri = `${window.location.origin}/#/tools/servers/${encodeURIComponent(serverName)}/oauth/callback`;
+        const result = await api.startServerOAuth(serverName, redirectUri);
+        // Pre-Save: SessionStorage damit der Callback-Route den state matchen kann
+        sessionStorage.setItem(`oauth_state_${serverName}`, result.state);
+        window.location.href = result.authorizeUrl;
+      } catch (err) {
+        authorizeBtn.disabled = false;
+        if (err instanceof ApiError && err.status === 401) {
+          renderSessionExpired(root);
+          return;
+        }
+        authorizeStatus.className = 'err small';
+        authorizeStatus.textContent = `Fehler: ${(err as Error).message}`;
+      }
+    });
+
+    const oauthActions = document.createElement('div');
+    oauthActions.className = 'row';
+    oauthActions.style.marginTop = '0.5rem';
+    oauthActions.appendChild(authorizeBtn);
+    oauthActions.appendChild(authorizeStatus);
+    oauthSection.appendChild(oauthActions);
+
+    if (schema.oauth.help_url) {
+      const helpRow = document.createElement('p');
+      helpRow.className = 'muted small';
+      helpRow.style.marginTop = '0.5rem';
+      helpRow.textContent = `Setup-Hinweis: ${schema.oauth.help_url}`;
+      oauthSection.appendChild(helpRow);
+    }
+
     main.appendChild(oauthSection);
+  }
+}
+
+/**
+ * Callback-Page fuer OAuth-Redirect zurueck von Provider.
+ * URL: #/tools/servers/<name>/oauth/callback?state=...&code=...
+ */
+export async function renderServerOAuthCallback(
+  root: HTMLElement,
+  api: ApiClient,
+  session: Session,
+  serverName: string,
+): Promise<void> {
+  root.replaceChildren();
+  renderHeader(root, session, () => void logout(api));
+
+  const main = document.createElement('main');
+  main.className = 'server-config';
+
+  const h1 = document.createElement('h1');
+  h1.textContent = `OAuth-Callback: ${serverName}`;
+  main.appendChild(h1);
+
+  const status = document.createElement('p');
+  status.className = 'muted';
+  status.textContent = 'Verarbeite OAuth-Antwort…';
+  main.appendChild(status);
+  root.appendChild(main);
+
+  // Parse state + code aus dem Hash-Query
+  const hash = window.location.hash;
+  const qIdx = hash.indexOf('?');
+  if (qIdx < 0) {
+    status.className = 'err';
+    status.textContent = 'Fehler: keine Query-Parameter im Callback-URL.';
+    return;
+  }
+  const params = new URLSearchParams(hash.slice(qIdx + 1));
+  const state = params.get('state');
+  const code = params.get('code');
+  const error = params.get('error');
+  if (error) {
+    status.className = 'err';
+    status.textContent = `OAuth-Provider hat abgelehnt: ${error}`;
+    return;
+  }
+  if (!state || !code) {
+    status.className = 'err';
+    status.textContent = 'Fehler: state oder code fehlt.';
+    return;
+  }
+  const expectedState = sessionStorage.getItem(`oauth_state_${serverName}`);
+  if (expectedState && expectedState !== state) {
+    status.className = 'err';
+    status.textContent = 'CSRF-Verdacht: state stimmt nicht mit dem gespeicherten Wert ueberein.';
+    return;
+  }
+
+  try {
+    await api.completeServerOAuth(serverName, state, code);
+    sessionStorage.removeItem(`oauth_state_${serverName}`);
+    status.className = 'ok';
+    status.textContent = '✓ Authorisierung erfolgreich. Du wirst weitergeleitet…';
+    setTimeout(() => {
+      window.location.hash = `#/tools/servers/${encodeURIComponent(serverName)}/config`;
+    }, 1500);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) {
+      renderSessionExpired(root);
+      return;
+    }
+    status.className = 'err';
+    status.textContent = `Authorisierung fehlgeschlagen: ${(err as Error).message}`;
   }
 }

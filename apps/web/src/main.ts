@@ -42,7 +42,7 @@ import { renderDefaultsTab } from './defaults-tab.js';
 import { renderWritemodeTab } from './writemode-tab.js';
 import { renderSettings } from './settings-tab.js';
 import { renderToolsTab } from './tools-tab.js';
-import { renderServerConfig } from './server-config.js';
+import { renderServerConfig, renderServerOAuthCallback } from './server-config.js';
 import { renderAdminTab } from './admin-tab.js';
 import { subscribePush } from './push.js';
 import { renderDebugLog, debug } from './debug-log.js';
@@ -80,6 +80,7 @@ type Route =
   | 'apps-detail'
   | 'tools'
   | 'tools-server-config'
+  | 'tools-server-oauth-callback'
   | 'writemode'
   | 'admin'
   | 'debug';
@@ -100,6 +101,10 @@ function parseRoute(): Route {
   }
   if (hash.startsWith('admin')) return 'admin';
   if (hash.startsWith('settings')) return 'settings';
+  // #/tools/servers/<name>/oauth/callback?state=...&code=... (Phase 3)
+  if (/^tools\/servers\/[^/?]+\/oauth\/callback/.test(hash)) {
+    return 'tools-server-oauth-callback';
+  }
   // #/tools/servers/<name>/config — Per-Server-Config-Drawer (Phase 2)
   if (/^tools\/servers\/[^/?]+\/config/.test(hash)) return 'tools-server-config';
   if (hash.startsWith('tools')) return 'tools';
@@ -152,9 +157,9 @@ function parseStorageDetailId(): string | null {
 }
 
 function parseServerConfigName(): string | null {
-  // hash form: '#/tools/servers/<name>/config'
+  // hash form: '#/tools/servers/<name>/config' or '#/tools/servers/<name>/oauth/callback'
   const hash = window.location.hash;
-  const m = hash.match(/^#\/tools\/servers\/([^/?]+)\/config/);
+  const m = hash.match(/^#\/tools\/servers\/([^/?]+)\/(?:config|oauth)/);
   if (!m || !m[1]) return null;
   try {
     return decodeURIComponent(m[1]);
@@ -214,6 +219,15 @@ async function boot(): Promise<void> {
         return;
       }
       await renderServerConfigSafe(root, session, name);
+      return;
+    }
+    case 'tools-server-oauth-callback': {
+      const name = parseServerConfigName();
+      if (!name) {
+        window.location.hash = '#/tools/servers';
+        return;
+      }
+      await renderServerOAuthCallbackSafe(root, session, name);
       return;
     }
     case 'admin':
@@ -372,6 +386,19 @@ async function renderServerConfigSafe(
     await renderServerConfig(root, api, s, serverName);
   } catch (err) {
     console.error('server-config render failed', err);
+    renderSessionExpired(root);
+  }
+}
+
+async function renderServerOAuthCallbackSafe(
+  root: HTMLElement,
+  s: Session,
+  serverName: string,
+): Promise<void> {
+  try {
+    await renderServerOAuthCallback(root, api, s, serverName);
+  } catch (err) {
+    console.error('server-oauth-callback render failed', err);
     renderSessionExpired(root);
   }
 }

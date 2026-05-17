@@ -65,6 +65,7 @@ import { inventoryRoutes } from './routes/inventory.js';
 import { myServersRoutes } from './routes/me/servers.js';
 import { createUserSubscriptionsService } from './services/user-subscriptions.js';
 import { createUserServerConfigService } from './services/user-server-config.js';
+import { createUserServerOAuthService } from './services/user-server-oauth.js';
 import { gdprRoutes } from './routes/gdpr.js';
 import { approvalsRoutes } from './routes/approvals.js';
 import { createApprovalAssertionVerifier } from './auth/webauthn/approval-verify.js';
@@ -743,6 +744,14 @@ export async function createApp(
         kekProvider: deps.kekProvider,
       })
     : undefined;
+  // Phase 3: OAuth-Authorize-Flow. Braucht configSvc + Sub-MCP-Registry.
+  const userServerOAuthService = userServerConfigService
+    ? createUserServerOAuthService({
+        db: server.db,
+        registry: subMcpReg,
+        config: userServerConfigService,
+      })
+    : undefined;
 
   app.route(
     '/',
@@ -773,6 +782,7 @@ export async function createApp(
       registry: subMcpReg,
       subscriptions: userSubscriptionsService,
       ...(userServerConfigService ? { config: userServerConfigService } : {}),
+      ...(userServerOAuthService ? { oauth: userServerOAuthService } : {}),
     }),
   );
 

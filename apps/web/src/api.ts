@@ -148,6 +148,10 @@ export interface ApiClient {
   setServerConfig(name: string, key: string, value: string): Promise<void>;
   /** Phase 2: DELETE /v1/me/servers/:name/config/:key */
   deleteServerConfig(name: string, key: string): Promise<void>;
+  /** Phase 3: OAuth-Authorize start (pre-registered). */
+  startServerOAuth(name: string, redirectUri: string): Promise<{ authorizeUrl: string; state: string }>;
+  /** Phase 3: OAuth-Callback (state + code aus dem Provider-Redirect). */
+  completeServerOAuth(name: string, state: string, code: string): Promise<void>;
 
   // Credentials
   listCredentials(): Promise<CredentialMeta[]>;
@@ -424,6 +428,20 @@ export function createApiClient(baseUrl?: string): ApiClient {
       await request<void>(
         `/v1/me/servers/${encodeURIComponent(name)}/config/${encodeURIComponent(key)}`,
         { method: 'DELETE' },
+      );
+    },
+
+    async startServerOAuth(name: string, redirectUri: string) {
+      return await request<{ authorizeUrl: string; state: string }>(
+        `/v1/me/servers/${encodeURIComponent(name)}/oauth/start`,
+        { method: 'POST', body: { redirectUri } },
+      );
+    },
+
+    async completeServerOAuth(name: string, state: string, code: string) {
+      await request<void>(
+        `/v1/me/servers/${encodeURIComponent(name)}/oauth/callback`,
+        { method: 'POST', body: { state, code } },
       );
     },
 

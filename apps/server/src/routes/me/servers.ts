@@ -23,6 +23,7 @@ import { auth } from '../../middleware/auth.js';
 import type { SubMcpRegistry } from '../../mcp/gateway/registry.js';
 import type { UserSubscriptionsService } from '../../services/user-subscriptions.js';
 import type { UserServerConfigService } from '../../services/user-server-config.js';
+import type { UserServerOAuthService } from '../../services/user-server-oauth.js';
 
 export interface MyServersRouteDeps {
   readonly server: ServerContext;
@@ -33,6 +34,11 @@ export interface MyServersRouteDeps {
    * config-Endpoints nicht verfuegbar (404).
    */
   readonly config?: UserServerConfigService;
+  /**
+   * OAuth-Authorize-Flow (Phase 3). Wenn nicht gesetzt, sind oauth/start +
+   * oauth/callback nicht verfuegbar.
+   */
+  readonly oauth?: UserServerOAuthService;
 }
 
 interface MyServerEntry {
@@ -209,6 +215,56 @@ export function myServersRoutes(deps: MyServersRouteDeps): Hono<AppBindings> {
       await cfgSvc.delete(user.userId, name, key);
       return c.body(null, 204);
     });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Phase 3: OAuth-Authorize-Flow (pre-registered)
+  // ─────────────────────────────────────────────────────────────────────
+  // POST /v1/me/servers/:name/oauth/start    → { authorizeUrl, state }
+  // POST /v1/me/servers/:name/oauth/callback → 204
+  if (deps.oauth) {
+    const oauthSvc = deps.oauth;
+
+    const OAuthStartBody = z
+      .object({
+        redirectUri: z.string().url(),
+      })
+      .strict();
+
+    const OAuthCallbackBody = z
+      .object({
+        state: z.string().min(8).max(256),
+        code: z.string().min(1).max(2048),
+      })
+      .strict();
+
+    app.post(
+      '/v1/me/servers/:name/oauth/start',
+      guard,
+      zValidator('json', OAuthStartBody),
+      async (c) => {
+        const user = c.get('user');
+        if (!user) throw HttpError.unauthorized('authentication required');
+        const name = c.req.param('name');
+        const body = c.req.valid('json');
+        const result = await oauthSvc.start(user.userId, name, body.redirectUri);
+        return c.json(result);
+      },
+    );
+
+    app.post(
+      '/v1/me/servers/:name/oauth/callback',
+      guard,
+      zValidator('json', OAuthCallbackBody),
+      async (c) => {
+        const user = c.get('user');
+        if (!user) throw HttpError.unauthorized('authentication required');
+        const name = c.req.param('name');
+        const body = c.req.valid('json');
+        await oauthSvc.callback(user.userId, name, body.state, body.code);
+        return c.body(null, 204);
+      },
+    );
   }
 
   return app;
