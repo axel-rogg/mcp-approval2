@@ -150,12 +150,23 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
     // body_b64 nur wenn expand=body — daher Param durchreichen.
     const expandParam = c.req.query('expand') ?? '';
     const expandBody = expandParam.split(',').includes('body');
+    // PLAN-document-linking §10.5 D1: refs_limit (0..50, default KC2=5).
+    const refsLimitRaw = c.req.query('refs_limit');
+    let refsLimit: number | undefined;
+    if (refsLimitRaw !== undefined) {
+      const n = Number.parseInt(refsLimitRaw, 10);
+      if (!Number.isFinite(n) || n < 0 || n > 50) {
+        throw HttpError.badRequest('invalid_request', 'refs_limit must be 0..50');
+      }
+      refsLimit = n;
+    }
     const obj = await runProxy(() =>
       deps.knowledge.getObject({
         id,
         userId: user.userId,
         userEmail: user.userEmail,
         expandBody,
+        ...(refsLimit !== undefined ? { refsLimit } : {}),
       }),
     );
     // KC2 antwortet mit `body_b64`. PWA erwartet `body` + `bodyEncoding`.

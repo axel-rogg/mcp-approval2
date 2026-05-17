@@ -46,6 +46,11 @@ export interface KnowledgeObject {
   readonly pinned: boolean;
   readonly archived: boolean;
   readonly refcount: number;
+  /**
+   * PLAN-document-linking §10.5 D2: true wenn ≥1 incoming `object_refs(role='resource')`
+   * existiert. Cached column auf KC2-Seite — kein Extra-Query nötig.
+   */
+  readonly isSubdoc?: boolean;
   readonly currentVersion: number;
   readonly createdAt: number;
   readonly updatedAt: number;
@@ -61,6 +66,41 @@ export interface KnowledgeObject {
    * UTF-8-String reingesetzt hat. Downstream-Renderer entscheidet anhand.
    */
   readonly bodyEncoding?: 'utf8' | 'base64';
+  /**
+   * PLAN-document-linking §10.5 D1: Knowledge-Graph-Refs werden bei jedem
+   * `getObject`-Aufruf mit ausgeliefert (Default-Cap 5 outgoing + 5 incoming).
+   * `refsLimit=0` in `getObject` suppress'd den Block — dann undefined.
+   */
+  readonly refs?: KnowledgeObjectRefs;
+}
+
+/**
+ * RefView — denormalised representation of a `object_refs`-Row. Title +
+ * Summary kommen via INNER-JOIN aus dem Target/Source-Object, sodass der
+ * Agent keine zweite `objects.get`-Roundtrip braucht um zu entscheiden ob
+ * ein Ref relevant ist.
+ *
+ * `uri` ist der `kc://object/<uuid>` Identifier — wandert ins MCP
+ * `resource_link.uri`-Feld und in PWA-`#/storage/<uuid>`-Routen.
+ *
+ * PLAN-Ref: PLAN-document-linking §3.2, §10.5 D1.
+ */
+export interface RefView {
+  readonly role: string;
+  readonly id: string;
+  readonly subtype: string | null;
+  readonly title: string | null;
+  readonly summary: string | null;
+  readonly uri: string;
+}
+
+export interface KnowledgeObjectRefs {
+  readonly outgoing: ReadonlyArray<RefView>;
+  readonly incoming: ReadonlyArray<RefView>;
+  readonly truncated: {
+    readonly outgoing: boolean;
+    readonly incoming: boolean;
+  };
 }
 
 export interface CreateObjectArgs {

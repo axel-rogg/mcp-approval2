@@ -441,6 +441,81 @@ describe('HttpKnowledgeAdapter — getObject (D-11)', () => {
     const obj = await adapter.getObject({ id: 'o1', userId: USER_ID });
     expect(obj.body).toBeUndefined();
   });
+
+  // ─── PLAN-document-linking §10.5 D1: refs roundtrip ───────────────────
+  it('sends ?refs_limit=N when refsLimit provided', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, defaultObjectView()),
+    );
+    const adapter = makeAdapter({ fetchImpl: fetchMock });
+    await adapter.getObject({ id: 'o1', userId: USER_ID, refsLimit: 3 });
+    const [url] = fetchMock.mock.calls[0] ?? [];
+    const u = new URL(String(url));
+    expect(u.searchParams.get('refs_limit')).toBe('3');
+  });
+
+  it('sends ?refs_limit=0 to suppress refs', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, defaultObjectView()),
+    );
+    const adapter = makeAdapter({ fetchImpl: fetchMock });
+    await adapter.getObject({ id: 'o1', userId: USER_ID, refsLimit: 0 });
+    const [url] = fetchMock.mock.calls[0] ?? [];
+    const u = new URL(String(url));
+    expect(u.searchParams.get('refs_limit')).toBe('0');
+  });
+
+  it('omits refs_limit param when refsLimit undefined (KC2-default 5 applies)', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, defaultObjectView()),
+    );
+    const adapter = makeAdapter({ fetchImpl: fetchMock });
+    await adapter.getObject({ id: 'o1', userId: USER_ID });
+    const [url] = fetchMock.mock.calls[0] ?? [];
+    const u = new URL(String(url));
+    expect(u.searchParams.get('refs_limit')).toBeNull();
+  });
+
+  it('passes through refs structure from KC2 response (Wire-Format-Snapshot)', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, {
+        ...defaultObjectView(),
+        refs: {
+          outgoing: [
+            {
+              role: 'resource',
+              id: '01J11111-1111-1111-1111-111111111111',
+              subtype: 'doc',
+              title: 'API-Reference',
+              summary: 'pdfplumber + PyPDF2 API',
+              uri: 'kc://object/01J11111-1111-1111-1111-111111111111',
+            },
+          ],
+          incoming: [],
+          truncated: { outgoing: false, incoming: false },
+        },
+      }),
+    );
+    const adapter = makeAdapter({ fetchImpl: fetchMock });
+    const obj = await adapter.getObject({ id: 'o1', userId: USER_ID });
+    expect(obj.refs).toBeDefined();
+    expect(obj.refs?.outgoing).toHaveLength(1);
+    expect(obj.refs?.outgoing[0]?.role).toBe('resource');
+    expect(obj.refs?.outgoing[0]?.uri).toBe(
+      'kc://object/01J11111-1111-1111-1111-111111111111',
+    );
+    expect(obj.refs?.outgoing[0]?.summary).toBe('pdfplumber + PyPDF2 API');
+    expect(obj.refs?.truncated.outgoing).toBe(false);
+  });
+
+  it('isSubdoc passes through from KC2 response', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, { ...defaultObjectView(), isSubdoc: true }),
+    );
+    const adapter = makeAdapter({ fetchImpl: fetchMock });
+    const obj = await adapter.getObject({ id: 'o1', userId: USER_ID });
+    expect(obj.isSubdoc).toBe(true);
+  });
 });
 
 describe('HttpKnowledgeAdapter — listObjects (D-4 + D-5)', () => {

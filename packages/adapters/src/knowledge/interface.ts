@@ -59,6 +59,13 @@ export interface GetObjectArgs extends OnBehalfOfFields {
    * `false` → nur Metadata.
    */
   readonly expandBody?: boolean;
+  /**
+   * PLAN-document-linking §10.5 D1: Cap auf eingebettete Knowledge-Graph-Refs.
+   *   undefined → KC2-Default (5)
+   *   0         → suppress'd (kein refs-Block in der Response)
+   *   1..50     → cap auf N pro Direction (outgoing + incoming)
+   */
+  readonly refsLimit?: number;
 }
 
 export interface ListObjectsArgs extends OnBehalfOfFields {

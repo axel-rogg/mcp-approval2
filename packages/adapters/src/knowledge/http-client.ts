@@ -416,8 +416,11 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
   async getObject(args: GetObjectArgs): Promise<KnowledgeObject> {
     // D-11: optional ?expand=body → server returnt body_b64. Wir mappen das
     // hier in das `body`-Field der KnowledgeObject.
+    // PLAN-document-linking §10.5 D1: optional refs_limit → wandert als
+    // Query-Param durch zu KC2. undefined = KC2-Default, 0 = suppress.
     const query: Record<string, string | number | undefined> = {};
     if (args.expandBody) query['expand'] = 'body';
+    if (args.refsLimit !== undefined) query['refs_limit'] = args.refsLimit;
     const raw = await this.authedFetch<KnowledgeObject & { body_b64?: string | null }>({
       method: 'GET',
       path: `/v1/objects/${encodeURIComponent(args.id)}`,
