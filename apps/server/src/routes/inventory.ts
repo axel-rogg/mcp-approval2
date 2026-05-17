@@ -317,9 +317,14 @@ export function inventoryRoutes(deps: InventoryRouteDeps): Hono<AppBindings> {
     // KC2-Gateway FIRST bauen damit wir die effektive Exclude-Liste fuer
     // native haben (Pattern-basiert + kcWrappersCache-Union).
     const { gateway: knowledge2Entry, kcToolNames } = mapKnowledge2Gateway(registry, kc);
-    const native = mapNative(registry, kcToolNames);
+
+    // Sub-MCP-Gateways BEFORE native bauen damit wir alle Gateway-Tool-Namen
+    // (gws./gcloud./utils./...) aus dem native-Bucket ausschließen können.
+    // User-Bug 2026-05-17: gws.* etc. tauchten in "Native (mcp-approval2)"
+    // auf, obwohl sie zu ihren Gateway-Karten gehören. Root-Cause: forwarder-
+    // wrapper-tools sind in der Haupt-Registry registriert und in
+    // subMcpRegistry parallel — mapNative kannte nur KC2-Excludes.
     const allRaw = subMcpRegistry ? await subMcpRegistry.listAll() : [];
-    // Filter: catalog-defaults (owner NULL) ODER vom aktuellen User selbst.
     const allFiltered = allRaw.filter(
       (s) => s.ownerUserId === null || s.ownerUserId === user.userId,
     );
@@ -328,6 +333,14 @@ export function inventoryRoutes(deps: InventoryRouteDeps): Hono<AppBindings> {
           allFiltered.some((f) => f.name === g.name),
         )
       : [];
+
+    // Union aller Gateway-Tool-Namen für Native-Exclude.
+    const gatewayToolNames = new Set<string>();
+    for (const g of allSubMcpGateways) {
+      for (const t of g.tools) gatewayToolNames.add(t.name);
+    }
+    const nativeExcludes = new Set<string>([...kcToolNames, ...gatewayToolNames]);
+    const native = mapNative(registry, nativeExcludes);
 
     // Per-User-Subscription-Filter (Phase 1). Wenn subscriptions verkabelt:
     // - seed catalog-rows lazy beim first read
