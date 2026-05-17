@@ -1,18 +1,25 @@
 /**
  * Apps-Detail-View — single app with block rendering.
  *
- * Reads `/v1/apps/:id` (returns { app, state }). The state is a LayoutDoc
- * with `components[]` (Block-Instances) and a global `state{}` (DataModel
- * keyed by block-id).
+ * Optimistic-Update-Pattern (2026-05-17):
+ *   - Initial: GET /v1/apps/:id → render full layout
+ *   - Per Action:
+ *       1. POST /v1/apps/:id/invoke
+ *       2. Apply returned `patches` lokal auf cached layout-state
+ *       3. Re-render NUR den betroffenen Block (nicht den ganzen main-container)
+ *   - Full reload nur bei error (CONCURRENT_UPDATE, NetErr, etc.).
  *
- * Per Block:
- *   - Lookup renderer in registry by component.block
- *   - Pass block-state from layout.state[component.id]
- *   - onAction triggers POST /v1/apps/:id/invoke {block_id, action, payload}
- *   - After invoke, re-fetch + re-render (eventually-consistent UI)
+ * Vorteile: kein flicker, scroll-position bleibt, Eingabe-Felder in anderen
+ * Bloecken (z.B. text_field) verlieren ihren Wert nicht.
  */
 import { ApiError } from './api.js';
-import type { ApiAppsClient, AppRead, LayoutDoc } from './api-apps.js';
+import type {
+  ApiAppsClient,
+  AppInstance,
+  AppRead,
+  InvokeResult,
+  LayoutDoc,
+} from './api-apps.js';
 import { getRenderer } from './blocks/registry.js';
 import { el } from './blocks/types.js';
 
@@ -22,9 +29,6 @@ function isLayoutDoc(v: unknown): v is LayoutDoc {
   return Array.isArray(o['components']) && typeof o['state'] === 'object' && o['state'] !== null;
 }
 
-// App-Detail hat einen eigenen Topbar: keine globalen Tabs/Brand, stattdessen
-// "← Apps"-Back-Link + grosser App-Titel. Tech-Meta ('composable v1') wird
-// bewusst NICHT angezeigt — der User braucht keine Schema-Internals.
 function buildAppTopbar(): { host: HTMLElement; setTitle: (title: string) => void } {
   const titleEl = el('h1', { class: 'app-detail-title', text: '' });
   const host = el('header', { class: 'topbar app-detail-topbar' }, [
@@ -43,26 +47,87 @@ function renderEmptyLayout(): HTMLElement {
   return el('div', { class: 'card' }, [
     el('p', {
       class: 'muted',
-      text: 'This app has no layout components yet. Layout is usually set up via Claude/MCP.',
+      text: 'Diese App hat noch keine Layout-Components. Layout wird ueblicherweise vom AI-Agent gesetzt.',
     }),
   ]);
 }
 
+/**
+ * Apply JSON-Patch-like operation auf block-state. Patches sind block-relativ:
+ *   - path='/items'  → state['items'] = value
+ *   - path='/items/0/done' → state['items'][0]['done'] = value
+ *   - path='' or '/' → state ersetzt komplett (root-replace)
+ *
+ * Mutiert das Object in-place (caller hat die copy).
+ */
+function applyBlockPatches(
+  blockState: unknown,
+  patches: ReadonlyArray<{ readonly path: string; readonly value: unknown }>,
+): unknown {
+  // Wenn blockState noch nicht initialisiert ist (z.B. neuer block): start with empty object.
+  let state: Record<string, unknown> = (blockState && typeof blockState === 'object' && !Array.isArray(blockState))
+    ? { ...(blockState as Record<string, unknown>) }
+    : {};
+
+  for (const p of patches) {
+    const segs = p.path.split('/').filter(Boolean);
+    if (segs.length === 0) {
+      // Root-replace
+      state = (p.value && typeof p.value === 'object' && !Array.isArray(p.value))
+        ? { ...(p.value as Record<string, unknown>) }
+        : ({} as Record<string, unknown>);
+      continue;
+    }
+    // Walk to parent
+    let cursor: Record<string, unknown> | unknown[] = state;
+    for (let i = 0; i < segs.length - 1; i++) {
+      const k = segs[i]!;
+      const next = (cursor as Record<string, unknown>)[k];
+      if (next === undefined || next === null) {
+        // Auto-vivify: numeric next-key → array, sonst object
+        const nextSeg = segs[i + 1]!;
+        const created: unknown = /^\d+$/.test(nextSeg) ? [] : {};
+        (cursor as Record<string, unknown>)[k] = created;
+        cursor = created as Record<string, unknown> | unknown[];
+      } else {
+        cursor = next as Record<string, unknown> | unknown[];
+      }
+    }
+    const lastKey = segs[segs.length - 1]!;
+    if (Array.isArray(cursor) && /^\d+$/.test(lastKey)) {
+      (cursor as unknown[])[Number(lastKey)] = p.value;
+    } else {
+      (cursor as Record<string, unknown>)[lastKey] = p.value;
+    }
+  }
+  return state;
+}
+
+interface BlockContext {
+  readonly node: HTMLElement;
+  readonly blockType: string;
+  readonly config: Record<string, unknown>;
+}
+
+interface AppDetailContext {
+  readonly api: ApiAppsClient;
+  readonly appId: string;
+  layout: LayoutDoc;
+  app: AppInstance;
+  readonly blockNodes: Map<string, BlockContext>;
+  readonly mainContainer: HTMLElement;
+  fullReload: () => Promise<void>;
+}
+
 function renderBlock(
-  api: ApiAppsClient,
-  appId: string,
+  ctx: AppDetailContext,
   blockId: string,
   blockType: string,
   blockState: unknown,
   config: Record<string, unknown>,
-  reload: () => Promise<void>,
 ): HTMLElement | null {
   const renderer = getRenderer(blockType);
   if (!renderer) {
-    // Silent skip — Block-Type ist noch nicht im PWA-Renderer-Registry
-    // (z.B. neue Server-side Block-Defs die der Client noch nicht kennt).
-    // Server-side Validation hat den Block akzeptiert, aber wir koennen
-    // ihn lokal nicht zeichnen. Console-Hinweis fuer Devs.
     console.warn('apps-detail: renderer missing for block', { blockId, blockType });
     return null;
   }
@@ -71,19 +136,40 @@ function renderBlock(
     action: string,
     payload?: Record<string, unknown>,
   ): Promise<void> => {
+    let res: InvokeResult;
     try {
-      await api.invoke({
-        id: appId,
+      res = await ctx.api.invoke({
+        id: ctx.appId,
         block_id: blockId,
         action,
         payload: payload ?? {},
       });
-      await reload();
     } catch (err) {
       const msg = err instanceof ApiError ? `${err.code}: ${err.message}` : String(err);
       console.error('invoke failed', { blockId, action, err });
-      // surface to the user; non-blocking
       alert('Action failed: ' + msg);
+      return;
+    }
+
+    // Optimistic-Update: patches sind block-relativ. Wir mutieren den cached
+    // layout-state und re-rendern NUR den affected block.
+    const oldState = (ctx.layout.state as Record<string, unknown>)[blockId];
+    const newState = applyBlockPatches(oldState, res.patches);
+    (ctx.layout.state as Record<string, unknown>)[blockId] = newState;
+    ctx.app = res.app;
+
+    // Re-render nur diesen block.
+    const bc = ctx.blockNodes.get(blockId);
+    if (bc) {
+      const fresh = buildBlockNode(ctx, blockId, bc.blockType, newState, bc.config);
+      if (fresh) {
+        bc.node.replaceWith(fresh);
+        ctx.blockNodes.set(blockId, {
+          node: fresh,
+          blockType: bc.blockType,
+          config: bc.config,
+        });
+      }
     }
   };
 
@@ -101,11 +187,21 @@ function renderBlock(
     wrap.appendChild(
       el('p', {
         class: 'err',
-        text: `Renderer for "${blockType}" failed: ${e instanceof Error ? e.message : String(e)}`,
+        text: `Renderer fuer "${blockType}" fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`,
       }),
     );
   }
   return wrap;
+}
+
+function buildBlockNode(
+  ctx: AppDetailContext,
+  blockId: string,
+  blockType: string,
+  blockState: unknown,
+  config: Record<string, unknown>,
+): HTMLElement | null {
+  return renderBlock(ctx, blockId, blockType, blockState, config);
 }
 
 export async function renderAppDetail(
@@ -117,8 +213,20 @@ export async function renderAppDetail(
   const { host: topbarHost, setTitle } = buildAppTopbar();
   root.replaceChildren(topbarHost, main);
 
-  async function reload(): Promise<void> {
+  // Context wird beim ersten reload populiert.
+  const ctx: AppDetailContext = {
+    api,
+    appId,
+    layout: { version: 'v0.10', components: [], state: {} } as LayoutDoc,
+    app: null as unknown as AppInstance,
+    blockNodes: new Map(),
+    mainContainer: main,
+    fullReload: async () => {},
+  };
+
+  async function fullReload(): Promise<void> {
     main.replaceChildren(el('p', { class: 'muted', text: 'Lade App…' }));
+    ctx.blockNodes.clear();
     let read: AppRead;
     try {
       read = await api.getApp(appId);
@@ -134,24 +242,29 @@ export async function renderAppDetail(
     }
 
     setTitle(read.app.title || read.app.id);
+    ctx.app = read.app;
     main.replaceChildren();
 
     if (!isLayoutDoc(read.state)) {
       main.appendChild(renderEmptyLayout());
       return;
     }
-    const layout = read.state;
-    if (layout.components.length === 0) {
+    ctx.layout = read.state;
+    if (ctx.layout.components.length === 0) {
       main.appendChild(renderEmptyLayout());
       return;
     }
-    for (const comp of layout.components) {
-      const blockState = (layout.state as Record<string, unknown>)[comp.id];
+    for (const comp of ctx.layout.components) {
+      const blockState = (ctx.layout.state as Record<string, unknown>)[comp.id];
       const config = comp.config ?? {};
-      const node = renderBlock(api, appId, comp.id, comp.block, blockState, config, reload);
-      if (node) main.appendChild(node);
+      const node = buildBlockNode(ctx, comp.id, comp.block, blockState, config);
+      if (node) {
+        main.appendChild(node);
+        ctx.blockNodes.set(comp.id, { node, blockType: comp.block, config });
+      }
     }
   }
 
-  await reload();
+  ctx.fullReload = fullReload;
+  await fullReload();
 }
