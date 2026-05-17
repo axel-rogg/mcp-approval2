@@ -231,24 +231,333 @@ async function renderOverviewTab(
   body.appendChild(actions);
 }
 
-function renderAuthTabPlaceholder(body: HTMLElement, serverName: string): void {
+interface OAuthMeta {
+  readonly provider?: string;
+  readonly kind?: 'pre' | 'dcr';
+  readonly scopes?: ReadonlyArray<string>;
+  readonly help_url?: string;
+}
+
+interface ConfigSchemaMeta {
+  readonly oauth?: OAuthMeta;
+  readonly auth_mode?: 'service_bearer' | 'oauth' | 'api_token';
+}
+
+type AuthMode = 'service_bearer' | 'oauth' | 'api_token' | 'none';
+
+function detectAuthMode(gw: InventoryGateway | null): { mode: AuthMode; oauth?: OAuthMeta } {
+  if (!gw) return { mode: 'none' };
+  const schema = (gw.configSchema as ConfigSchemaMeta | undefined) ?? {};
+  if (schema.oauth) return { mode: 'oauth', oauth: schema.oauth };
+  if (schema.auth_mode === 'api_token') return { mode: 'api_token' };
+  if (schema.auth_mode === 'service_bearer') return { mode: 'service_bearer' };
+  // Defaults: requires_credential mit kind=oauth_refresh → oauth.
+  const oauthReq = gw.requiredCredentials?.find((r) => r.kind === 'oauth_refresh');
+  if (oauthReq) {
+    return { mode: 'oauth', oauth: { provider: oauthReq.provider, kind: 'pre' } };
+  }
+  return { mode: 'service_bearer' };
+}
+
+async function renderAuthTab(
+  body: HTMLElement,
+  api: ApiClient,
+  serverName: string,
+  gw: InventoryGateway | null,
+): Promise<void> {
+  const { mode, oauth } = detectAuthMode(gw);
   const card = document.createElement('section');
   card.className = 'card server-detail-section';
+
   const h = document.createElement('h2');
-  h.textContent = 'Auth-Setup';
+  h.textContent = 'Authentifizierung';
   card.appendChild(h);
-  const p = document.createElement('p');
-  p.className = 'muted';
-  p.textContent =
-    'Hier kannst du Tokens (Bearer, OAuth-Client-ID/Secret, API-Token) für diesen Server hinterlegen. ' +
-    'Phase C des UX-Refactors befüllt diesen Tab.';
-  card.appendChild(p);
-  const link = document.createElement('a');
-  link.href = `#/tools/servers/${encodeURIComponent(serverName)}/config`;
-  link.className = 'btn btn-secondary btn-small';
-  link.textContent = 'Bisherige Config-Drawer (Legacy) öffnen';
-  card.appendChild(link);
+
+  if (mode === 'none') {
+    const p = document.createElement('p');
+    p.className = 'muted';
+    p.textContent = 'Dieser Server ist nicht abonniert. Aktiviere ihn zuerst in der Übersicht.';
+    card.appendChild(p);
+    body.appendChild(card);
+    return;
+  }
+
+  const modeBadge = document.createElement('span');
+  modeBadge.className = 'pill';
+  modeBadge.textContent =
+    mode === 'oauth'
+      ? `OAuth 2.0${oauth?.provider ? ` · ${oauth.provider}` : ''}`
+      : mode === 'api_token'
+        ? 'API-Token (PAT)'
+        : 'Service-Bearer (Shared-Token)';
+  modeBadge.style.marginBottom = '0.6rem';
+  card.appendChild(modeBadge);
+
+  // Aktuelle Configs laden (mit 404 = leer)
+  let cfg: { fields: Record<string, { value: string; isSecret: boolean }> } | null = null;
+  try {
+    cfg = await api.getServerConfig(serverName);
+  } catch (err) {
+    if (!(err instanceof ApiError && err.status === 404)) {
+      const p = document.createElement('p');
+      p.className = 'err';
+      p.textContent = `Config laden fehlgeschlagen: ${(err as Error).message}`;
+      card.appendChild(p);
+      body.appendChild(card);
+      return;
+    }
+  }
+
+  if (mode === 'oauth') {
+    await renderOAuthFlow(card, api, serverName, cfg, oauth);
+  } else if (mode === 'api_token') {
+    renderTokenForm(card, api, serverName, cfg, '_api_token', 'API-Token / PAT');
+  } else {
+    renderTokenForm(card, api, serverName, cfg, '_service_token', 'Service-Token');
+  }
+
   body.appendChild(card);
+}
+
+function renderTokenForm(
+  card: HTMLElement,
+  api: ApiClient,
+  serverName: string,
+  cfg: { fields: Record<string, { value: string; isSecret: boolean }> } | null,
+  configKey: string,
+  label: string,
+): void {
+  const desc = document.createElement('p');
+  desc.className = 'muted small';
+  desc.textContent =
+    `Hinterlege den Token für ${serverName}. Wird KMS-encrypted gespeichert (AES-256-GCM, per-row DEK).`;
+  card.appendChild(desc);
+
+  const existing = cfg?.fields[configKey];
+  const form = document.createElement('form');
+  form.className = 'form';
+
+  const wrap = document.createElement('div');
+  wrap.className = 'field';
+  const lbl = document.createElement('label');
+  lbl.htmlFor = `tokenInput-${configKey}`;
+  lbl.textContent = label;
+  wrap.appendChild(lbl);
+  const input = document.createElement('input');
+  input.id = `tokenInput-${configKey}`;
+  input.type = 'password';
+  input.autocomplete = 'new-password';
+  input.placeholder = existing
+    ? '••••••• (gesetzt — neuer Wert ersetzt)'
+    : 'Token einfügen…';
+  wrap.appendChild(input);
+  form.appendChild(wrap);
+
+  if (existing) {
+    const note = document.createElement('p');
+    note.className = 'ok small';
+    note.textContent = '✓ Token bereits gesetzt.';
+    form.appendChild(note);
+  }
+
+  const row = document.createElement('div');
+  row.className = 'row form-actions';
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'submit';
+  saveBtn.className = 'btn btn-primary';
+  saveBtn.textContent = 'Speichern';
+  row.appendChild(saveBtn);
+  if (existing) {
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'btn btn-secondary btn-danger';
+    delBtn.textContent = 'Löschen';
+    delBtn.addEventListener('click', async () => {
+      if (!window.confirm('Token entfernen? Server-Forward bricht.')) return;
+      try {
+        await api.deleteServerConfig(serverName, configKey);
+        showToast('Token entfernt.', 'success');
+        // re-render parent
+        window.location.hash = `#/tools/servers/${encodeURIComponent(serverName)}/auth`;
+        window.location.reload();
+      } catch (err) {
+        showToast(`Fehler: ${(err as Error).message}`, 'error');
+      }
+    });
+    row.appendChild(delBtn);
+  }
+  const status = document.createElement('span');
+  status.className = 'muted small';
+  row.appendChild(status);
+  form.appendChild(row);
+
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    if (!input.value) {
+      status.textContent = 'Bitte Token eingeben.';
+      status.className = 'err small';
+      return;
+    }
+    saveBtn.disabled = true;
+    status.textContent = 'Speichere…';
+    status.className = 'muted small';
+    try {
+      await api.setServerConfig(serverName, configKey, input.value);
+      status.textContent = '✓ Gespeichert';
+      status.className = 'ok small';
+      input.value = '';
+      input.placeholder = '••••••• (gesetzt — neuer Wert ersetzt)';
+    } catch (err) {
+      status.textContent = `Fehler: ${(err as Error).message}`;
+      status.className = 'err small';
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
+
+  card.appendChild(form);
+}
+
+async function renderOAuthFlow(
+  card: HTMLElement,
+  api: ApiClient,
+  serverName: string,
+  cfg: { fields: Record<string, { value: string; isSecret: boolean }> } | null,
+  oauth?: OAuthMeta,
+): Promise<void> {
+  const desc = document.createElement('p');
+  desc.className = 'muted small';
+  desc.textContent =
+    'Pre-registered OAuth 2.0: trage Client-ID + Client-Secret deiner OAuth-App ein, ' +
+    'dann starte den Authorize-Flow. Refresh-Token wird KMS-encrypted gespeichert.';
+  card.appendChild(desc);
+
+  if (oauth?.help_url) {
+    const help = document.createElement('p');
+    help.className = 'muted small';
+    const a = document.createElement('a');
+    a.href = oauth.help_url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.textContent = `Setup-Hilfe: ${oauth.help_url}`;
+    help.appendChild(a);
+    card.appendChild(help);
+  }
+  if (oauth?.scopes && oauth.scopes.length > 0) {
+    const scopesP = document.createElement('p');
+    scopesP.className = 'muted small';
+    scopesP.textContent = `Scopes: ${oauth.scopes.join(', ')}`;
+    card.appendChild(scopesP);
+  }
+
+  const clientIdField = cfg?.fields['_oauth_client_id'];
+  const clientSecretField = cfg?.fields['_oauth_client_secret'];
+  const refreshTokenField = cfg?.fields['_oauth_refresh_token'];
+
+  const form = document.createElement('form');
+  form.className = 'form';
+
+  const ciField = document.createElement('div');
+  ciField.className = 'field';
+  const ciLbl = document.createElement('label');
+  ciLbl.textContent = 'Client-ID';
+  ciField.appendChild(ciLbl);
+  const ciInput = document.createElement('input');
+  ciInput.type = 'text';
+  ciInput.autocomplete = 'off';
+  ciInput.placeholder = clientIdField ? '(gesetzt — neuer Wert ersetzt)' : 'z.B. 1234567890-abc.apps.googleusercontent.com';
+  ciField.appendChild(ciInput);
+  form.appendChild(ciField);
+
+  const csField = document.createElement('div');
+  csField.className = 'field';
+  const csLbl = document.createElement('label');
+  csLbl.textContent = 'Client-Secret';
+  csField.appendChild(csLbl);
+  const csInput = document.createElement('input');
+  csInput.type = 'password';
+  csInput.autocomplete = 'new-password';
+  csInput.placeholder = clientSecretField
+    ? '••••••• (gesetzt — neuer Wert ersetzt)'
+    : 'OAuth-App Secret';
+  csField.appendChild(csInput);
+  form.appendChild(csField);
+
+  const saveRow = document.createElement('div');
+  saveRow.className = 'row form-actions';
+  const saveBtn = document.createElement('button');
+  saveBtn.type = 'submit';
+  saveBtn.className = 'btn btn-secondary';
+  saveBtn.textContent = 'Client-Daten speichern';
+  saveRow.appendChild(saveBtn);
+  const saveStatus = document.createElement('span');
+  saveStatus.className = 'muted small';
+  saveRow.appendChild(saveStatus);
+  form.appendChild(saveRow);
+
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    saveBtn.disabled = true;
+    saveStatus.textContent = 'Speichere…';
+    saveStatus.className = 'muted small';
+    try {
+      if (ciInput.value) await api.setServerConfig(serverName, '_oauth_client_id', ciInput.value);
+      if (csInput.value) await api.setServerConfig(serverName, '_oauth_client_secret', csInput.value);
+      saveStatus.textContent = '✓ Gespeichert. Jetzt Authorize starten.';
+      saveStatus.className = 'ok small';
+      ciInput.value = '';
+      csInput.value = '';
+      ciInput.placeholder = '(gesetzt — neuer Wert ersetzt)';
+      csInput.placeholder = '••••••• (gesetzt — neuer Wert ersetzt)';
+    } catch (err) {
+      saveStatus.textContent = `Fehler: ${(err as Error).message}`;
+      saveStatus.className = 'err small';
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
+  card.appendChild(form);
+
+  // Authorize-Flow
+  const authzBox = document.createElement('div');
+  authzBox.className = 'server-detail-action-row';
+  authzBox.style.marginTop = '1rem';
+
+  const statusLine = document.createElement('p');
+  if (refreshTokenField) {
+    statusLine.className = 'ok small';
+    statusLine.textContent = '✓ Authorisiert — Refresh-Token gespeichert (KMS-encrypted).';
+  } else {
+    statusLine.className = 'muted small';
+    statusLine.textContent = '⚠ Noch nicht authorisiert. Speichere zuerst Client-ID + Client-Secret oben, dann klicke Authorize.';
+  }
+  card.appendChild(statusLine);
+
+  const authzBtn = document.createElement('button');
+  authzBtn.type = 'button';
+  authzBtn.className = 'btn btn-primary btn-small';
+  authzBtn.textContent = refreshTokenField ? '▶ Re-Authorize' : '▶ Authorize';
+  const authzStatus = document.createElement('span');
+  authzStatus.className = 'muted small';
+
+  authzBtn.addEventListener('click', async () => {
+    authzBtn.disabled = true;
+    authzStatus.textContent = 'Generiere Authorize-URL…';
+    authzStatus.className = 'muted small';
+    try {
+      const redirectUri = `${window.location.origin}/#/tools/servers/${encodeURIComponent(serverName)}/oauth/callback`;
+      const { authorizeUrl } = await api.startServerOAuth(serverName, redirectUri);
+      authzStatus.textContent = 'Leite zu Provider…';
+      window.location.href = authorizeUrl;
+    } catch (err) {
+      authzStatus.textContent = `Fehler: ${(err as Error).message}`;
+      authzStatus.className = 'err small';
+      authzBtn.disabled = false;
+    }
+  });
+  authzBox.appendChild(authzBtn);
+  authzBox.appendChild(authzStatus);
+  card.appendChild(authzBox);
 }
 
 function renderDefaultsTabPlaceholder(body: HTMLElement, gw: InventoryGateway | null): void {
@@ -419,7 +728,7 @@ export async function renderServerDetail(
       await renderOverviewTab(body, api, serverName, gw, () => void onChanged());
       break;
     case 'auth':
-      renderAuthTabPlaceholder(body, serverName);
+      await renderAuthTab(body, api, serverName, gw);
       break;
     case 'defaults':
       renderDefaultsTabPlaceholder(body, gw);

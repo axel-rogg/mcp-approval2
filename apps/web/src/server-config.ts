@@ -425,7 +425,9 @@ export async function renderServerOAuthCallback(
     status.className = 'ok';
     status.textContent = '✓ Authorisierung erfolgreich. Du wirst weitergeleitet…';
     setTimeout(() => {
-      window.location.hash = `#/tools/servers/${encodeURIComponent(serverName)}/config`;
+      // Phase C UX-Refactor: redirect zur neuen Detail-Page Auth-Tab
+      // (statt Legacy /config-Drawer).
+      window.location.hash = `#/tools/servers/${encodeURIComponent(serverName)}/auth`;
     }, 1500);
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {
