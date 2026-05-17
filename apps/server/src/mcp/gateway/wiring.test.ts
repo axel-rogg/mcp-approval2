@@ -366,7 +366,7 @@ describe('seedCfGateways', () => {
     expect(captured).toHaveLength(1);
     const sql = captured[0]?.sql ?? '';
     expect(sql).toContain('INSERT INTO sub_mcp_servers');
-    expect(sql).toContain('ON CONFLICT (name, COALESCE(owner_user_id');
+    expect(sql).toContain('ON CONFLICT (name) DO UPDATE');
     expect(captured[0]?.params[0]).toBe('utils');
     // Token-hash ist sha256-hex (64 chars), nicht plain-token
     const authConfigStr = captured[0]?.params[3];

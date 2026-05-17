@@ -110,12 +110,16 @@ export async function seedCfGateways(args: SeedCfGatewaysArgs): Promise<SeedResu
     // is_catalog_default=TRUE damit der per-user-Subscription-Layer den
     // Server in die "Verfuegbar"-Liste streut (siehe PLAN-per-user-server-
     // store.md). owner_user_id bleibt NULL = Catalog-Default fuer alle User.
+    //
+    // ON CONFLICT (name): Migration 0020 (renumbered von 0017) behaelt den
+    // global-uniq-index idx_sub_mcp_name aus 0003. Multi-User-different-
+    // name-pro-Owner waere ein eigener Refactor (siehe Migration-Kommentar).
     const result = await raw.query<{ name: string; was_new: boolean }>(
       `INSERT INTO sub_mcp_servers
          (name, display_name, base_url, auth_mode, auth_config, enabled,
           is_catalog_default, created_at, updated_at)
        VALUES ($1, $2, $3, 'service_bearer', $4::jsonb, TRUE, TRUE, $5, $5)
-       ON CONFLICT (name, COALESCE(owner_user_id, '00000000-0000-0000-0000-000000000000'::UUID)) DO UPDATE
+       ON CONFLICT (name) DO UPDATE
          SET display_name = EXCLUDED.display_name,
              base_url     = EXCLUDED.base_url,
              auth_config  = EXCLUDED.auth_config,
