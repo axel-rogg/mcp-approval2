@@ -1311,17 +1311,10 @@ code {
   display: none;
 }
 
-.server-card-summary::before {
-  content: '▸';
-  display: inline-block;
-  margin-right: 0.5rem;
-  color: var(--fg-muted);
-  transition: transform 0.15s ease;
-}
-
-.server-card[open] > .server-card-summary::before {
-  transform: rotate(90deg);
-}
+/* Disclosure-Indicator entfernt 2026-05-17 — die actions-row + title sind
+   linksbuendig genug; ein zusaetzlicher ▸ vor den Aktions-Buttons hat
+   visuell die Linksausrichtung gestoert. <details>-Summary bleibt
+   klickbar zum Auf-/Zuklappen. */
 
 .server-card-title-row {
   display: inline-flex;
@@ -1337,7 +1330,7 @@ code {
 
 .server-card-sub {
   margin-top: 0.2rem;
-  margin-left: 1.25rem;
+  margin-left: 0;
 }
 
 .tool-list {
@@ -2161,12 +2154,28 @@ code {
   flex-shrink: 0;
 }
 
-/* Icon-only-Variante fuer per-Gateway-Refresh — kleiner + kein Text */
+/* Icon-only-Variante — NEUTRAL transparent default, nur Hover faerbt
+   subtil. Override des .btn-Defaults (das ist accent-background, fuer
+   primary-Aktion-Buttons gedacht). */
 .btn-icon {
   padding: 0.3rem;
   min-width: 2rem;
   min-height: 2rem;
   justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--fg-muted, #4b5563);
+}
+
+.btn-icon:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.05);
+  border-color: rgba(0, 0, 0, 0.08);
+  color: var(--fg, #111827);
+}
+
+.btn-icon:focus-visible {
+  outline: 2px solid var(--accent, #2563eb);
+  outline-offset: 2px;
 }
 
 .btn-icon svg {

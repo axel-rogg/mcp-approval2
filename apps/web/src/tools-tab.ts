@@ -98,8 +98,9 @@ function makeRefreshIcon(): SVGElement {
 }
 
 /**
- * Konfigurieren-Icon: Feather/Lucide "settings" (Zahnrad). Optisch
- * "Schraubenschluessel-aehnlich" und allgemein als Settings/Konfig erkannt.
+ * Konfigurieren-Icon: Lucide "sliders-horizontal" (Mixer-Style). Sauberer
+ * + lesbarer als ein Zahnrad bei kleiner Groesse. Universell als
+ * "Einstellungen" verstanden.
  */
 function makeWrenchIcon(): SVGElement {
   const svg = document.createElementNS(SVG_NS, 'svg');
@@ -110,13 +111,31 @@ function makeWrenchIcon(): SVGElement {
   svg.setAttribute('stroke-linecap', 'round');
   svg.setAttribute('stroke-linejoin', 'round');
   svg.setAttribute('aria-hidden', 'true');
-  // Settings/cog: zwei Pfade — Aussenring + Mittelpunkt
-  const outer = document.createElementNS(SVG_NS, 'path');
-  outer.setAttribute(
-    'd',
-    'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z',
-  );
-  svg.appendChild(outer);
+  // 3 horizontale Schieberegler-Reihen, je 1 Knopf an unterschiedlicher
+  // Position. Klar lesbar bei 16-20px.
+  const paths = [
+    'M21 4H8 M6 4H3',     // top row: line, gap, line
+    'M21 12H10 M6 12H3',  // mid row
+    'M21 20H16 M12 20H3', // bot row
+    'M7 4v-2 M7 4v2 M7 4 M11 12v-2 M11 12v2 M11 12 M14 20v-2 M14 20v2 M14 20',
+  ];
+  // Vereinfacht: nur die 3 Linien + 3 Kreise als Knoepfe
+  const linesAndKnobs = [
+    // 3 horizontal lines
+    'M3 6h18',
+    'M3 12h18',
+    'M3 18h18',
+    // 3 knobs (kleine Kreise mit r=2)
+    'M9 6m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0',
+    'M15 12m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0',
+    'M7 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0-4 0',
+  ];
+  void paths;
+  for (const d of linesAndKnobs) {
+    const p = document.createElementNS(SVG_NS, 'path');
+    p.setAttribute('d', d);
+    svg.appendChild(p);
+  }
   return svg;
 }
 
