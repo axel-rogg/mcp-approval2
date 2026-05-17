@@ -1880,3 +1880,61 @@ code {
   margin-left: auto;
 }
 
+
+/* ───────────────────────────────────────────────────────────────────────
+   Credentials-Slot-View (declared-by-server pattern, 2026-05-17)
+   ─────────────────────────────────────────────────────────────────────── */
+
+.credentials-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.credential-slot {
+  padding: 1rem;
+}
+
+.credential-slot-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.3rem;
+}
+
+.credential-slot-title {
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.credential-slot-sub {
+  margin-bottom: 0.8rem;
+}
+
+.credential-slot-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-bottom: 0.8rem;
+}
+
+.credential-slot-drawer {
+  /* Form-Drawer-Container; renderAddForm-card lebt hier drin */
+}
+
+.credential-slot-drawer .add-form-section {
+  margin: 0.5rem 0;
+  background: var(--bg-elev);
+}
+
+/* Locked-Field-Marker — provider+kind disabled bei Slot-Add */
+.field[data-locked="true"] {
+  opacity: 0.7;
+}
+.field[data-locked="true"] select:disabled {
+  background: var(--bg-elev);
+  cursor: not-allowed;
+}
+

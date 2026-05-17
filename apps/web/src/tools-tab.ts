@@ -29,7 +29,7 @@ import type {
 import { ApiError } from './api.js';
 import { logout, renderSessionExpired } from './auth.js';
 import { renderHeader } from './components/header.js';
-import { renderCredentialsBody } from './credentials.js';
+import { renderCredentialsDeclaredView, type CredentialSlot } from './credentials.js';
 
 // ─────────────────────────────────────────────────────────────────────────
 // Sub-Routes
@@ -467,23 +467,75 @@ async function renderServersView(
 // Credentials Sub-View
 // ─────────────────────────────────────────────────────────────────────────
 
+/**
+ * Liest `?add=<provider>` aus dem aktuellen Hash (z.B.
+ * `#/tools/credentials?add=google-workspace`).
+ */
+function parseAutoOpenProvider(): string | undefined {
+  const hash = window.location.hash;
+  const qIdx = hash.indexOf('?');
+  if (qIdx < 0) return undefined;
+  const params = new URLSearchParams(hash.slice(qIdx + 1));
+  const v = params.get('add');
+  return v && v.length > 0 ? v : undefined;
+}
+
+/**
+ * Slots aus dem Inventar bauen: pro Provider den Gateway-Display-Namen
+ * sammeln der ihn deklariert. So weiss der User "Benötigt für: gws".
+ */
+function buildSlotsFromInventory(inv: InventoryResponse): CredentialSlot[] {
+  const byProvider = new Map<string, { kind: string | null; usedBy: string[] }>();
+  for (const gw of inv.gateways) {
+    for (const rc of gw.requiredCredentials ?? []) {
+      const existing = byProvider.get(rc.provider);
+      if (!existing) {
+        byProvider.set(rc.provider, {
+          kind: rc.kind ?? null,
+          usedBy: [gw.displayName || gw.name],
+        });
+      } else {
+        if (!existing.usedBy.includes(gw.displayName || gw.name)) {
+          existing.usedBy.push(gw.displayName || gw.name);
+        }
+        if (existing.kind === null && rc.kind !== null) existing.kind = rc.kind;
+      }
+    }
+  }
+  return [...byProvider.entries()]
+    .map(([provider, v]) => ({ provider, kind: v.kind, usedBy: v.usedBy }))
+    .sort((a, b) => a.provider.localeCompare(b.provider));
+}
+
 async function renderCredentialsView(
   main: HTMLElement,
   api: ApiClient,
 ): Promise<void> {
-  const desc = document.createElement('p');
-  desc.className = 'muted';
-  desc.textContent =
-    'OAuth- + API-Tokens fuer externe Services (GitHub, Google Workspace, etc.). ' +
-    'MCP-Server holen diese JIT pro Tool-Call via Bridge zu approval2 — sie sind ' +
-    'KMS-verschluesselt at rest und nur fuer dich sichtbar.';
-  main.appendChild(desc);
-
   const body = document.createElement('div');
   body.className = 'tools-credentials';
   main.appendChild(body);
 
-  await renderCredentialsBody(body, api);
+  // Inventar zuerst — wir brauchen die declared-credentials pro Server.
+  let inv: InventoryResponse;
+  try {
+    inv = await api.listInventory();
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) {
+      throw err;
+    }
+    const msg = err instanceof ApiError ? `${err.code}: ${err.message}` : String(err);
+    body.replaceChildren(
+      Object.assign(document.createElement('p'), {
+        className: 'err',
+        textContent: `Inventar laden fehlgeschlagen: ${msg}`,
+      }),
+    );
+    return;
+  }
+
+  const slots = buildSlotsFromInventory(inv);
+  const autoOpen = parseAutoOpenProvider();
+  await renderCredentialsDeclaredView(body, api, slots, autoOpen);
 }
 
 // ─────────────────────────────────────────────────────────────────────────

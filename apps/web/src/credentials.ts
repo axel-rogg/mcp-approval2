@@ -191,13 +191,29 @@ async function handleDelete(
   }
 }
 
-function renderAddForm(api: ApiClient): HTMLElement {
+/**
+ * Add-Form-Optionen.
+ *   - lockedProvider: provider-Feld disabled + auf Wert gesetzt
+ *   - lockedKind: kind-Feld disabled + auf Wert gesetzt
+ *   - title: optional ueberschreiben/verstecken (z.B. 'Token hinzufuegen')
+ *   - onAdded: zusaetzlicher Hook nach erfolgreichem Add (z.B. Slot-Reload)
+ */
+export interface AddFormOpts {
+  readonly lockedProvider?: string;
+  readonly lockedKind?: CredentialKind;
+  readonly title?: string | null;
+  readonly onAdded?: () => void;
+}
+
+export function renderAddForm(api: ApiClient, opts: AddFormOpts = {}): HTMLElement {
   const section = document.createElement('section');
   section.className = 'card add-form-section';
 
-  const title = document.createElement('h2');
-  title.textContent = 'Add credential';
-  section.appendChild(title);
+  if (opts.title !== null) {
+    const title = document.createElement('h2');
+    title.textContent = opts.title ?? 'Add credential';
+    section.appendChild(title);
+  }
 
   const form = document.createElement('form');
   form.id = 'add-credential-form';
@@ -208,11 +224,26 @@ function renderAddForm(api: ApiClient): HTMLElement {
   const providerSelect = document.createElement('select');
   providerSelect.name = 'provider';
   providerSelect.required = true;
+  // Provider-Options aus statischer Liste + bei lockedProvider auch den
+  // declared-aber-unbekannten Wert (z.B. 'google-cloud' aus mcp-gcloud).
+  const seenProviders = new Set<string>();
   for (const p of PROVIDERS) {
     const opt = document.createElement('option');
     opt.value = p.value;
     opt.textContent = p.label;
     providerSelect.appendChild(opt);
+    seenProviders.add(p.value);
+  }
+  if (opts.lockedProvider && !seenProviders.has(opts.lockedProvider)) {
+    const opt = document.createElement('option');
+    opt.value = opts.lockedProvider;
+    opt.textContent = opts.lockedProvider;
+    providerSelect.appendChild(opt);
+  }
+  if (opts.lockedProvider) {
+    providerSelect.value = opts.lockedProvider;
+    providerSelect.disabled = true;
+    providerField.setAttribute('data-locked', 'true');
   }
   providerField.appendChild(providerSelect);
   form.appendChild(providerField);
@@ -222,11 +253,28 @@ function renderAddForm(api: ApiClient): HTMLElement {
   const kindSelect = document.createElement('select');
   kindSelect.name = 'kind';
   kindSelect.required = true;
+  const seenKinds = new Set<string>();
   for (const k of KINDS) {
     const opt = document.createElement('option');
     opt.value = k;
     opt.textContent = k;
     kindSelect.appendChild(opt);
+    seenKinds.add(k);
+  }
+  if (opts.lockedKind && !seenKinds.has(opts.lockedKind)) {
+    const opt = document.createElement('option');
+    opt.value = opts.lockedKind;
+    opt.textContent = opts.lockedKind;
+    kindSelect.appendChild(opt);
+  }
+  if (opts.lockedKind) {
+    kindSelect.value = opts.lockedKind;
+    kindSelect.disabled = true;
+    kindField.setAttribute('data-locked', 'true');
+  } else if (opts.lockedProvider) {
+    // Default-Kind aus PROVIDERS-Map ableiten
+    const p = PROVIDERS.find((pp) => pp.value === opts.lockedProvider);
+    if (p) kindSelect.value = p.defaultKind;
   }
   kindField.appendChild(kindSelect);
   form.appendChild(kindField);
@@ -328,7 +376,13 @@ function renderAddForm(api: ApiClient): HTMLElement {
       labelInput.value = '';
       secretInput.value = '';
       submitBtn.disabled = false;
-      await refreshList(api);
+      // Slot-View nutzt onAdded fuer per-Slot-Refresh. Legacy-View (Free-
+      // Form-Add) ruft refreshList() ueber die global #credentials-list-id.
+      if (opts.onAdded) {
+        opts.onAdded();
+      } else {
+        await refreshList(api);
+      }
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         renderSessionExpired(document.getElementById('app') ?? document.body);
@@ -352,4 +406,204 @@ function makeField(name: string, label: string): HTMLElement {
   lbl.textContent = label;
   wrap.appendChild(lbl);
   return wrap;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Slot-View (Declared-Credentials Pattern, 2026-05-17)
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Declared-Credentials-Slot: ein Eintrag pro Provider den ein MCP-Server
+ * via annotations.requires_credential deklariert hat.
+ */
+export interface CredentialSlot {
+  readonly provider: string;
+  readonly kind: string | null;
+  /** Display-Namen der Gateways die diesen Provider brauchen. */
+  readonly usedBy: ReadonlyArray<string>;
+}
+
+/**
+ * Provider-Display-Name aus der statischen PROVIDERS-Liste oder Fallback
+ * auf den raw-Provider-String.
+ */
+function providerLabel(provider: string): string {
+  return PROVIDERS.find((p) => p.value === provider)?.label ?? provider;
+}
+
+/**
+ * Slot-basierte Credentials-View. Statt eines free-form-Add-Forms zeigen wir
+ * nur die Provider die ein MCP-Server tatsaechlich braucht. Pro Slot:
+ *   - Liste der existierenden Credentials fuer diesen Provider
+ *   - "+ Token hinzufuegen"-Button → expand-Form mit Provider+Kind locked
+ *
+ * autoOpenProvider: bei `?add=<provider>`-URL-Param oeffnet sich der Slot
+ * direkt mit ausgefuelltem Form.
+ */
+export async function renderCredentialsDeclaredView(
+  container: HTMLElement,
+  api: ApiClient,
+  slots: ReadonlyArray<CredentialSlot>,
+  autoOpenProvider?: string,
+): Promise<void> {
+  const h1 = document.createElement('h1');
+  h1.textContent = 'Credentials';
+  container.appendChild(h1);
+
+  const desc = document.createElement('p');
+  desc.className = 'muted';
+  desc.textContent =
+    'Tokens fuer deine MCP-Server. Welche Tokens du brauchst gibt der jeweilige ' +
+    'Server selbst vor — du kannst hier nur Slots fuellen die ein Server deklariert hat. ' +
+    'Verschluesselt mit Vault-KEK + WebAuthn-PRF.';
+  container.appendChild(desc);
+
+  if (slots.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'muted';
+    empty.textContent =
+      'Keiner deiner angebundenen MCP-Server hat declared-credentials. Solange ' +
+      'kein Server etwas deklariert, hast du hier nichts zu konfigurieren.';
+    container.appendChild(empty);
+    return;
+  }
+
+  // Existierende Credentials einmal laden, dann pro-Slot filtern.
+  let allCreds: CredentialMeta[];
+  try {
+    allCreds = await api.listCredentials();
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) {
+      renderSessionExpired(document.getElementById('app') ?? document.body);
+      return;
+    }
+    const errEl = document.createElement('p');
+    errEl.className = 'err';
+    errEl.textContent = `Failed to load credentials: ${(err as Error).message}`;
+    container.appendChild(errEl);
+    return;
+  }
+
+  const slotsHost = document.createElement('div');
+  slotsHost.className = 'credentials-slots';
+  container.appendChild(slotsHost);
+
+  for (const slot of slots) {
+    const card = renderCredentialSlot(slot, allCreds, api, autoOpenProvider === slot.provider);
+    slotsHost.appendChild(card);
+  }
+}
+
+function renderCredentialSlot(
+  slot: CredentialSlot,
+  allCreds: ReadonlyArray<CredentialMeta>,
+  api: ApiClient,
+  autoOpen: boolean,
+): HTMLElement {
+  const card = document.createElement('section');
+  card.className = 'card credential-slot';
+  card.dataset['provider'] = slot.provider;
+
+  // Header: Provider-Label + Kind-Pill + Used-By
+  const header = document.createElement('div');
+  header.className = 'credential-slot-header';
+
+  const title = document.createElement('h2');
+  title.className = 'credential-slot-title';
+  title.textContent = providerLabel(slot.provider);
+  header.appendChild(title);
+
+  if (slot.kind) {
+    const kindPill = document.createElement('span');
+    kindPill.className = 'pill';
+    kindPill.textContent = slot.kind;
+    header.appendChild(kindPill);
+  }
+  card.appendChild(header);
+
+  if (slot.usedBy.length > 0) {
+    const sub = document.createElement('div');
+    sub.className = 'muted small credential-slot-sub';
+    sub.textContent = `Benötigt für: ${slot.usedBy.join(', ')}`;
+    card.appendChild(sub);
+  }
+
+  // Liste existierender Credentials fuer diesen Provider.
+  const matching = allCreds.filter((c) => c.provider === slot.provider);
+  const list = document.createElement('div');
+  list.className = 'credential-slot-list';
+  if (matching.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'muted small';
+    empty.textContent = 'Noch kein Token hinterlegt.';
+    list.appendChild(empty);
+  } else {
+    for (const item of matching) {
+      list.appendChild(renderCredentialRow(item, api));
+    }
+  }
+  card.appendChild(list);
+
+  // Add-Button + (optional) auto-expanded Form-Drawer.
+  const drawerHost = document.createElement('div');
+  drawerHost.className = 'credential-slot-drawer';
+  card.appendChild(drawerHost);
+
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'btn btn-secondary btn-small';
+  addBtn.textContent = '+ Token hinzufügen';
+  addBtn.addEventListener('click', () => {
+    if (drawerHost.childElementCount > 0) {
+      drawerHost.replaceChildren();
+      addBtn.textContent = '+ Token hinzufügen';
+      return;
+    }
+    const form = renderAddForm(api, {
+      lockedProvider: slot.provider,
+      ...(slot.kind ? { lockedKind: slot.kind as CredentialKind } : {}),
+      title: null,
+      onAdded: () => {
+        // Slot komplett re-rendern damit die neue Credential auch in der
+        // Liste oben erscheint. Wir tauschen die ganze Card.
+        void refreshSlot(card, slot, api);
+      },
+    });
+    drawerHost.appendChild(form);
+    addBtn.textContent = 'Abbrechen';
+  });
+  card.appendChild(addBtn);
+
+  if (autoOpen) {
+    // Manuell triggern damit der Drawer auf ?add=<provider> aufgeht.
+    addBtn.click();
+  }
+
+  return card;
+}
+
+/**
+ * Re-rendert eine einzelne Slot-Card mit aktualisierter Credentials-Liste
+ * nach einem Add. Behält den Provider; lädt allCreds nochmal.
+ */
+async function refreshSlot(
+  card: HTMLElement,
+  slot: CredentialSlot,
+  api: ApiClient,
+): Promise<void> {
+  try {
+    const allCreds = await api.listCredentials();
+    const replacement = renderCredentialSlot(slot, allCreds, api, false);
+    card.replaceWith(replacement);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) {
+      renderSessionExpired(document.getElementById('app') ?? document.body);
+      return;
+    }
+    // Best-effort — wenn Reload fehlschlaegt zeigen wir einen kleinen Hinweis.
+    const note = document.createElement('p');
+    note.className = 'err small';
+    note.textContent = `Reload failed: ${(err as Error).message}`;
+    card.appendChild(note);
+  }
 }
