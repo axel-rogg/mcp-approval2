@@ -21,7 +21,7 @@ import type { AppBindings, ServerContext } from '../../lib/context.js';
 import { HttpError } from '../../lib/errors.js';
 import { auth } from '../../middleware/auth.js';
 import { authCookieOpts } from '../../lib/cookie.js';
-import { resolveOrigin } from '../../lib/config.js';
+import { resolveOrigin, resolveRpId } from '../../lib/config.js';
 import { beginRegistration, finishRegistration } from '../../auth/webauthn/registration.js';
 import { beginAuthentication, finishAuthentication } from '../../auth/webauthn/authentication.js';
 import { issueSessionJwt } from '../../auth/session/issuer.js';
@@ -33,18 +33,46 @@ import { findUserByEmail } from '../../services/user.js';
  * Minimaler In-Memory-Challenge-Store. PRODUCTION-TODO: in DB persistieren.
  * Single-Instance-only.
  */
-const challengeStore = new Map<string, { challenge: string; userId: string | null; expiresAt: number }>();
+const challengeStore = new Map<
+  string,
+  {
+    challenge: string;
+    userId: string | null;
+    rpId: string;
+    origin: string;
+    expiresAt: number;
+  }
+>();
 
-function putChallenge(key: string, challenge: string, userId: string | null): void {
-  challengeStore.set(key, { challenge, userId, expiresAt: Date.now() + 5 * 60 * 1000 });
+function putChallenge(
+  key: string,
+  challenge: string,
+  userId: string | null,
+  rpId: string,
+  origin: string,
+): void {
+  challengeStore.set(key, {
+    challenge,
+    userId,
+    rpId,
+    origin,
+    expiresAt: Date.now() + 5 * 60 * 1000,
+  });
 }
 
-function takeChallenge(key: string): { challenge: string; userId: string | null } | null {
+function takeChallenge(
+  key: string,
+): { challenge: string; userId: string | null; rpId: string; origin: string } | null {
   const v = challengeStore.get(key);
   if (!v) return null;
   challengeStore.delete(key);
   if (v.expiresAt < Date.now()) return null;
-  return { challenge: v.challenge, userId: v.userId };
+  return {
+    challenge: v.challenge,
+    userId: v.userId,
+    rpId: v.rpId,
+    origin: v.origin,
+  };
 }
 
 const finishRegSchema = z.object({
@@ -65,18 +93,26 @@ export function webauthnRoutes(server: ServerContext): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
 
   // -- Enrollment (requires existing session) ------------------------------
+  // Multi-Origin: RP-ID + expectedOrigin werden pro-Request aus dem
+  // tatsächlichen Request-Origin abgeleitet, sodass Passkeys auf
+  // app2.ai-toolhub.org, mcp-approval2.fly.dev, mcp2.ai-toolhub.org separat
+  // registriert + verifiziert werden können (jede Origin == eigene RP-ID
+  // == eigene Credential-Domain).
   app.post('/auth/webauthn/enroll/begin', auth(server), async (c) => {
     const principal = c.get('user');
     if (!principal) throw HttpError.unauthorized();
+    const requestOrigin = resolveOrigin(c.req.raw, server.config);
+    const rpId = resolveRpId(requestOrigin, server.config);
     const prfSalt = randomBytes(32);
     const { options, challenge } = await beginRegistration(server.config, {
       userId: principal.userId,
       email: principal.email,
       displayName: principal.email,
       prfSalt,
+      rpId,
     });
     const challengeId = randomBytes(16).toString('base64url');
-    putChallenge(`reg:${challengeId}`, challenge, principal.userId);
+    putChallenge(`reg:${challengeId}`, challenge, principal.userId, rpId, requestOrigin);
     return c.json({ challengeId, options, prfSalt: Buffer.from(prfSalt).toString('base64url') });
   });
 
@@ -98,6 +134,8 @@ export function webauthnRoutes(server: ServerContext): Hono<AppBindings> {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         response: body.response as any,
         expectedChallenge: stored.challenge,
+        rpId: stored.rpId,
+        expectedOrigin: stored.origin,
       });
       return c.json({
         credentialId: result.credentialId,
@@ -115,13 +153,15 @@ export function webauthnRoutes(server: ServerContext): Hono<AppBindings> {
       const u = await findUserByEmail(server.db, body.email);
       if (u && u.status === 'active') userId = u.id;
     }
+    const requestOrigin = resolveOrigin(c.req.raw, server.config);
+    const rpId = resolveRpId(requestOrigin, server.config);
     const { options, challenge } = await beginAuthentication(
       server.config,
       server.db,
-      userId ? { userId } : {},
+      userId ? { userId, rpId } : { rpId },
     );
     const challengeId = randomBytes(16).toString('base64url');
-    putChallenge(`login:${challengeId}`, challenge, userId ?? null);
+    putChallenge(`login:${challengeId}`, challenge, userId ?? null, rpId, requestOrigin);
     return c.json({ challengeId, options });
   });
 
@@ -137,6 +177,8 @@ export function webauthnRoutes(server: ServerContext): Hono<AppBindings> {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         response: body.response as any,
         expectedChallenge: stored.challenge,
+        rpId: stored.rpId,
+        expectedOrigin: stored.origin,
       });
 
       // User-Row laden

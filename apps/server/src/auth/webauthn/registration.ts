@@ -34,6 +34,12 @@ export interface EnrollBeginInput {
   readonly displayName: string;
   /** Salt fuer PRF-eval (32 random bytes) — pro Credential einzigartig. */
   readonly prfSalt: Uint8Array;
+  /**
+   * Optional per-request RP-ID Override (Multi-Origin-Setup). Wenn weg →
+   * `config.RP_ID` als Default. Wird im Caller aus
+   * `resolveRpId(requestOrigin, config)` abgeleitet.
+   */
+  readonly rpId?: string;
 }
 
 export interface EnrollBeginResult {
@@ -48,7 +54,7 @@ export async function beginRegistration(
 ): Promise<EnrollBeginResult> {
   const opts: GenerateRegistrationOptionsOpts = {
     rpName: config.RP_NAME,
-    rpID: config.RP_ID,
+    rpID: input.rpId ?? config.RP_ID,
     userID: new TextEncoder().encode(input.userId),
     userName: input.email,
     userDisplayName: input.displayName,
@@ -73,6 +79,9 @@ export interface EnrollFinishInput {
   readonly userId: string;
   readonly response: RegistrationResponseJSON;
   readonly expectedChallenge: string;
+  /** Optional per-request Overrides aus dem Begin-Schritt. */
+  readonly rpId?: string;
+  readonly expectedOrigin?: string;
 }
 
 export interface EnrollFinishResult {
@@ -88,20 +97,20 @@ export async function finishRegistration(
   db: DbAdapter,
   input: EnrollFinishInput,
 ): Promise<EnrollFinishResult> {
-  // Multi-Origin: verifyRegistrationResponse akzeptiert ein Array als
-  // expectedOrigin — die User-PWA kann auf einem anderen Sub-Domain leben
-  // (z.B. app2.ai-toolhub.org) als der API-Server (mcp2.ai-toolhub.org).
-  // Beide muessen die gleiche RP-ID (eTLD+1 'ai-toolhub.org') teilen, aber
-  // unterschiedliche Origins haben. ALLOWED_ORIGINS ist die Allowlist
-  // (CORS/Approval gleich), RP_ORIGIN ist nur der Default-Server-Origin.
-  const allowedOrigins = Array.from(
-    new Set([config.RP_ORIGIN, ...config.ALLOWED_ORIGINS].filter(Boolean)),
-  );
+  // Multi-Origin: bevorzugt die per-Request berechneten rpId + expectedOrigin
+  // (Caller liefert diese aus Begin-Step ueber den Challenge-Store). Fallback
+  // auf config-Liste fuer Tests / Boot-Phase.
+  const expectedOrigin = input.expectedOrigin
+    ? [input.expectedOrigin]
+    : Array.from(
+        new Set([config.RP_ORIGIN, ...config.ALLOWED_ORIGINS].filter(Boolean)),
+      );
+  const expectedRPID = input.rpId ?? config.RP_ID;
   const verification: VerifiedRegistrationResponse = await verifyRegistrationResponse({
     response: input.response,
     expectedChallenge: input.expectedChallenge,
-    expectedOrigin: allowedOrigins,
-    expectedRPID: config.RP_ID,
+    expectedOrigin,
+    expectedRPID,
     // SEC-009: zur Enrollment-Time pruefen wir, dass der Authenticator UV
     // tatsaechlich performed hat (Flag im authData). Ohne UV → 400.
     requireUserVerification: true,

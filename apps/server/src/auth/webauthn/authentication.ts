@@ -24,6 +24,8 @@ import { HttpError } from '../../lib/errors.js';
 export interface LoginBeginInput {
   /** Optional: wenn bekannt (z.B. nach Email-Eingabe) — engt Credentials ein. */
   readonly userId?: string;
+  /** Optional per-request RP-ID Override (Multi-Origin). */
+  readonly rpId?: string;
 }
 
 export interface LoginBeginResult {
@@ -65,7 +67,7 @@ export async function beginAuthentication(
       : undefined;
 
   const baseOpts: GenerateAuthenticationOptionsOpts = {
-    rpID: config.RP_ID,
+    rpID: input.rpId ?? config.RP_ID,
     // SEC-009: PIN/Biometrie pflicht bei Login. Authenticators die UV nicht
     // koennen werden gar nicht erst angeboten (Hardware-Keys ohne PIN-Setup).
     userVerification: 'required',
@@ -81,6 +83,9 @@ export async function beginAuthentication(
 export interface LoginFinishInput {
   readonly response: AuthenticationResponseJSON;
   readonly expectedChallenge: string;
+  /** Optional per-request Overrides aus Begin-Schritt. */
+  readonly rpId?: string;
+  readonly expectedOrigin?: string;
 }
 
 export interface LoginFinishResult {
@@ -128,17 +133,19 @@ export async function finishAuthentication(
       ? { ...credentialBase, transports: credentialTransports }
       : credentialBase;
 
-  // Multi-Origin: PWA kann auf einem anderen Sub-Domain leben als API-Server
-  // (z.B. app2.ai-toolhub.org vs mcp2.ai-toolhub.org). simplewebauthn akzeptiert
-  // ein Array — alle erlaubten Origins durchreichen.
-  const allowedOrigins = Array.from(
-    new Set([config.RP_ORIGIN, ...config.ALLOWED_ORIGINS].filter(Boolean)),
-  );
+  // Multi-Origin: bevorzugt per-request rpId + expectedOrigin (Caller liefert
+  // diese aus Begin-Step). Fallback auf config-Liste fuer Tests / Boot-Phase.
+  const expectedOrigin = input.expectedOrigin
+    ? [input.expectedOrigin]
+    : Array.from(
+        new Set([config.RP_ORIGIN, ...config.ALLOWED_ORIGINS].filter(Boolean)),
+      );
+  const expectedRPID = input.rpId ?? config.RP_ID;
   const verification = await verifyAuthenticationResponse({
     response: input.response,
     expectedChallenge: input.expectedChallenge,
-    expectedOrigin: allowedOrigins,
-    expectedRPID: config.RP_ID,
+    expectedOrigin,
+    expectedRPID,
     credential: credentialForVerify,
     // SEC-009: UV-Bit muss in der Assertion gesetzt sein.
     requireUserVerification: true,
