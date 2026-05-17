@@ -42,6 +42,7 @@ import { renderDefaultsTab } from './defaults-tab.js';
 import { renderWritemodeTab } from './writemode-tab.js';
 import { renderSettings } from './settings-tab.js';
 import { renderToolsTab } from './tools-tab.js';
+import { renderAdminTab } from './admin-tab.js';
 import { subscribePush } from './push.js';
 import { renderDebugLog, debug } from './debug-log.js';
 
@@ -78,6 +79,7 @@ type Route =
   | 'apps-detail'
   | 'tools'
   | 'writemode'
+  | 'admin'
   | 'debug';
 
 function parseRoute(): Route {
@@ -94,6 +96,7 @@ function parseRoute(): Route {
     window.location.replace('#/tools/credentials');
     return 'tools';
   }
+  if (hash.startsWith('admin')) return 'admin';
   if (hash.startsWith('settings')) return 'settings';
   if (hash.startsWith('tools')) return 'tools';
   if (hash.startsWith('defaults')) return 'defaults';
@@ -187,6 +190,9 @@ async function boot(): Promise<void> {
       return;
     case 'tools':
       await renderToolsSafe(root, session);
+      return;
+    case 'admin':
+      await renderAdminSafe(root, session);
       return;
     case 'storage':
       await renderStorageSafe(root, session);
@@ -328,6 +334,15 @@ async function renderToolsSafe(root: HTMLElement, s: Session): Promise<void> {
     await renderToolsTab(root, api, s);
   } catch (err) {
     console.error('tools render failed', err);
+    renderSessionExpired(root);
+  }
+}
+
+async function renderAdminSafe(root: HTMLElement, s: Session): Promise<void> {
+  try {
+    await renderAdminTab(root, api, s);
+  } catch (err) {
+    console.error('admin render failed', err);
     renderSessionExpired(root);
   }
 }

@@ -56,6 +56,14 @@ const ICON_ACTIONS: ReadonlyArray<IconAction> = [
   },
 ];
 
+// Admin-only Icon — wird nur fuer session.role==='admin' im header geadded.
+const ADMIN_ICON: IconAction = {
+  href: '#/admin',
+  label: 'Admin (Users / Invites / Outbox / Audit)',
+  // Feather "shield" — symbolisiert Admin-Privilegien.
+  svg: `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`,
+};
+
 const LOGOUT_SVG = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>`;
 
 function currentRouteHash(): string {
@@ -90,7 +98,14 @@ export function renderHeader(root: HTMLElement, session: Session, onLogout: () =
   const actions = document.createElement('div');
   actions.className = 'topbar-actions';
 
-  for (const action of ICON_ACTIONS) {
+  // Admin-Icon nur fuer admins anzeigen. Wir spleißen es VOR dem
+  // Settings-Icon, damit es ein "Owner-Tools"-Cluster gibt.
+  const iconActions: IconAction[] = [...ICON_ACTIONS];
+  if (session.role === 'admin') {
+    iconActions.splice(iconActions.length - 1, 0, ADMIN_ICON);
+  }
+
+  for (const action of iconActions) {
     const a = document.createElement('a');
     a.href = action.href;
     a.className = 'nav-icon';
@@ -132,9 +147,7 @@ export function renderHeader(root: HTMLElement, session: Session, onLogout: () =
   header.appendChild(nav);
 
   // Email-Anzeige bewusst NICHT im Header (User-Wunsch 2026-05-17).
-  // Wer eingeloggt ist sieht der User unter Settings → App.
-  // `session` bleibt im Signatur fuer kuenftige Auth-Hooks im Header.
-  void session;
+  // session-Param wird oben fuer admin-Icon-Visibility benutzt.
 
   root.appendChild(header);
 }
