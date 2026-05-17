@@ -77,8 +77,8 @@ kill_timeout   = 30
   BASE_URL              = "https://mcp2.ai-toolhub.org"
   WEBAUTHN_RP_ID        = "mcp2.ai-toolhub.org"
   WEBAUTHN_RP_NAME      = "mcp-approval2"
-  WEBAUTHN_ORIGINS      = "https://mcp2.ai-toolhub.org"
-  ALLOWED_ORIGINS       = "https://mcp2.ai-toolhub.org,https://app2.ai-toolhub.org"
+  WEBAUTHN_ORIGINS      = "https://mcp2.ai-toolhub.org,https://mcp-approval2.fly.dev"
+  ALLOWED_ORIGINS       = "https://mcp2.ai-toolhub.org,https://app2.ai-toolhub.org,https://mcp-approval2.fly.dev"
 
   # OAuth + JWT
   SELF_OAUTH_ISSUER     = "https://mcp2.ai-toolhub.org"
