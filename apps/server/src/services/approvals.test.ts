@@ -293,6 +293,31 @@ describe('renderDisplayTemplate', () => {
     expect(renderDisplayTemplate('xs={{xs}}', { xs: [1, 2, 3] })).toBe('xs=[3 items]');
     expect(renderDisplayTemplate('o={{o}}', { o: { a: 1 } })).toBe('o=[object]');
   });
+
+  // SEC-020: preview-Filter clampt einzelne Werte.
+  it('SEC-020: |preview:N truncates long values with ellipsis', () => {
+    expect(
+      renderDisplayTemplate('body:{{body|preview:10}}', { body: 'abcdefghijklmnopqrstuvwxyz' }),
+    ).toBe('body:abcdefghi…');
+  });
+
+  it('SEC-020: |preview:N passt durch wenn Wert kuerzer als N', () => {
+    expect(
+      renderDisplayTemplate('body:{{body|preview:50}}', { body: 'short' }),
+    ).toBe('body:short');
+  });
+
+  it('SEC-020: |preview wird gegen unbekannte Pfade als "?" gerendert', () => {
+    expect(renderDisplayTemplate('body:{{missing|preview:20}}', {})).toBe('body:?');
+  });
+
+  it('SEC-020: |preview:N respektiert 1..200 range', () => {
+    // Cap >200 → 200
+    const long = 'x'.repeat(300);
+    const out = renderDisplayTemplate('b:{{b|preview:500}}', { b: long });
+    // 500 ist out-of-range → effektiv 200; +"b:" + "…" prefix
+    expect(out?.length).toBeLessThanOrEqual(2 + 200);
+  });
 });
 
 describe('ApprovalService', () => {

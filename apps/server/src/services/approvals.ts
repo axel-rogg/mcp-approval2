@@ -188,7 +188,14 @@ function rowToApproval(row: ApprovalRowRaw): PendingApproval {
 // Display-Template Renderer (sicherheits-bewusst)
 // ---------------------------------------------------------------------------
 
-const TEMPLATE_RE = /\{\{\s*([a-zA-Z0-9_.[\]-]+)\s*\}\}/g;
+// SEC-020: erweiterte Syntax — `{{path|preview:N}}` rendert die ersten N
+// Zeichen des resolved Werts mit Ellipsis bei truncation. Damit koennen
+// write/danger-Tools ein Preview des Body-Content im signed Display zeigen,
+// ohne dass die ganze multi-KB-Payload den Approval-Card sprengt.
+//   {{title}}           — full resolve, MAX_RENDERED_LEN clamp gilt
+//   {{body|preview:80}} — first 80 chars + …
+//   {{xs.length}}       — array-length (unveraendert)
+const TEMPLATE_RE = /\{\{\s*([a-zA-Z0-9_.[\]-]+)(?:\s*\|\s*preview\s*:\s*(\d+))?\s*\}\}/g;
 const HTML_TAG_RE = /<[^>]*>/g;
 const MAX_RENDERED_LEN = 500;
 
@@ -247,9 +254,15 @@ export function renderDisplayTemplate(
   toolInput: Record<string, unknown>,
 ): string | null {
   if (!template) return null;
-  let rendered = template.replace(TEMPLATE_RE, (_match, path: string) => {
+  let rendered = template.replace(TEMPLATE_RE, (_match, path: string, previewN?: string) => {
     const v = resolvePath(toolInput, path);
-    return stringifyValue(v);
+    const raw = stringifyValue(v);
+    if (previewN === undefined) return raw;
+    // SEC-020: preview-Filter clampt einzelne Werte. Range 1..200 — beyond
+    // 200 macht das full-template-clamp (500) sowieso die Arbeit.
+    const n = Math.min(Math.max(parseInt(previewN, 10), 1), 200);
+    if (raw.length <= n) return raw;
+    return `${raw.slice(0, n - 1)}…`;
   });
   // HTML-Tags strippen
   rendered = rendered.replace(HTML_TAG_RE, '');

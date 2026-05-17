@@ -49,7 +49,8 @@ export function makeBookmarksCreateTool(
     description:
       'Create a new bookmark with title + URL. Notes are optional Markdown; URL is stored in meta.url.',
     sensitivity: 'write',
-    displayTemplate: 'Bookmark: {{title}} ({{url}})',
+    // SEC-020: notes-preview damit User sieht ob neben URL noch Free-Text gespeichert wird.
+    displayTemplate: 'Bookmark: {{title}} ({{url}}) — {{notes|preview:120}}',
     inputSchema: BookmarksCreateInput,
     async execute(ctx: ToolContext, input): Promise<KnowledgeObject> {
       const kcAuth = kcAuthFromCtx(ctx);

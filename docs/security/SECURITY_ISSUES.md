@@ -305,6 +305,7 @@ Findings sind innerhalb der Severity nach **Schweregrad/Wahrscheinlichkeit** sor
   - [apps/server/src/tools/apps-tools.ts:177-216, 238-260](../../apps/server/src/tools/apps-tools.ts#L177-L260) — `apps.invoke`, `apps.update_state`, `apps.update_layout` ohne payload
 - IPI-Attacke täuscht "save my recipe" vor, Payload überschreibt aber ein bestehendes hochwertiges Note. User sieht "Update note <id>" und signiert — original-Content weg.
 - **Fix:** displayTemplate-Renderer erweitern um `{{body|preview:80}}` + auto-open `'Data sent'`-Section in der PWA wenn payload-bearing Variablen fehlen. Lint-Regel: jedes write/danger-Tool MUSS payload-bearende Variable in displayTemplate enthalten.
+- **Status:** ✅ FIXED 2026-05-17 (Phase B, Teil 1) — Renderer-Syntax `{{path|preview:N}}` (1..200 chars) in [services/approvals.ts renderDisplayTemplate](../../apps/server/src/services/approvals.ts) plus 4 Tool-Templates erweitert: `notes.create/update`, `recipes.create/update`, `bookmarks.create` zeigen jetzt body/notes-Preview im signed Display. Delete-Tools bleiben ID-only (Delete-Semantik ist durch toolName klar; Versehen-Schutz lebt im Re-fetch-Round). 4 neue Tests in [approvals.test.ts](../../apps/server/src/services/approvals.test.ts). Teil 2 (PWA-side auto-open 'Data sent' + Lint-Rule) ist Backlog — der Server-side Display-Fix killt schon den IPI-Hauptangriff.
 
 ### SEC-021 — PWA places-block setzt `href` ohne Scheme-Check → `javascript:`-XSS
 

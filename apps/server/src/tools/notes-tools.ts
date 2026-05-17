@@ -51,7 +51,8 @@ export function makeNotesCreateTool(deps: NotesToolsDeps): Tool<NotesCreateInput
     description:
       'Create a Markdown note with title + body. Optional summary (`description`) — if embed=true, KC2 indexes it for semantic search.',
     sensitivity: 'write',
-    displayTemplate: 'Create note: {{title}}',
+    // SEC-020: body-Preview im Display damit User sieht WAS gespeichert wird.
+    displayTemplate: 'Create note: {{title}} — {{body|preview:120}}',
     inputSchema: NotesCreateInput,
     async execute(ctx: ToolContext, input): Promise<KnowledgeObject> {
       const kcAuth = kcAuthFromCtx(ctx);
@@ -86,7 +87,8 @@ export function makeNotesUpdateTool(deps: NotesToolsDeps): Tool<NotesUpdateInput
     description:
       'Update a note (full-replace of provided fields). At least one of title/body/description/keywords required.',
     sensitivity: 'write',
-    displayTemplate: 'Update note {{id}}',
+    // SEC-020: zeigt was geupdated wird — sonst kann IPI "save my note" voraukklicken + Original ueberschreiben.
+    displayTemplate: 'Update note {{id}} — title:{{title|preview:60}} body:{{body|preview:120}}',
     inputSchema: NotesUpdateInput,
     async execute(ctx: ToolContext, input): Promise<KnowledgeObject> {
       const kcAuth = kcAuthFromCtx(ctx);

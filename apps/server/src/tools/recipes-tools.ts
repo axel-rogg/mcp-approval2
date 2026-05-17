@@ -71,7 +71,8 @@ export function makeRecipesCreateTool(
     description:
       'Create a recipe (Markdown, optional YAML frontmatter with servings/prep_time/cook_time). Body holds ingredients + steps.',
     sensitivity: 'write',
-    displayTemplate: 'Recipe: {{title}}',
+    // SEC-020: body-Preview im signed display (Ingredients/Steps sind das was zaehlt).
+    displayTemplate: 'Recipe: {{title}} — {{body|preview:120}}',
     inputSchema: RecipesCreateInput,
     async execute(ctx: ToolContext, input): Promise<KnowledgeObject> {
       const kcAuth = kcAuthFromCtx(ctx);
@@ -106,7 +107,8 @@ export function makeRecipesUpdateTool(
     description:
       'Update a recipe (full-replace of provided fields). At least one of title/body/description/keywords required.',
     sensitivity: 'write',
-    displayTemplate: 'Update recipe {{id}}',
+    // SEC-020: title+body-Preview damit User die Konsequenz eines Updates sieht.
+    displayTemplate: 'Update recipe {{id}} — title:{{title|preview:60}} body:{{body|preview:120}}',
     inputSchema: RecipesUpdateInput,
     async execute(ctx: ToolContext, input): Promise<KnowledgeObject> {
       const kcAuth = kcAuthFromCtx(ctx);
