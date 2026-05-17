@@ -53,13 +53,21 @@ export function dispatchRenderer(obj: KnowledgeObject): HTMLElement {
       return renderSkillManifest(decodeBody(obj));
     case 'doc':
     default: {
-      // Unified body detect — mimeType OR filename-extension OR plain.
-      // contentType is a legacy alias readable from the same field.
+      // Unified body detect — mimeType OR filename-extension OR content-
+      // sniffing OR subtype-default. contentType ist legacy alias.
       const mime = obj.mimeType ?? obj.contentType ?? null;
       const filename =
         obj.filename ??
-        ((readMeta(obj)['filename'] as string | undefined) ?? null);
-      const detected = detectContentKind({ mimeType: mime, filename });
+        ((readMeta(obj)['filename'] as string | undefined) ??
+          (readMeta(obj)['original_filename'] as string | undefined) ??
+          null);
+      const body = decodeBody(obj);
+      const detected = detectContentKind({
+        mimeType: mime,
+        filename,
+        subtype,
+        body,
+      });
 
       switch (detected.kind) {
         case 'markdown':

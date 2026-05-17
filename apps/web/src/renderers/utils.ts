@@ -137,11 +137,46 @@ const MIME_TO_LANG: Array<[RegExp, { kind: ContentKind['kind']; lang?: string }]
   [/^application\/octet-stream/i, { kind: 'binary' }],
 ];
 
+/**
+ * Heuristic markdown-Detection durch Body-Inhalt.
+ * Echt strikt: nur wenn klare Markdown-Marker vorkommen, sonst false.
+ * False-positive-Risiko: niedrig (Markdown-Marker sind selten in echtem Code).
+ *
+ *   - Zeile beginnt mit `# `, `## `, `### ` (heading)
+ *   - Zeile beginnt mit `- ` oder `* ` oder `1. ` (list)
+ *   - ``` fenced code block
+ *   - [text](url) link-pattern
+ *   - **bold** oder __bold__
+ *   - > blockquote
+ */
+const MD_SIGNALS = [
+  /^#{1,6} \S/m, // # H1 .. ###### H6
+  /^- \S/m, // unordered list
+  /^\* \S/m, // unordered list (asterisk)
+  /^\d+\. \S/m, // ordered list
+  /```/, // fenced code
+  /\[[^\]]+\]\([^)]+\)/, // [text](url)
+];
+
+function looksLikeMarkdown(body: string): boolean {
+  if (!body || body.length === 0) return false;
+  const sample = body.slice(0, 4096); // genug Signal-Sample, low overhead
+  let hits = 0;
+  for (const re of MD_SIGNALS) {
+    if (re.test(sample)) hits += 1;
+    if (hits >= 2) return true; // 2+ Signale = sicher Markdown
+  }
+  // 1 Signal reicht wenn es ein Heading ist (sehr starkes Signal)
+  return /^#{1,6} \S/m.test(sample);
+}
+
 export function detectContentKind(args: {
   mimeType?: string | null;
   filename?: string | null;
+  subtype?: string | null;
+  body?: string | null;
 }): ContentKind {
-  // 1. MimeType wins.
+  // 1. MimeType wins (strongest signal).
   const m = (args.mimeType ?? '').trim();
   if (m) {
     for (const [re, hit] of MIME_TO_LANG) {
@@ -160,6 +195,20 @@ export function detectContentKind(args: {
       if (hit) return { kind: hit.kind, ...(hit.lang ? { lang: hit.lang } : {}) };
     }
   }
-  // 3. Default plain.
+  // 3. Content-sniffing (post-deploy 2026-05-17 user-feedback): wenn
+  // Subtype 'doc'/'note' (typische Markdown-Subtypes) ODER body markdown-
+  // ähnliche Marker enthält → renderMarkdown. Schützt migrierte Items
+  // ohne mimeType + Plaintext-Notes.
+  const body = args.body ?? '';
+  const subtype = args.subtype ?? '';
+  if (looksLikeMarkdown(body)) {
+    return { kind: 'markdown' };
+  }
+  // 4. Subtype-Default: doc/note → markdown (selbst ohne Marker, plain
+  // text rendert harmlos durch marked + DOMPurify).
+  if (subtype === 'doc' || subtype === 'note') {
+    return { kind: 'markdown' };
+  }
+  // 5. Default plain → renderCode autodetect.
   return { kind: 'plain' };
 }
