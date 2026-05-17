@@ -45,6 +45,7 @@ Bei Aenderung einer existierenden Entscheidung: neuen ADR mit `Status: Accepted,
 | [0020](0020-fulltime-engineering-12-14-weeks.md) | Vollzeit-Engineering, 12-14 Wochen bis Pilot-Start | Accepted |
 | [0021](0021-hono-drizzle-pgvector-stack.md) | Hono.js + Drizzle + pgvector als Stack | Accepted |
 | [0022](0022-portable-adapter-layer.md) | Portable Adapter-Layer (Db/Blob/Kek/Ai) | Accepted |
+| [0023](0023-shared-codebase-isolated-environments.md) | Shared Codebase, Isolated Environments für Family/Self-Host/Corporate-Modi | Accepted |
 
 ## Plan-Reference
 
