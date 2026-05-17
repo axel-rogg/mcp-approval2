@@ -49,6 +49,7 @@ jobs:
       contains(github.event.head_commit.message, '[deploy]')
     permissions:
       contents: read
+      issues: write  # Notify-on-failure step erstellt ein GH-Issue
 
     steps:
       - name: Checkout
@@ -63,14 +64,14 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          fly auth whoami
-          fly apps list
+          flyctl auth whoami
+          flyctl apps list
 
       - name: Deploy mcp-approval2
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          fly deploy --config fly.toml --remote-only --strategy rolling
+          flyctl deploy --config fly.toml --remote-only --strategy rolling
 
       - name: Post-deploy health check
         env:
