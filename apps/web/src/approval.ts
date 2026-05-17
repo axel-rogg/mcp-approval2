@@ -19,7 +19,6 @@ import { renderQuickCard, shortDisplay } from './approval-quick.js';
 
 const POLL_INTERVAL_MS = 5_000;
 const ARCHIVE_WINDOW_MS = 24 * 3600 * 1000;
-const POLL_PAUSE_KEY = 'approvals.pollingPaused';
 
 let pollTimer: number | undefined;
 let active = false;
@@ -31,23 +30,6 @@ export function stopApprovalPolling(): void {
   if (pollTimer !== undefined) {
     window.clearTimeout(pollTimer);
     pollTimer = undefined;
-  }
-}
-
-function isPollingPaused(): boolean {
-  try {
-    return sessionStorage.getItem(POLL_PAUSE_KEY) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function setPollingPaused(paused: boolean): void {
-  try {
-    if (paused) sessionStorage.setItem(POLL_PAUSE_KEY, '1');
-    else sessionStorage.removeItem(POLL_PAUSE_KEY);
-  } catch {
-    /* private mode etc. — ignore */
   }
 }
 
@@ -102,34 +84,8 @@ export async function renderApproval(
   h1.textContent = view === 'archive' ? 'Archiv (letzte 24h)' : 'Approval queue';
   titleRow.appendChild(h1);
 
-  if (view === 'inbox') {
-    const pauseBtn = document.createElement('button');
-    pauseBtn.type = 'button';
-    pauseBtn.id = 'approvals-pause-btn';
-    pauseBtn.className = 'btn-small';
-    pauseBtn.style.marginLeft = 'auto';
-    pauseBtn.textContent = isPollingPaused() ? '▶ Resume' : '⏸ Pause';
-    pauseBtn.setAttribute(
-      'title',
-      'Auto-Refresh pausieren (laeuft lokaler Countdown weiter)',
-    );
-    pauseBtn.addEventListener('click', () => {
-      const wasPaused = isPollingPaused();
-      setPollingPaused(!wasPaused);
-      pauseBtn.textContent = !wasPaused ? '▶ Resume' : '⏸ Pause';
-      if (wasPaused) {
-        // Resume → sofort refreshen + scheduler neu starten
-        void refreshAndSchedule(api, session);
-      } else {
-        // Pause → laufenden Timer stoppen (active bleibt true!)
-        if (pollTimer !== undefined) {
-          window.clearTimeout(pollTimer);
-          pollTimer = undefined;
-        }
-      }
-    });
-    titleRow.appendChild(pauseBtn);
-  }
+  // Pause-Button vorerst entfernt — TTL-Pause statt Polling-Pause kommt
+  // separat. Polling-Pause war nicht das was der User wollte.
 
   main.appendChild(titleRow);
 
@@ -159,7 +115,6 @@ async function refreshAndSchedule(api: ApiClient, session: Session): Promise<voi
   if (!active) return;
   await refreshInbox(api, session);
   if (!active) return;
-  if (isPollingPaused()) return; // User-Pause respektieren
   pollTimer = window.setTimeout(() => void refreshAndSchedule(api, session), POLL_INTERVAL_MS);
 }
 
