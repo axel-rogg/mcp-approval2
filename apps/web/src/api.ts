@@ -135,17 +135,37 @@ function buildUrl(base: string, path: string, query?: Record<string, string | un
 export function createApiClient(baseUrl?: string): ApiClient {
   const base = baseUrl ?? (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8787');
 
+  // Aktueller access-token (JWT) aus dem letzten erfolgreichen /auth/refresh.
+  // /v1/*-Routen verlangen `Authorization: Bearer <token>` (siehe
+  // apps/server/src/middleware/auth.ts) — ohne header → 401.
+  // session_jwt-Cookie auf Server-Seite ist NUR fuer die OAuth-Authorize-
+  // Facade, nicht fuer /v1/. Daher Bearer-Header pflichtig.
+  let currentAccessToken: string | null = null;
+  let lastSession: Session | null = null;
+
   async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+    const headers: Record<string, string> = { accept: 'application/json' };
+    if (currentAccessToken) headers['authorization'] = `Bearer ${currentAccessToken}`;
     const init: RequestInit = {
       method: opts.method ?? 'GET',
       credentials: 'include',
-      headers: { accept: 'application/json' },
+      headers,
     };
     if (opts.body !== undefined) {
       init.headers = { ...init.headers, 'content-type': 'application/json' };
       init.body = JSON.stringify(opts.body);
     }
-    const res = await fetch(buildUrl(base, path, opts.query), init);
+    let res = await fetch(buildUrl(base, path, opts.query), init);
+    // Auto-retry on 401: token expired or freshly-reset. Try one refresh +
+    // retry. Avoids the user seeing a session-expired screen after 30 min.
+    if (res.status === 401 && currentAccessToken) {
+      const fresh = await doRefresh();
+      if (fresh) {
+        const headers2: Record<string, string> = { ...headers, authorization: `Bearer ${fresh}` };
+        if (opts.body !== undefined) headers2['content-type'] = 'application/json';
+        res = await fetch(buildUrl(base, path, opts.query), { ...init, headers: headers2 });
+      }
+    }
     return parseJson<T>(res);
   }
 
@@ -155,52 +175,65 @@ export function createApiClient(baseUrl?: string): ApiClient {
   // den alten Token bei der ersten Antwort — paralleler 2. Call wuerde
   // refresh_replay_detected (401) triggern.
   let refreshInflight: Promise<Session | null> | null = null;
-  return {
-    async getSession() {
-      if (refreshInflight) return refreshInflight;
-      refreshInflight = (async () => {
+
+  // Internal refresh helper: macht den /auth/refresh-Call mit Dedup. Setzt
+  // currentAccessToken bei Erfolg. Returns die fresh-token-string (oder null).
+  // Wird auch von der request()-401-Retry verwendet.
+  async function doRefresh(): Promise<string | null> {
+    if (refreshInflight) {
+      await refreshInflight;
+      return currentAccessToken;
+    }
+    refreshInflight = (async () => {
       try {
-        // Backend has no canonical /auth/me yet — use refresh to introspect.
-        // If refresh fails (no cookie / invalid), session is null.
         const res = await fetch(buildUrl(base, '/auth/refresh'), {
           method: 'POST',
           credentials: 'include',
           headers: { accept: 'application/json' },
         });
-        if (res.status === 401) return null;
-        if (!res.ok) return null;
+        if (!res.ok) {
+          currentAccessToken = null;
+          lastSession = null;
+          return null;
+        }
         const body = (await res.json()) as {
           accessToken: string;
           expiresAt: number;
           sessionId: string;
           user?: { id: string; email: string; role: 'admin' | 'member' };
         };
-        // The current /auth/refresh shape does not include user-info; derive
-        // a minimal Session record. If the backend later attaches user{} we
-        // surface it verbatim.
-        if (body.user) {
-          return {
-            userId: body.user.id,
-            email: body.user.email,
-            role: body.user.role,
-            sessionId: body.sessionId,
-            expiresAt: body.expiresAt,
-          };
-        }
-        return {
-          userId: '',
-          email: '',
-          role: 'member' as const,
+        currentAccessToken = body.accessToken;
+        lastSession = {
+          userId: body.user?.id ?? '',
+          email: body.user?.email ?? '',
+          role: body.user?.role ?? ('member' as const),
           sessionId: body.sessionId,
           expiresAt: body.expiresAt,
         };
+        return lastSession;
       } catch {
+        currentAccessToken = null;
+        lastSession = null;
         return null;
       }
-      })().finally(() => {
-        refreshInflight = null;
-      });
-      return refreshInflight;
+    })().finally(() => {
+      refreshInflight = null;
+    });
+    await refreshInflight;
+    return currentAccessToken;
+  }
+  return {
+    async getSession() {
+      // doRefresh() dedupliziert intern + setzt currentAccessToken.
+      // Returns null wenn refresh fail't, sonst Session-Object (aus dem
+      // letzten body.user / body.sessionId).
+      await doRefresh();
+      // Wir muessen die Session-Daten nochmal aus dem letzten Refresh holen.
+      // Da doRefresh die Body-Daten weggeworfen hat (nur accessToken behalten),
+      // nochmal kurz lesen via einem separaten Probe-Request waere doppelt-
+      // arbeit. Stattdessen: doRefresh wurde so umgebaut dass es das Session-
+      // Object via lastSession-cache zurueckgibt.
+      return lastSession;
     },
 
     async logout() {
