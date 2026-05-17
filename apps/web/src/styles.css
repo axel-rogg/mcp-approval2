@@ -207,59 +207,117 @@ code {
   min-height: 2rem;
 }
 
-/* Topbar ------------------------------------------------------------ */
+/* Topbar (2-Reihen, v1-Layout) -------------------------------------- */
 .topbar {
   background: var(--bg-elev);
   border-bottom: 1px solid var(--border);
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0.55rem 1rem;
-  gap: 0.75rem;
-  flex-wrap: wrap;
+  flex-direction: column;
+  padding: 0.5rem 1rem 0;
   position: sticky;
   top: 0;
   z-index: 10;
 }
 
-.topbar-brand a {
+.topbar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-height: 2.4rem;
+}
+
+.brand {
   font-weight: 700;
   color: var(--fg);
-  font-size: 1rem;
+  font-size: 1.05rem;
+  letter-spacing: -0.01em;
 }
 
-.topbar-nav {
+.brand:hover {
+  text-decoration: none;
+}
+
+.topbar-actions {
   display: flex;
-  gap: 0.25rem;
-  flex: 1;
-  margin-left: 0.5rem;
+  align-items: center;
+  gap: 0.2rem;
 }
 
-.topbar-nav a {
-  color: var(--fg-muted);
-  padding: 0.4rem 0.7rem;
+.nav-icon,
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: var(--radius);
-  font-size: 0.95rem;
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
-.topbar-nav a.active,
-.topbar-nav a:hover {
+.nav-icon:hover,
+.icon-btn:hover {
   background: var(--bg);
+  color: var(--fg);
+  text-decoration: none;
+  border-color: var(--border);
+}
+
+.nav-icon[aria-current='page'] {
+  color: var(--accent);
+  background: var(--bg);
+}
+
+/* Primary-Tab-Nav (Row 2) */
+.nav {
+  display: flex;
+  gap: 0.15rem;
+  padding-top: 0.35rem;
+  margin-top: 0.1rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.nav::-webkit-scrollbar {
+  display: none;
+}
+
+.nav a {
+  color: var(--fg-muted);
+  padding: 0.5rem 0.85rem 0.6rem;
+  border-bottom: 2px solid transparent;
+  font-size: 0.95rem;
+  font-weight: 500;
+  white-space: nowrap;
+  margin-bottom: -1px;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.nav a:hover {
   color: var(--fg);
   text-decoration: none;
 }
 
-.topbar-user {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
+.nav a[aria-current='page'] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.topbar-meta {
+  padding: 0.2rem 0 0.35rem;
+  font-size: 0.8rem;
 }
 
 @media (max-width: 480px) {
   .topbar {
-    padding: 0.5rem 0.75rem;
+    padding: 0.4rem 0.75rem 0;
   }
-  .topbar-user .muted {
+  .topbar-meta {
     display: none;
   }
 }

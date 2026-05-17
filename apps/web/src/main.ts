@@ -181,7 +181,7 @@ async function boot(): Promise<void> {
       return;
     }
     case 'apps':
-      await renderAppsSafe(root);
+      await renderAppsSafe(root, session);
       return;
     case 'apps-detail': {
       const id = parseAppsDetailId();
@@ -233,9 +233,9 @@ async function renderApprovalDetailSafe(
   }
 }
 
-async function renderAppsSafe(root: HTMLElement): Promise<void> {
+async function renderAppsSafe(root: HTMLElement, s: Session): Promise<void> {
   try {
-    await renderAppsTab(root, apiApps);
+    await renderAppsTab(root, apiApps, api, s);
   } catch (err) {
     console.error('apps render failed', err);
     renderSessionExpired(root);

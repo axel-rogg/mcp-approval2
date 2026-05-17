@@ -10,8 +10,11 @@
  * per `sub=userId` aus dem JWT.
  */
 import { ApiError } from './api.js';
+import type { ApiClient, Session } from './api.js';
 import type { ApiAppsClient, AppInstance } from './api-apps.js';
 import { el } from './blocks/types.js';
+import { renderHeader } from './components/header.js';
+import { logout } from './auth.js';
 
 function fmtAge(now: number, ms: number | null | undefined): string {
   if (!ms) return '';
@@ -104,18 +107,15 @@ function createForm(api: ApiAppsClient, reload: () => Promise<void>): HTMLElemen
   return form;
 }
 
-function topbar(): HTMLElement {
-  return el('nav', { class: 'topbar' }, [
-    el('div', { class: 'topbar-brand' }, [el('a', { href: '#/approvals', text: 'mcp-approval2' })]),
-    el('div', { class: 'topbar-nav' }, [
-      el('a', { href: '#/approvals', text: 'Approvals' }),
-      el('a', { href: '#/apps', class: 'active', text: 'Apps' }),
-      el('a', { href: '#/credentials', text: 'Credentials' }),
-    ]),
-  ]);
-}
+export async function renderAppsTab(
+  root: HTMLElement,
+  api: ApiAppsClient,
+  authApi: ApiClient,
+  session: Session,
+): Promise<void> {
+  root.replaceChildren();
+  renderHeader(root, session, () => void logout(authApi));
 
-export async function renderAppsTab(root: HTMLElement, api: ApiAppsClient): Promise<void> {
   const main = el('main', { class: 'apps-tab' });
   const listHost = el('ul', { class: 'apps-list' });
   const formHost = el('div');
@@ -145,6 +145,6 @@ export async function renderAppsTab(root: HTMLElement, api: ApiAppsClient): Prom
   main.appendChild(listHost);
   main.appendChild(formHost);
 
-  root.replaceChildren(topbar(), main);
+  root.appendChild(main);
   await reload();
 }
