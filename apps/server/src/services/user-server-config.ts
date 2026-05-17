@@ -102,10 +102,12 @@ export function createUserServerConfigService(
   const dec = new TextDecoder();
 
   function aadFor(userId: string, subMcpName: string, configKey: string): string {
+    // buildAad lehnt Pipe-Character ab — wir nutzen '/' als interner Separator
+    // (URL-safe + nicht-konfliktbehaftet mit AAD-Pipe-Format).
     return buildAad({
       recordType: 'generic',
       namespace: 'user_sub_mcp_config',
-      id: `${userId}|${subMcpName}|${configKey}`,
+      id: `${userId}/${subMcpName}/${configKey}`,
     });
   }
 
