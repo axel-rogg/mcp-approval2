@@ -7,6 +7,13 @@
 > **Status 2026-05-15:** AS-3-Code-Complete + **Generic-Object-Model** + **PWA-Subtype-Renderer** + **Tool-Wrapper-Familien (lists/notes/bookmarks/recipes)** + **Vulnerabilities-Fix** (`npm audit` = 0 Vulns) auf Branch `feat/as3-cutover`. Cutover-Day pending — Runbook im Schwester-Repo:
 > [knowledge2/docs/runbooks/runbook-as3-cutover.md](https://github.com/axel-rogg/mcp-knowledge2/blob/main/docs/runbooks/runbook-as3-cutover.md).
 >
+> **Update 2026-05-17 Multi-User-Sprint (cross-repo):** approval2-Seite des knowledge2-Sicherheits-Sprints (commit 9c4813f). Drei Änderungen am KnowledgeAdapter:
+> 1. **Scope-spezifische Service-Tokens** (`MCP_KNOWLEDGE_SERVICE_TOKEN_ERASE`/`_SYNC`/`_OPS`) — `HttpKnowledgeAdapter.pickServiceToken(path)` wählt per-Route; Fallback auf legacy `MCP_KNOWLEDGE_SERVICE_TOKEN` solange KC2 das master-Secret noch enabled hat (SEC-K-009).
+> 2. **`JwtSigner.signEraseReceipt()`** als optionale Methode — Adapter sendet bei `eraseUser()` einen `x-erase-receipt`-Header mit `payload.sub === userId`, signed mit demselben RS256-Key wie OBO (SEC-K-016 + MUSS-§4.1.2). KC2 verifiziert via JWKS, audience='mcp-knowledge2:erase'.
+> 3. **`EraseUserArgs.approvalId`** optional — wandert als `payload.approval_id` in den Receipt-JWS damit KC2 die Erase-Spur einem approval2-Approval zuordnen kann.
+>
+> Aktivierung (User-Hand): Doppler set `MCP_KNOWLEDGE_SERVICE_TOKEN_ERASE/SYNC/OPS` auf gleiche Werte wie KC2's `SERVICE_TOKEN_ERASE/SYNC/OPS`. Dann KC2 `REQUIRE_ERASE_RECEIPT=true` + KC2 legacy `SERVICE_TOKEN` rotate auf ungültig. Details + Status aller Findings in [knowledge2 docs/security/SECURITY_ISSUES.md](https://github.com/axel-rogg/mcp-knowledge2/blob/main/docs/security/SECURITY_ISSUES.md) Sprint-Stand-Block.
+>
 > **Update 2026-05-17 (Pilot-Deploy-Day):** Beide Services sind erstmals end-to-end live auf Fly.io:
 > - `https://mcp2.ai-toolhub.org/health` → `{"status":"ok"}` (2 Machines fra, shared-IPv4 + dediziertes IPv6, TLS-Cert validiert)
 > - `https://mcp-knowledge2.fly.dev/health/ready` → `{"status":"ready","checks":{"db":"ok","blob":"ok"}}`
