@@ -177,7 +177,28 @@ export function createSubMcpAuthEnricher(opts: SubMcpAuthEnricherOpts): SubMcpAu
         const clientId = cfgMap.get('_oauth_client_id');
         const clientSecret = cfgMap.get('_oauth_client_secret');
         const tokenUrl = OAUTH_BEARER_TOKEN_ENDPOINTS.get(subMcpName);
+        // eslint-disable-next-line no-console
+        console.info('[enricher] oauth-bearer enrich', {
+          subMcpName,
+          userId,
+          hasRefreshToken: !!refreshToken,
+          hasClientId: !!clientId,
+          hasClientSecret: !!clientSecret,
+          tokenUrl: tokenUrl ?? null,
+          configKeys: Array.from(cfgMap.keys()),
+        });
         if (!refreshToken || !clientId || !clientSecret || !tokenUrl) {
+          // eslint-disable-next-line no-console
+          console.warn('[enricher] oauth-bearer skipped: missing pieces', {
+            subMcpName,
+            userId,
+            missing: {
+              refreshToken: !refreshToken,
+              clientId: !clientId,
+              clientSecret: !clientSecret,
+              tokenUrl: !tokenUrl,
+            },
+          });
           return {};
         }
         // Cache-Check
@@ -203,16 +224,41 @@ export function createSubMcpAuthEnricher(opts: SubMcpAuthEnricherOpts): SubMcpAu
           body: body.toString(),
         });
         if (!resp.ok) {
-          return {}; // Refresh failed → kein Header, downstream-401 ist erwartet
-        }
-        const json = (await resp.json()) as {
-          access_token?: string;
-          expires_in?: number;
-          error?: string;
-        };
-        if (!json.access_token || json.error) {
+          const errText = await resp.text().catch(() => '');
+          // eslint-disable-next-line no-console
+          console.warn('[enricher] oauth-bearer refresh HTTP error', {
+            subMcpName,
+            status: resp.status,
+            body: errText.slice(0, 300),
+          });
           return {};
         }
+        const responseText = await resp.text();
+        let json: { access_token?: string; expires_in?: number; error?: string };
+        try {
+          json = JSON.parse(responseText);
+        } catch {
+          // eslint-disable-next-line no-console
+          console.warn('[enricher] oauth-bearer refresh non-JSON response', {
+            subMcpName,
+            body: responseText.slice(0, 300),
+          });
+          return {};
+        }
+        if (!json.access_token || json.error) {
+          // eslint-disable-next-line no-console
+          console.warn('[enricher] oauth-bearer refresh error in body', {
+            subMcpName,
+            error: json.error ?? 'no_access_token',
+            body: responseText.slice(0, 300),
+          });
+          return {};
+        }
+        // eslint-disable-next-line no-console
+        console.info('[enricher] oauth-bearer refresh ok', {
+          subMcpName,
+          expiresIn: json.expires_in,
+        });
         const expiresIn = typeof json.expires_in === 'number' ? json.expires_in : 3600;
         const expiresAt = ts + Math.min(expiresIn * 1000, OAUTH_BEARER_CACHE_MS);
         tokenCache.set(key, { token: json.access_token, expiresAt });
