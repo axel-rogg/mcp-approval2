@@ -128,21 +128,26 @@ export async function finishRegistration(
   const ext = input.response.clientExtensionResults as unknown as { prf?: { enabled?: boolean } } | undefined;
   const prfSupported = ext?.prf?.enabled === true;
 
-  const scoped = await db.scoped(input.userId);
-  await scoped.query(
-    `INSERT INTO webauthn_credentials
-       (user_id, credential_id, public_key, counter, prf_supported, transports, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [
-      input.userId,
-      credentialId,
-      Buffer.from(publicKey),
-      counter,
-      prfSupported,
-      JSON.stringify(input.response.response.transports ?? []),
-      Date.now(),
-    ],
-  );
+  // db.transaction() committed automatisch beim Callback-Resolve — db.scoped()
+  // tut das NICHT (siehe Comment in packages/adapters/src/db/postgres.ts) und
+  // hat unsere Inserts in einer Orphan-Transaktion verschwinden lassen
+  // (PWA sah 200, Lookup spaeter fand nichts → 'credential_unknown').
+  await db.transaction(input.userId, async (scoped) => {
+    await scoped.query(
+      `INSERT INTO webauthn_credentials
+         (user_id, credential_id, public_key, counter, prf_supported, transports, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        input.userId,
+        credentialId,
+        Buffer.from(publicKey),
+        counter,
+        prfSupported,
+        JSON.stringify(input.response.response.transports ?? []),
+        Date.now(),
+      ],
+    );
+  });
 
   return {
     credentialId,

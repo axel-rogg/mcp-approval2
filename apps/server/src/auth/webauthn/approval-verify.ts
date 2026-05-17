@@ -161,15 +161,14 @@ export async function verifyApprovalAssertion(
     });
   }
 
-  // Step 4: Counter anheben. WebAuthn-Spec: wenn newCounter <= storedCounter
-  // ist das ein Cloned-Authenticator-Indiz; SimpleWebAuthn lehnt das schon im
-  // verify-Schritt ab (verified=false). Hier nur Persistieren.
+  // Step 4: Counter anheben. db.transaction → committed.
   const newCounter = verification.authenticationInfo.newCounter;
-  const scoped = await db.scoped(args.userId);
-  await scoped.query(
-    `UPDATE webauthn_credentials
-        SET counter = $1, last_used_at = $2
-      WHERE (credential_id = $3 OR credential_id = $4) AND user_id = $5`,
-    [newCounter, Date.now(), credId, credIdBin, args.userId],
-  );
+  await db.transaction(args.userId, async (scoped) => {
+    await scoped.query(
+      `UPDATE webauthn_credentials
+          SET counter = $1, last_used_at = $2
+        WHERE (credential_id = $3 OR credential_id = $4) AND user_id = $5`,
+      [newCounter, Date.now(), credId, credIdBin, args.userId],
+    );
+  });
 }

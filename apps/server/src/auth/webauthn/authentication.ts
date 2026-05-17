@@ -167,13 +167,14 @@ export async function finishAuthentication(
   const info = verification.authenticationInfo;
   const newCounter = info.newCounter;
 
-  // Counter update (replay protection per spec)
-  const scoped = await db.scoped(cred.userId);
-  await scoped.query(
-    `UPDATE webauthn_credentials SET counter = $1, last_used_at = $2
-      WHERE (credential_id = $3 OR credential_id = $4)`,
-    [newCounter, Date.now(), credId, credIdBin],
-  );
+  // Counter update (replay protection per spec). db.transaction → committed.
+  await db.transaction(cred.userId, async (scoped) => {
+    await scoped.query(
+      `UPDATE webauthn_credentials SET counter = $1, last_used_at = $2
+        WHERE (credential_id = $3 OR credential_id = $4)`,
+      [newCounter, Date.now(), credId, credIdBin],
+    );
+  });
 
   const ext = input.response.clientExtensionResults as unknown as
     | { prf?: { results?: { first?: string } } }

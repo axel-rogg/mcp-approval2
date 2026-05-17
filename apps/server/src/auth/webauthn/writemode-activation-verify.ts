@@ -158,11 +158,12 @@ export async function verifyWritemodeActivation(
   }
 
   const newCounter = verification.authenticationInfo.newCounter;
-  const scoped = await db.scoped(args.userId);
-  await scoped.query(
-    `UPDATE webauthn_credentials
-        SET counter = $1, last_used_at = $2
-      WHERE (credential_id = $3 OR credential_id = $4) AND user_id = $5`,
-    [newCounter, Date.now(), credId, credIdBin, args.userId],
-  );
+  await db.transaction(args.userId, async (scoped) => {
+    await scoped.query(
+      `UPDATE webauthn_credentials
+          SET counter = $1, last_used_at = $2
+        WHERE (credential_id = $3 OR credential_id = $4) AND user_id = $5`,
+      [newCounter, Date.now(), credId, credIdBin, args.userId],
+    );
+  });
 }
