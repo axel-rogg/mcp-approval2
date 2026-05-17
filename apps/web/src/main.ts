@@ -39,6 +39,7 @@ import { renderStorageDetail } from './storage-detail.js';
 import { renderAppsTab } from './apps-tab.js';
 import { renderAppDetail } from './apps-detail.js';
 import { renderDefaultsTab } from './defaults-tab.js';
+import { renderWritemodeTab } from './writemode-tab.js';
 import { renderSettings } from './settings-tab.js';
 import { renderToolsTab } from './tools-tab.js';
 import { subscribePush } from './push.js';
@@ -76,6 +77,7 @@ type Route =
   | 'apps'
   | 'apps-detail'
   | 'tools'
+  | 'writemode'
   | 'debug';
 
 function parseRoute(): Route {
@@ -95,6 +97,7 @@ function parseRoute(): Route {
   if (hash.startsWith('settings')) return 'settings';
   if (hash.startsWith('tools')) return 'tools';
   if (hash.startsWith('defaults')) return 'defaults';
+  if (hash.startsWith('writemode') || hash.startsWith('write-mode')) return 'writemode';
   if (hash.startsWith('enroll-passkey')) return 'enroll-passkey';
   if (hash.startsWith('storage/')) return 'storage-detail';
   if (hash === 'storage' || hash.startsWith('storage?')) return 'storage';
@@ -212,6 +215,9 @@ async function boot(): Promise<void> {
     case 'defaults':
       await renderDefaultsSafe(root, session);
       return;
+    case 'writemode':
+      await renderWritemodeSafe(root, session);
+      return;
     case 'approval-detail': {
       const id = parseApprovalDetailId();
       if (!id) {
@@ -233,6 +239,15 @@ async function renderDefaultsSafe(root: HTMLElement, s: Session): Promise<void> 
     await renderDefaultsTab(root, api, apiPrefs, s);
   } catch (err) {
     console.error('defaults render failed', err);
+    renderSessionExpired(root);
+  }
+}
+
+async function renderWritemodeSafe(root: HTMLElement, s: Session): Promise<void> {
+  try {
+    await renderWritemodeTab(root, api, s);
+  } catch (err) {
+    console.error('writemode render failed', err);
     renderSessionExpired(root);
   }
 }
