@@ -125,17 +125,10 @@ export function renderHeader(root: HTMLElement, session: Session, onLogout: () =
   }
   header.appendChild(nav);
 
-  // Email als unauffälliger Footer-Hinweis — bewusst NICHT in der Topbar
-  // (v1-Pattern: User-Identitaet ist Session-Zustand, nicht primaere Info).
-  if (session.email) {
-    const meta = document.createElement('div');
-    meta.className = 'topbar-meta';
-    const email = document.createElement('span');
-    email.className = 'muted small';
-    email.textContent = session.email;
-    meta.appendChild(email);
-    header.appendChild(meta);
-  }
+  // Email-Anzeige bewusst NICHT im Header (User-Wunsch 2026-05-17).
+  // Wer eingeloggt ist sieht der User unter Settings → App.
+  // `session` bleibt im Signatur fuer kuenftige Auth-Hooks im Header.
+  void session;
 
   root.appendChild(header);
 }

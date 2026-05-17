@@ -84,8 +84,8 @@ interface ServerSection {
 function renderServerCard(s: ServerSection): HTMLElement {
   const details = document.createElement('details');
   details.className = 'server-card card';
-  // Native default offen, Gateways default collapsed
-  if (s.name === 'native') details.open = true;
+  // Alle Server-Cards default eingeklappt — User-Wunsch (Inventur ist
+  // Read-only-Surface, nicht Default-Workflow).
 
   const summary = document.createElement('summary');
   summary.className = 'server-card-summary';
