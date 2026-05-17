@@ -69,6 +69,51 @@ resource "doppler_secret" "approval2_dcr_allowed_redirect_hosts_fly" {
 }
 
 # ----------------------------------------------------------------------------
+# Multi-User Tier 1 (2026-05-17) — Email-Versand fuer Invite + Recovery
+# ----------------------------------------------------------------------------
+#
+# Default `console`: Mails landen in der `email_outbox`-DB-Tabelle, Operator
+# sieht sie im PWA-Admin-Tab "Outbox" + stellt manuell zu (Signal/iMessage).
+# Sinnvoll fuer 2-3-Tester-Pilot solange Resend-DNS-Verify pending ist.
+#
+# Switch zu Resend:
+#   1. Bei resend.com signup, Domain `ai-toolhub.org` hinzufuegen.
+#   2. Resend zeigt 3 DNS-Records (DKIM `resend._domainkey`, SPF, optional
+#      DMARC) — diese in CF via terraform/environments/privat/cloudflare-*.tf
+#      einpflegen (Resend-Domain-TF-Modul existiert nicht; manuell als
+#      cloudflare_record-Resourcen).
+#   3. RESEND_API_KEY-Wert hier ueberschreiben (Doppler-UI ODER hier den
+#      value-Block ersetzen).
+#   4. EMAIL_PROVIDER value von "console" auf "resend" flippen.
+#   5. terraform apply + `fly secrets set` redeploy.
+
+resource "doppler_secret" "approval2_email_provider_fly" {
+  project = "mcp-approval2"
+  config  = "fly"
+  name    = "EMAIL_PROVIDER"
+  value   = "console"
+}
+
+resource "doppler_secret" "approval2_email_from_fly" {
+  project = "mcp-approval2"
+  config  = "fly"
+  name    = "EMAIL_FROM"
+  value   = "mcp-approval2 <noreply@ai-toolhub.org>"
+}
+
+# Placeholder — Operator setzt den echten Resend-API-Key out-of-band.
+# Wir koennen ihn hier nicht generieren weil Resend kein TF-Provider hat.
+# Der min(8)-Check im Schema akzeptiert auch unsere Platzhalter-String
+# damit Boot nicht stirbt; wenn EMAIL_PROVIDER=console ist, wird der Wert
+# eh nicht gelesen.
+resource "doppler_secret" "approval2_resend_api_key_fly" {
+  project = "mcp-approval2"
+  config  = "fly"
+  name    = "RESEND_API_KEY"
+  value   = "rs_placeholder_set_via_resend_signup"
+}
+
+# ----------------------------------------------------------------------------
 # Outputs — Operator-Helpers
 # ----------------------------------------------------------------------------
 
