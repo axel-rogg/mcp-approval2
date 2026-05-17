@@ -2125,21 +2125,42 @@ code {
 .markdown-rendered h4,
 .markdown-rendered h5,
 .markdown-rendered h6 {
-  margin: 1rem 0 0.5rem;
+  margin: 1.2rem 0 0.6rem;
   line-height: 1.25;
+  font-weight: 700;
+  color: var(--fg);
+}
+
+.markdown-rendered h1:first-child,
+.markdown-rendered h2:first-child {
+  margin-top: 0;
 }
 
 .markdown-rendered h1 {
-  font-size: 1.3rem;
+  font-size: 1.75rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--border);
 }
 
 .markdown-rendered h2 {
-  font-size: 1.1rem;
-  margin-top: 1.1rem;
+  font-size: 1.4rem;
+  margin-top: 1.4rem;
+  padding-bottom: 0.2rem;
+  border-bottom: 1px solid var(--border);
 }
 
 .markdown-rendered h3 {
-  font-size: 1rem;
+  font-size: 1.2rem;
+}
+
+.markdown-rendered h4 {
+  font-size: 1.05rem;
+}
+
+.markdown-rendered h5,
+.markdown-rendered h6 {
+  font-size: 0.95rem;
+  color: var(--fg-muted);
 }
 
 .markdown-rendered p {
