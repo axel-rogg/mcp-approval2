@@ -136,6 +136,17 @@ resource "doppler_secret" "approval2_resend_api_key_fly" {
 # wrangler fuer den Worker).
 # ============================================================================
 
+# --------------------------------------------------------------------------
+# V1→V2 Migration Attempt (revert 2026-05-17): V1's Doppler-prd hat nur
+# die Names GATEWAY_GWS/GCLOUD/UTILS — die echten Werte sind als
+# Cloudflare-Worker-Secrets direkt (write-only). V1-Doppler-Werte zu lesen
+# liefert Empty-Strings → wuerde die Worker brechen.
+#
+# Fazit: random_password bleibt die Source-of-Truth fuer V2. Worker-Side
+# muss separat geupdated werden via `wrangler secret put SERVICE_TOKEN`
+# (siehe Cross-Repo-Sync-Block weiter unten).
+# --------------------------------------------------------------------------
+
 resource "random_password" "sub_mcp_token_utils" {
   length  = 48
   special = false
@@ -204,7 +215,7 @@ output "approval2_dcr_initial_access_token" {
 }
 
 output "sub_mcp_token_utils" {
-  description = "Sensitive: SERVICE_TOKEN fuer mcp-utils-Worker. Sync via wrangler secret put SERVICE_TOKEN."
+  description = "Sensitive: SERVICE_TOKEN fuer mcp-utils-Worker. Sync via wrangler secret put SERVICE_TOKEN --name mcp-utils."
   value       = random_password.sub_mcp_token_utils.result
   sensitive   = true
 }
