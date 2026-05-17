@@ -28,6 +28,7 @@
  *   DELETE /v1/knowledge/shares/:shareId          — revoke share
  *   POST   /v1/knowledge/search                   — search
  */
+import { randomUUID } from 'node:crypto';
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
@@ -130,7 +131,8 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
     const obj = await runProxy(() =>
       deps.knowledge.createObject({
         userId: user.userId,
-      userEmail: user.userEmail,
+        userEmail: user.userEmail,
+        approvalId: randomUUID(),
         ...(body.subtype !== undefined ? { subtype: body.subtype } : {}),
         ...(body.title !== undefined ? { title: body.title } : {}),
         ...(body.description !== undefined ? { description: body.description } : {}),
@@ -195,8 +197,19 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
     const id = c.req.param('id');
     if (!id) throw HttpError.badRequest('invalid_request', 'missing id');
     const patch = buildUpdatePatch(c.req.valid('json'));
+    // KC2 K-D4: OBO-Writes brauchen einen approval_id-Claim. PWA-direct
+    // Edits (Summary, Body-Tick, etc.) sind trusted-UI ohne Approval-Flow
+    // — wir prägen einen synthetischen approval_id (analog zu den
+    // Migration-Imports + delete-Pfad). Audit-Trail in KC2 sieht
+    // approval_id=<random uuid>, via_proxy=true.
     const obj = await runProxy(() =>
-      deps.knowledge.updateObject({ id, userId: user.userId, userEmail: user.userEmail, patch }),
+      deps.knowledge.updateObject({
+        id,
+        userId: user.userId,
+        userEmail: user.userEmail,
+        approvalId: randomUUID(),
+        patch,
+      }),
     );
     return c.json(obj);
   });
@@ -206,7 +219,12 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
     const id = c.req.param('id');
     if (!id) throw HttpError.badRequest('invalid_request', 'missing id');
     await runProxy(() =>
-      deps.knowledge.deleteObject({ id, userId: user.userId, userEmail: user.userEmail }),
+      deps.knowledge.deleteObject({
+        id,
+        userId: user.userId,
+        userEmail: user.userEmail,
+        approvalId: randomUUID(),
+      }),
     );
     return c.body(null, 204);
   });
@@ -248,7 +266,8 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
         deps.knowledge.createShare({
           resourceId: id,
           userId: user.userId,
-      userEmail: user.userEmail,
+          userEmail: user.userEmail,
+          approvalId: randomUUID(),
           grantedTo: body.grantedTo,
           scope: body.scope,
         }),
@@ -272,7 +291,12 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
     const shareId = c.req.param('shareId');
     if (!shareId) throw HttpError.badRequest('invalid_request', 'missing shareId');
     await runProxy(() =>
-      deps.knowledge.revokeShare({ shareId, userId: user.userId, userEmail: user.userEmail }),
+      deps.knowledge.revokeShare({
+        shareId,
+        userId: user.userId,
+        userEmail: user.userEmail,
+        approvalId: randomUUID(),
+      }),
     );
     return c.body(null, 204);
   });
