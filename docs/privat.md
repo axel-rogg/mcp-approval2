@@ -73,12 +73,11 @@ Was bewusst NICHT geteilt wird:
 | Compute-Target | Fly.io App, `shared-cpu-1x` 512MB, auto-stop | Cloud Run gen2 (europe-west4) minScale=1 |
 | `DATABASE_URL` | Neon pooled endpoint via PGBouncer → `postgresql://approval_app:<pw>@ep-<name>-pooler.c-3.eu-central-1.aws.neon.tech/mcp_approval2?sslmode=require` (von Terraform in Doppler gepusht, [neon-approval2.tf](../terraform/environments/privat/neon-approval2.tf)) | `postgres://app:<pw>@/approval?host=/cloudsql/<proj>:<region>:<inst>` |
 | Postgres-Hoster | **Neon Postgres** (managed, Free Tier, eu-central-1 Frankfurt, pgvector + pg_trgm built-in, Pooled-Endpoint via PGBouncer) | Cloud SQL Postgres 16 mit `cloudsql.enable_pgvector_extension=on` |
-| `KEK_PROVIDER` | `openbao` | `cloud_kms` (Cloud-KMS-wrapped master + HKDF-derive) |
-| `VAULT_ADDR` / `VAULT_TOKEN` | `http://mcp-approval2-openbao.internal:8200` + Root-Token aus VM-Setup | unset (cloud_kms aktiv) |
-| `VAULT_APPROLE_ROLE_ID` / `VAULT_APPROLE_SECRET_ID` | gesetzt **wenn AppRole** (sonst Static-Token) | unset |
-| `CLOUD_KMS_KEY_NAME` + `CLOUD_KMS_WRAPPED_MASTER_B64` | unset | gesetzt |
+| `KEK_PROVIDER` | `cloud_kms` (Default seit ADR-0011, 2026-05-17) | `cloud_kms` (gleicher Code-Pfad, anderes GCP-Projekt) |
+| `CLOUD_KMS_KEY_NAME` + `CLOUD_KMS_WRAPPED_MASTER_B64` | gesetzt (TF-managed in [`gcp-kms.tf`](../terraform/environments/privat/gcp-kms.tf), Region `europe-west3`) | gesetzt (business-GCP-Projekt) |
+| `VAULT_ADDR` / `VAULT_TOKEN` / `VAULT_APPROLE_*` | unset (Cloud-KMS-Default). Bei OpenBao-Alternative: `http://mcp-approval2-openbao.internal:8200` + AppRole-Secret-ID | unset |
 | `BLOB_PROVIDER` | `s3` (Cloudflare R2 EU) | `gcs` (native via Workload-Identity-Federation, no HMAC) ODER weiter `s3` mit GCS-S3-Interop |
-| `BLOB_ENDPOINT` | `https://<account>.r2.cloudflarestorage.com` | unset (gcs-native) ODER `https://storage.googleapis.com` (s3-interop) |
+| `BLOB_ENDPOINT` | `https://<account>.eu.r2.cloudflarestorage.com` (Pflicht: `.eu.` für EU-Jurisdiction-Buckets, sonst 403) | unset (gcs-native) ODER `https://storage.googleapis.com` (s3-interop) |
 | `BLOB_BUCKET` | `mcp-approval2-blob` (R2-EU) | GCS-Bucket im selben Project |
 | `BACKUP_BUCKET` | `mcp-approval2-backup` (R2-EU, separate API-Token) | GCS-Bucket im selben Project |
 | OAuth-IdP | Google OIDC | Google OIDC (gleich) |
@@ -93,14 +92,15 @@ Was bewusst NICHT geteilt wird:
 | Backup-Storage | R2 (CF), `s3://mcp-approval2-backup/...` | GCS, `gs://mcp-approval2-backup-business/...` |
 | Monitoring | `/metrics` Prometheus-text + Fly metrics scraper | Cloud Monitoring (Managed Prometheus) |
 
-**Kritischer Punkt** für die Kompatibilität: die App-Code-Pfade kennen nur die env-var-Namen, nicht den Provider. KEK-Provider-Selection in [`apps/server/src/index.ts:121-175`](../apps/server/src/index.ts#L121-L175) ist 4-stufig:
+**Kritischer Punkt** für die Kompatibilität: die App-Code-Pfade kennen nur die env-var-Namen, nicht den Provider. KEK-Provider-Selection in [`apps/server/src/index.ts:121-175`](../apps/server/src/index.ts#L121-L175) ist **5-stufig** seit ADR-0011 (2026-05-17, Cloud-KMS als Default):
 
-1. `VAULT_ADDR` + `VAULT_APPROLE_ROLE_ID` + `VAULT_APPROLE_SECRET_ID` → **OpenBao mit AppRole** (production-Pfad — wäre auch für Fly geeignet)
-2. `VAULT_ADDR` + `VAULT_TOKEN` → **OpenBao mit StaticToken** (Solo-Pilot-Pfad, Stand 2026-05-17)
-3. `MASTER_KEY_BASE64` → **LocalKekProvider** (dev/Fallback)
-4. (none) → no-credentials-mode
+1. `CLOUD_KMS_KEY_NAME` + `CLOUD_KMS_WRAPPED_MASTER_B64` → **CloudKmsKekProvider** (Default privat-Mode, live seit 2026-05-17)
+2. `VAULT_ADDR` + `VAULT_APPROLE_ROLE_ID` + `VAULT_APPROLE_SECRET_ID` → **OpenBao mit AppRole** (alternative Selfhosting-Variante)
+3. `VAULT_ADDR` + `VAULT_TOKEN` → **OpenBao mit StaticToken** (dev/test only)
+4. `MASTER_KEY_BASE64` → **LocalKekProvider** (in-process HKDF, nur dev/tests)
+5. (none) → no-credentials-mode (`KekRequiredError` bei Bedarf)
 
-Für business-Mode-Migration: Schritt 1+2 weg, neuer Branch für `KEK_PROVIDER=cloud_kms` ergänzen — Adapter ist als `CloudKmsKekProvider` in `packages/adapters/src/kek/` zu implementieren (heute Skeleton, business-Phase). Migration privat → business ist daher: **Doppler-Config-Werte tauschen + redeploy**, nicht „Code anfassen".
+Für business-Mode-Migration: gleiche Selection greift, nur `CLOUD_KMS_KEY_NAME` zeigt auf business-GCP-Projekt. Migration privat → business ist daher: **Doppler-Config-Werte tauschen + redeploy**, nicht „Code anfassen". `CloudKmsKekProvider` ist heute live in [`packages/adapters/src/kek/cloud_kms.ts`](../packages/adapters/src/kek/cloud_kms.ts) (analog [KC2 `CloudKmsKms`](https://github.com/axel-rogg/mcp-knowledge2/blob/main/src/adapters/kms/cloud_kms.ts)).
 
 ## 6. Konkrete Setup-Liste für privat-Mode (Fly)
 
@@ -119,18 +119,19 @@ Was muss in Doppler `mcp-approval2 / privat` aktiv sein, damit der Fly-Deploy l�
 - `GOOGLE_OAUTH_CLIENT_ID` + `_SECRET` — approval2-Client (Redirect: `https://mcp2.ai-toolhub.org/auth/google/callback`)
 - `CLOUDFLARE_API_TOKEN` — gleicher Token wie für knowledge2 (DNS+R2 reicht für approval2)
 
-**Provider-Setup (privat-Modus auf Fly):**
-- `KEK_PROVIDER=openbao` (impliziert von `VAULT_ADDR` gesetzt; Selection-Logic in [index.ts:121-175](../apps/server/src/index.ts#L121-L175))
-- `VAULT_ADDR=http://mcp-approval2-openbao.internal:8200` (Fly internal-DNS)
-- `VAULT_TOKEN=<root-token-aus-openbao-init>` — generiert beim `bao operator init` über `fly ssh console -a mcp-approval2-openbao`
-- `VAULT_TRANSIT_PATH=transit`
+**Provider-Setup (privat-Modus auf Fly, Cloud-KMS-Default seit ADR-0011):**
+- `KEK_PROVIDER=cloud_kms` (Default seit 2026-05-17; Selection-Logic in [index.ts:121-175](../apps/server/src/index.ts#L121-L175))
+- `CLOUD_KMS_KEY_NAME=projects/axelrogg-ai-tools/locations/europe-west3/keyRings/mcp-approval2-privat/cryptoKeys/user-dek-master` — TF-managed in [`gcp-kms.tf`](../terraform/environments/privat/gcp-kms.tf), Region `europe-west3` (single-region wegen google-Provider-6.x-Bug mit `eu` multi-region)
+- `CLOUD_KMS_WRAPPED_MASTER_B64` — 32-Byte random_bytes → KMS-encrypted via `google_kms_secret_ciphertext`, automatisch in Doppler gepiped
+- `GOOGLE_APPLICATION_CREDENTIALS_JSON` — Service-Account-Key `mcp-approval2-fly@...iam.gserviceaccount.com` mit `roles/cloudkms.cryptoKeyDecrypter` (TF-managed)
+- *OpenBao-Alternative (gate-flagged off, alternative Selfhosting-Variante):* `VAULT_ADDR=http://mcp-approval2-openbao.internal:8200` + AppRole/Static-Token. Aktivierung via `enable_openbao_fly=true` in TF-vars + `KEK_PROVIDER=openbao` in Doppler.
 - `BLOB_PROVIDER=s3`
-- `BLOB_ENDPOINT=https://<account>.r2.cloudflarestorage.com` (siehe CF-R2-Dashboard für Account-Endpoint)
+- `BLOB_ENDPOINT=https://<account>.eu.r2.cloudflarestorage.com` (Pflicht: `.eu.` für EU-Jurisdiction-Buckets, ohne `.eu.` antwortet R2 mit 403 "bucket not found")
 - `BLOB_REGION=auto`
 - `BLOB_ACCESS_KEY` + `BLOB_SECRET_KEY` — aus CF-Dashboard R2 API-Token (data-Bucket Scope: read+write+delete)
-- `BLOB_BUCKET=mcp-approval2-blob`
+- `BLOB_BUCKET=mcp-approval2-blob-eu`
 - `BLOB_PATH_STYLE=true`
-- `BACKUP_BUCKET=mcp-approval2-backup` (separate API-Token mit nur write+read, kein delete)
+- `BACKUP_BUCKET=mcp-approval2-backup-eu` (separate API-Token mit nur write+read, kein delete)
 
 **Domain + Whitelist:**
 - `BASE_URL=https://mcp2.ai-toolhub.org`
