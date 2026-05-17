@@ -130,6 +130,7 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
     const obj = await runProxy(() =>
       deps.knowledge.createObject({
         userId: user.userId,
+      userEmail: user.userEmail,
         ...(body.subtype !== undefined ? { subtype: body.subtype } : {}),
         ...(body.title !== undefined ? { title: body.title } : {}),
         ...(body.description !== undefined ? { description: body.description } : {}),
@@ -145,7 +146,9 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
     const user = requireUser(c);
     const id = c.req.param('id');
     if (!id) throw HttpError.badRequest('invalid_request', 'missing id');
-    const obj = await runProxy(() => deps.knowledge.getObject({ id, userId: user.userId }));
+    const obj = await runProxy(() =>
+      deps.knowledge.getObject({ id, userId: user.userId, userEmail: user.userEmail }),
+    );
     return c.json(obj);
   });
 
@@ -155,7 +158,7 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
     if (!id) throw HttpError.badRequest('invalid_request', 'missing id');
     const patch = buildUpdatePatch(c.req.valid('json'));
     const obj = await runProxy(() =>
-      deps.knowledge.updateObject({ id, userId: user.userId, patch }),
+      deps.knowledge.updateObject({ id, userId: user.userId, userEmail: user.userEmail, patch }),
     );
     return c.json(obj);
   });
@@ -164,7 +167,9 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
     const user = requireUser(c);
     const id = c.req.param('id');
     if (!id) throw HttpError.badRequest('invalid_request', 'missing id');
-    await runProxy(() => deps.knowledge.deleteObject({ id, userId: user.userId }));
+    await runProxy(() =>
+      deps.knowledge.deleteObject({ id, userId: user.userId, userEmail: user.userEmail }),
+    );
     return c.body(null, 204);
   });
 
@@ -183,6 +188,7 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
     const list = await runProxy(() =>
       deps.knowledge.listObjects({
         userId: user.userId,
+      userEmail: user.userEmail,
         ...(q.subtype !== undefined ? { subtype: q.subtype } : {}),
         ...(q.subtype_prefix !== undefined ? { subtypePrefix: q.subtype_prefix } : {}),
         ...(q.limit !== undefined ? { limit: q.limit } : {}),
@@ -204,6 +210,7 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
         deps.knowledge.createShare({
           resourceId: id,
           userId: user.userId,
+      userEmail: user.userEmail,
           grantedTo: body.grantedTo,
           scope: body.scope,
         }),
@@ -217,7 +224,7 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
     const id = c.req.param('id');
     if (!id) throw HttpError.badRequest('invalid_request', 'missing id');
     const shares = await runProxy(() =>
-      deps.knowledge.listShares({ resourceId: id, userId: user.userId }),
+      deps.knowledge.listShares({ resourceId: id, userId: user.userId, userEmail: user.userEmail }),
     );
     return c.json({ items: shares });
   });
@@ -226,7 +233,9 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
     const user = requireUser(c);
     const shareId = c.req.param('shareId');
     if (!shareId) throw HttpError.badRequest('invalid_request', 'missing shareId');
-    await runProxy(() => deps.knowledge.revokeShare({ shareId, userId: user.userId }));
+    await runProxy(() =>
+      deps.knowledge.revokeShare({ shareId, userId: user.userId, userEmail: user.userEmail }),
+    );
     return c.body(null, 204);
   });
 
@@ -236,6 +245,7 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
     const hits = await runProxy(() =>
       deps.knowledge.search({
         userId: user.userId,
+      userEmail: user.userEmail,
         query: body.query,
         ...(body.subtypes !== undefined ? { subtypes: body.subtypes } : {}),
         ...(body.subtype_prefixes !== undefined
@@ -254,10 +264,17 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
 // Helpers
 // -----------------------------------------------------------------------------
 
-function requireUser(c: { get: (key: 'user') => AppBindings['Variables']['user'] }): { userId: string } {
+function requireUser(c: {
+  get: (key: 'user') => AppBindings['Variables']['user'];
+}): { userId: string; userEmail: string } {
   const user = c.get('user');
   if (!user) throw HttpError.unauthorized('missing principal');
-  return user;
+  // SEC-K-001-fix: userEmail wandert via KnowledgeAdapter in den OBO-JWT
+  // (`payload.on_behalf_of`). KC2 macht resolveByEmail(on_behalf_of) — ohne
+  // Email wird auf resolveByGoogleSub mit der approval2-user-id gefallen
+  // (UUID hat kein '@') und KC2 findet den User nicht → 403 'OBO subject
+  // not provisioned'. Mit Email klappt der Lookup.
+  return { userId: user.userId, userEmail: user.email };
 }
 
 /**
