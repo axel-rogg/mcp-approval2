@@ -49,6 +49,33 @@ export interface CredentialMeta {
   readonly expiresAt: number | null;
 }
 
+export interface InventoryNativeTool {
+  readonly name: string;
+  readonly description: string;
+  readonly sensitivity: 'read' | 'write' | 'danger';
+  readonly readOnlyHint: boolean;
+  readonly destructiveHint: boolean;
+}
+
+export interface InventoryGatewayTool {
+  readonly name: string;
+  readonly description: string | null;
+  readonly sensitivity: 'read' | 'write' | 'danger';
+}
+
+export interface InventoryGateway {
+  readonly name: string;
+  readonly displayName: string;
+  readonly enabled: boolean;
+  readonly toolsCachedAt: number | null;
+  readonly tools: ReadonlyArray<InventoryGatewayTool>;
+}
+
+export interface InventoryResponse {
+  readonly native: ReadonlyArray<InventoryNativeTool>;
+  readonly gateways: ReadonlyArray<InventoryGateway>;
+}
+
 export interface ApiClient {
   // Auth
   getSession(): Promise<Session | null>;
@@ -70,6 +97,9 @@ export interface ApiClient {
   rejectApproval(args: { id: string; reason?: string }): Promise<void>;
   pollResult(approvalId: string): Promise<unknown>;
   getApprovalChallenge(id: string): Promise<{ challengeB64: string; allowCredentialIdsB64: string[] }>;
+
+  // Inventory (Tools/Servers)
+  listInventory(): Promise<InventoryResponse>;
 
   // Credentials
   listCredentials(): Promise<CredentialMeta[]>;
@@ -306,6 +336,10 @@ export function createApiClient(baseUrl?: string): ApiClient {
         `/v1/approvals/${encodeURIComponent(approvalId)}/result`,
       );
       return out.result;
+    },
+
+    async listInventory() {
+      return await request<InventoryResponse>('/v1/inventory');
     },
 
     async listCredentials() {
