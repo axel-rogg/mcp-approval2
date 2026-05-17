@@ -287,16 +287,7 @@ export async function renderStorageDetail(
     infoBtn.classList.toggle('active', !metaSection.hidden);
   });
 
-  // ─── Verknüpfungen (Refs) — PLAN-document-linking §10.5 D1.
-  // Chips sind klickbar → Browser-User navigiert per Click. Eager-Bundle-
-  // Mechanik (?include_bodies=resource) wird agent-side via skills.get_bundle
-  // MCP-Tool genutzt; für Browser-Lesen ist der per-Chip-Click ausreichend.
-  const refsSection = renderRefsSection(obj.refs);
-  if (refsSection) {
-    main.appendChild(refsSection);
-  }
-
-  // ─── Summary + Body — Labels weggelassen (User-Wunsch Platz-Spar).
+  // ─── Summary — Label weggelassen (User-Wunsch Platz-Spar).
   // Karten sind durch Card-Border + Spacing visuell getrennt — "Summary"/
   // "Body"-Titel sind redundant. Edit-Pencil floated top-right.
   if (obj.description !== undefined && obj.description !== null && obj.description !== '') {
@@ -320,6 +311,15 @@ export async function renderStorageDetail(
     p.textContent = stripIpiWrappers(obj.description);
     summarySection.appendChild(p);
     main.appendChild(summarySection);
+  }
+
+  // ─── Verknüpfungen (Refs) — PLAN-document-linking §10.5 D1.
+  // Platzierung unter Summary (User-Wunsch): Summary gibt Kontext, dann
+  // verlinkte Resources. Chips klickbar → Navigate. Eager-Bundle agent-side
+  // via skills.get_bundle MCP-Tool.
+  const refsSection = renderRefsSection(obj.refs);
+  if (refsSection) {
+    main.appendChild(refsSection);
   }
 
   // Body — nur rendern wenn tatsaechlich Body-Content da ist.
