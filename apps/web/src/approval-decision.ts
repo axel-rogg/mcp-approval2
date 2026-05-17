@@ -116,10 +116,11 @@ async function handleApprove(api: ApiClient, approval: PendingApproval): Promise
     await api.approveApproval({
       id: approval.id,
       credentialIdB64: bytesToB64Url(prfResult.credentialId),
-      authenticatorDataB64: bytesToB64(prfResult.authenticatorData),
-      clientDataJsonB64: bytesToB64(prfResult.clientDataJson),
-      signatureB64: bytesToB64(prfResult.signature),
-      ...(prfResult.userHandle ? { userHandleB64: bytesToB64(prfResult.userHandle) } : {}),
+      // simplewebauthn-server erwartet base64url, nicht plain base64.
+      authenticatorDataB64: bytesToB64Url(prfResult.authenticatorData),
+      clientDataJsonB64: bytesToB64Url(prfResult.clientDataJson),
+      signatureB64: bytesToB64Url(prfResult.signature),
+      ...(prfResult.userHandle ? { userHandleB64: bytesToB64Url(prfResult.userHandle) } : {}),
       ...(prfSessionId ? { prfSessionId } : {}),
     });
 

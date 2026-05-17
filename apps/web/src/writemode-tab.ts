@@ -65,12 +65,6 @@ function bytesToB64Url(bytes: Uint8Array): string {
   return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
-function bytesToB64(bytes: Uint8Array): string {
-  let s = '';
-  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i] ?? 0);
-  return btoa(s);
-}
-
 function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const out = new ArrayBuffer(bytes.byteLength);
   new Uint8Array(out).set(bytes);
@@ -170,13 +164,16 @@ async function signActivation(duration: DurationMin, ts: number): Promise<{
   if (!credential) throw new Error('User hat WebAuthn abgebrochen.');
   const assertion = credential.response as AuthenticatorAssertionResponse;
 
+  // simplewebauthn-server verlangt base64url (kein '+/=', dafuer '-_'). Vorher
+  // wurde bytesToB64 (=plain base64) genutzt → 'Credential response
+  // authenticatorData was not a base64url string'.
   return {
     credentialIdB64: bytesToB64Url(new Uint8Array(credential.rawId)),
-    authenticatorDataB64: bytesToB64(new Uint8Array(assertion.authenticatorData)),
-    clientDataJsonB64: bytesToB64(new Uint8Array(assertion.clientDataJSON)),
-    signatureB64: bytesToB64(new Uint8Array(assertion.signature)),
+    authenticatorDataB64: bytesToB64Url(new Uint8Array(assertion.authenticatorData)),
+    clientDataJsonB64: bytesToB64Url(new Uint8Array(assertion.clientDataJSON)),
+    signatureB64: bytesToB64Url(new Uint8Array(assertion.signature)),
     ...(assertion.userHandle
-      ? { userHandleB64: bytesToB64(new Uint8Array(assertion.userHandle)) }
+      ? { userHandleB64: bytesToB64Url(new Uint8Array(assertion.userHandle)) }
       : {}),
   };
 }
