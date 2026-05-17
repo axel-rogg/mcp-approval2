@@ -1,15 +1,21 @@
 # privat.md — Private-Mode-Setup für mcp-approval2
 
-> **Status:** ✅ Aktiv 2026-05-17 (Fly.io-Switch von Hetzner + KMS-Switch auf Google Cloud KMS + **Neon-Switch von Fly Postgres**)
+> **Status:** ✅ Aktiv 2026-05-17 (Fly.io-Switch von Hetzner + KMS-Switch auf Google Cloud KMS + **Neon-Switch von Fly Postgres**) — **erweitert 2026-05-17 abend: 3-Szenarien-Modell (Family-Hardening LIVE)**
 > **Owner:** Axel
 > **Schwester-Doc:** [`mcp-knowledge2/docs/STRATEGIE-pilot.md`](https://github.com/axel-rogg/mcp-knowledge2/blob/main/docs/STRATEGIE-pilot.md)
 > **Auslöser:** User-Decision 2026-05-17 — (1) Operations-Last bei Hetzner-Self-Host ist für Solo-Operator nicht durchhaltbar (OS-Patches, Reboots, SSH-Hygiene), Fly.io übernimmt diese Schicht; (2) OpenBao verlangt Offline-Key-Storage (USB/Paper-Wallet) den der Operator nicht hat — Google Cloud KMS multi-region `eu` ersetzt OpenBao als Default-KEK-Path, siehe [ADR-0005](./adr/0005-cloud-kms-decision.md); (3) **Fly Managed Postgres** (MPG) ist mit ~38 $/Monat (Basic-Plan) für einen Solo-Pilot überdimensioniert, **Neon Postgres Free-Tier** (0 €/Monat, 0,5 GB Storage, pgvector built-in, EU-Region Frankfurt) reicht jahrelang. **GCP-Kompatibilität (business-Mode) bleibt Prio** — Adapter-Pattern + Provider-Switch-Matrix unverändert, KMS ist nur EIN-Knopf-Tausch zwischen privat und business.
 
-Diese Datei dokumentiert die ehrliche Pilot-Linie für mcp-approval2 im **privat-Modus** (Solo-User axelrogg@gmail.com + bis 2-5 Family/Friends), zeigt welche Ressourcen mit dem Schwester-Service mcp-knowledge2 geteilt werden können, und bewahrt die Provider-Switch-Matrix für eine spätere Migration in den **business-Modus** (Google Cloud) ohne Code-Refactor.
+> **📍 Scope-Schärfung 2026-05-17 abend (Family-Hardening Sprint):** Dieses Dokument beschreibt den **privat-Modus = Familie im Haushalt** (2-5 Personen). Das frühere "Solo-User + Family/Friends" wurde aufgesplittet auf drei distinkte Szenarien — siehe [THREAT-MODEL.md §Deployment-Kontext](../THREAT-MODEL.md#deployment-kontext-drei-realistische-szenarien):
+>
+> - **Familie im Haushalt** (HIER, primär) — Art. 2(2)c DSGVO greift, kein Compliance-Programm nötig, ~4h Operator-Sprint-Mindest-Kit ([runbook-family-hardening.md](runbooks/runbook-family-hardening.md))
+> - **Self-Host für Freunde** — jeder Freund deployed eigene Instance, Axel raus aus DSGVO-Kette; Code-Hardening-Defaults (Per-User-KEK, RS256, Audit-Trigger) sind Phase-2-Roadmap
+> - **Corporate-GCP-VPC** — eigenes 4-6 Wochen Compliance-Programm (DPIA + AVV + TIA + VVT + DPO), siehe Provider-Switch-Matrix unten
+
+Diese Datei dokumentiert die ehrliche Pilot-Linie für mcp-approval2 im **privat-Modus = Familie im Haushalt**, zeigt welche Ressourcen mit dem Schwester-Service mcp-knowledge2 geteilt werden können, und bewahrt die Provider-Switch-Matrix für eine spätere Migration in den **business-Modus** (Google Cloud) ohne Code-Refactor.
 
 ## 1. Was „privat" hier bedeutet
 
-- **Single-Tenant**: 1 Familien-Setup = 1 Instance. Solo-User axelrogg + bis 2-5 Family/Friends-Allowlist, DSGVO-light.
+- **Single-Tenant Family-Modus**: 1 Familien-Setup = 1 Instance. Axel + 2-4 Familienmitglieder im Haushalt. **DSGVO Art. 2(2)c greift** (Haushalts-Ausnahme, EuGH Lindqvist/Ryneš) — kein formales Compliance-Programm nötig.
 - **Cost-Cap-Ziel**: ~3-7 €/Monat für die komplette Approval-Stack (approval2 + knowledge2 + Neon-Postgres + R2-Blob + Backups). Neon Free Tier deckt beide DBs ab — Compute ist der einzige laufende Posten.
 - **Operations-Cap**: ~1.5-2.5h/Monat Total-Wartung. Self-Host-Aufwand (OS-Patches, SSH-Hygiene, Reboots) **explizit verlagert** auf Fly.io.
 - **Eine ehrliche Decision-Linie**: keine Multi-Cloud-Orchestrierung, keine HA, keine Region-Replicas.

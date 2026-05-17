@@ -1,29 +1,44 @@
 # mcp-approval2
 
-> **Status: AS-3 code-complete + Generic-Object-Model implementiert
-> (2026-05-15)** auf Branch `feat/as3-cutover`. Cutover-Day pending —
+> **Status 2026-05-17 abend: Family-Hardening LIVE** (Commit 95e1997 auf
+> main). Threat-Modell auf **drei Deployment-Szenarien** umgestellt:
+> **Familie im Haushalt** (primär, Art. 2(2)c DSGVO greift),
+> **Self-Host für Freunde** (jeder eigene Instance, Axel raus aus
+> DSGVO-Kette), **Corporate-GCP-VPC** (eigenes 4-6 Wochen Compliance-
+> Programm). Code-Hardening: `securityHeaders()` + `originCheck()`
+> Middleware + `BOOTSTRAP_ADMIN_EMAIL` fail-CLOSED in production. Details
+> in [THREAT-MODEL.md](THREAT-MODEL.md) +
+> [docs/runbooks/runbook-family-hardening.md](docs/runbooks/runbook-family-hardening.md).
+>
+> AS-3 code-complete + Generic-Object-Model (2026-05-15) lief auf Branch
+> `feat/as3-cutover`; Pilot-Deploy seit 2026-05-17 live auf Fly.io.
 > Operator-Runbook im Schwester-Repo
-> [knowledge2/docs/runbooks/runbook-as3-cutover.md](https://github.com/axel-rogg/mcp-knowledge2/blob/feat/as3-cutover/docs/runbooks/runbook-as3-cutover.md).
+> [knowledge2/docs/runbooks/runbook-as3-cutover.md](https://github.com/axel-rogg/mcp-knowledge2/blob/main/docs/runbooks/runbook-as3-cutover.md).
 >
 > Greenfield-Replacement fuer
-> [mcp-approval](https://github.com/axel-rogg/mcp-approval) als Multi-User-
-> faehiger MCP-Approval-Server mit portabler Runtime.
+> [mcp-approval](https://github.com/axel-rogg/mcp-approval) als
+> Multi-User-faehiger MCP-Approval-Server mit portabler Runtime.
 
 ## Was das ist
 
 mcp-approval2 ist ein **Model Context Protocol (MCP) Server** mit:
 
-- **Multi-User von Tag 0** — 5-15 User pro Pilot-Instance, strikte
-  User-Isolation via Postgres-RLS + App-Layer-Repository-Pattern
+- **Multi-User-tauglich** — strikte User-Isolation via Postgres-RLS +
+  App-Layer-Repository-Pattern. Im **Familie-Modus** (primär seit
+  2026-05-17) auf 2-5 Personen ausgelegt; Multi-User-Tier-1-Infrastruktur
+  (Invite/Outbox/Admin-Tab) bleibt als Defense-in-Depth + Self-Host-
+  Default für Freunde.
 - **Portable Runtime** — Adapter-Layer fuer Postgres-Self-Host (Primary)
   und Cloudflare Workers (Sekundaer)
-- **Maximum-Hardening fuer Credentials** — OpenBao Envelope-Encryption +
-  WebAuthn-PRF-Layer, Operator-Compromise-resistant
+- **Maximum-Hardening fuer Credentials** — OpenBao Envelope-Encryption
+  (alternative Selfhosting-Variante) bzw. Google Cloud KMS (Default seit
+  ADR-0011) + WebAuthn-PRF-Layer, Operator-Compromise-resistant
 - **OAuth 2.1 + PKCE + RFC 8707** MCP-Spec-konform (Nov 2025)
 - **WYSIWYS Approval-Flow** mit Push-Notification-PWA fuer State-modifying
   Tools
-- **DSGVO/Compliance-tauglich** — Crypto-Shredding fuer Right-to-Erasure,
-  immutable Audit-Log, EU-Region-Datenresidenz
+- **DSGVO-tauglich für Pilot- und Corporate-Modus** (Crypto-Shredding,
+  Audit-Log, EU-Region-Datenresidenz). Familie-Modus nutzt Art. 2(2)c-
+  Ausnahme — DSGVO-Compliance ist Defense-in-Depth, keine Pflicht.
 
 ## Architektur
 

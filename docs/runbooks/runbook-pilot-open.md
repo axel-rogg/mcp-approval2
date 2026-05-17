@@ -4,6 +4,17 @@
 > Tier 1 sind deployed (siehe [docs/STATUS.md](../STATUS.md)). Doppler-Secrets
 > sind via Terraform gemanaged (siehe
 > [terraform/environments/privat/approval2-app-secrets.tf](../../terraform/environments/privat/approval2-app-secrets.tf)).
+>
+> **📍 Scope-Hinweis (2026-05-17 abend, Family-Hardening Sprint):** Dieser
+> Runbook beschreibt das **Multi-User-Tier-1-Onboarding via Invite/Email**.
+> Im **Family-Modus** (primärer Modus seit 2026-05-17, siehe
+> [THREAT-MODEL.md](../../THREAT-MODEL.md) §Deployment-Kontext) ist der
+> Invite-Workflow **NICHT** der Standard-Pfad — Familie loggt direkt mit
+> Google-OIDC ein, Axel als Operator akzeptiert sie via Admin-Tab.
+> Diese Runbook hier ist relevant für: (a) **Self-Host für Freunde** —
+> wenn jemand Code in seiner eigenen Instance einen Tester einladen will;
+> (b) **Corporate-Modus** — wenn echte 2-3 externe Tester ein Pilot fahren.
+> Für Family-Modus-Setup siehe [runbook-family-hardening.md](runbook-family-hardening.md).
 
 Diese Operator-Sequenz öffnet den Pilot für 2-3 Tester. Annahme: Email-Versand
 läuft im `console`-Mode (Mails landen in `email_outbox`-DB, Operator stellt

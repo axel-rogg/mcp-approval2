@@ -1,10 +1,32 @@
-# Status: mcp-approval2 (2026-05-17, Pilot-Ready: Security A+B + Multi-User Tier 1 LIVE)
+# Status: mcp-approval2 (2026-05-17 abend, Family-Hardening LIVE)
 
-> **🛡 Security-Audit Phase A+B + Multi-User-Tier-1 deployed 2026-05-17.**
+> **🏠 Family-Hardening Sprint LIVE 2026-05-17 abend (Commit 95e1997 auf main).**
+> THREAT-MODEL umgestellt auf **3-Szenarien-Modell** (Familie im Haushalt /
+> Self-Host für Freunde / Corporate-GCP-VPC) statt der bisherigen "Privat
+> 5-15 Tester"-Annahme. Code-Hardening: `securityHeaders()` Middleware
+> (HSTS + X-Frame-Options:DENY + nosniff + Referrer-Policy + COIP/COOP),
+> `originCheck()` Middleware (CSRF-Lite auf `/auth/*` + `/oauth/*`),
+> `BOOTSTRAP_ADMIN_EMAIL` fail-CLOSED in production. Infra:
+> `gcp-billing-budget.tf` mit Threshold-Alerts (50/90/100% auf 20€/Mo).
+> Docs: [THREAT-MODEL.md](../THREAT-MODEL.md), [runbook-family-hardening.md](runbooks/runbook-family-hardening.md)
+> mit ~4h Operator-Sprint, [operator-recovery-brief.md](runbooks/operator-recovery-brief.md)
+> Safe-Brief-Template (Bus-Faktor 1 Mitigation), [docs/security/THREAT-SYNTHESIS-2026-05-17.md](security/THREAT-SYNTHESIS-2026-05-17.md)
+> konsolidiert 4 Spezialisten-Briefs (Crypto/Identity/Ops/Privacy).
+>
+> **Pending Operator-Tasks (~3h manuell):** Google-Passkey + Recovery-Codes
+> für Axel + Familie, Fallback-Login-Pfade (TOTP) bei
+> GitHub/Fly/Doppler/CF/Resend, R2 Object-Lock + Versioning (CF-Dashboard,
+> out-of-band weil Provider nicht TF-fähig), Restore-Drill scharf fahren,
+> GCP-Billing-Budget aktivieren (`doppler secrets set TF_VAR_gcp_billing_account_id=XXX`),
+> Recovery-Brief ausfüllen + Safe + Treuhänder-Kopie.
+>
+> **🛡 Security-Audit Phase A+B + Multi-User-Tier-1 deployed 2026-05-17 (Vormittag).**
 > 14 Security-Findings gefixt (8 BLOCKER + 6 HIGH). EmailAdapter (Resend +
 > Console-Fallback) + persistente `email_outbox` + PWA-Admin-Tab
-> (Users/Invites/Outbox/Audit) live. Operator-Sequenz für ersten Pilot-Tester
-> siehe [runbooks/runbook-pilot-open.md](runbooks/runbook-pilot-open.md).
+> (Users/Invites/Outbox/Audit) live. Im Family-Modus ist die Tier-1-
+> Infrastruktur Defense-in-Depth + Self-Host-Default für Freunde, nicht
+> Pflicht-Workflow. Wenn jemand doch >Familie pilotet: Operator-Sequenz
+> [runbooks/runbook-pilot-open.md](runbooks/runbook-pilot-open.md).
 >
 > **🚀 Pilot-Live seit 2026-05-17:** Beide Services erstmals end-to-end auf Fly.io
 > erreichbar. `https://mcp2.ai-toolhub.org/health` → `{"status":"ok"}` (2 Machines fra),
