@@ -837,10 +837,10 @@ code {
    füllt ihn, scrollt allein (single-scroll), keine nested Borders/Backgrounds. */
 
 .body-content {
-  max-height: 70vh;
-  overflow: auto;
   margin: 0;
-  /* keine eigene background/border — Card-Style inherited */
+  /* keine eigene background/border — Card-Style inherited.
+     Kein max-height/overflow — Card wächst mit Content, die Page selbst
+     scrollt (User-Wunsch 2026-05-17: keine Doppel-Scroller). */
 }
 
 /* Code blocks (gemeinsam für markdown-fenced + standalone code-rendered) */
@@ -854,8 +854,11 @@ code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.875rem;
   line-height: 1.5;
-  /* `pre` ist der Scroll-Container im standalone-code-Pfad — single scroll */
   white-space: pre;
+  /* Horizontal-Scroll auf <pre> selbst — verhindert dass überlange Code-
+     Zeilen die Card horizontal aufblasen. Vertikal: Page scrollt. */
+  overflow-x: auto;
+  overflow-y: visible;
   overflow-wrap: normal;
 }
 
