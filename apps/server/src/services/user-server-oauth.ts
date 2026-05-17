@@ -145,14 +145,17 @@ export function createUserServerOAuthService(
       const ts = now();
       const expiresAt = ts + STATE_TTL_MS;
 
-      const scoped = await db.scoped(userId);
-      await scoped.query(
-        `INSERT INTO user_sub_mcp_oauth_state
-           (state, user_id, sub_mcp_name, code_verifier, redirect_uri,
-            created_at, expires_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [state, userId, subMcpName, verifier, redirectUri, ts, expiresAt],
-      );
+      // ⚠️ Pool-Hygiene: db.transaction() statt db.scoped() — letzteres
+      // leaked Connections. Siehe user-subscriptions.ts.
+      await db.transaction(userId, async (scoped) => {
+        await scoped.query(
+          `INSERT INTO user_sub_mcp_oauth_state
+             (state, user_id, sub_mcp_name, code_verifier, redirect_uri,
+              created_at, expires_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [state, userId, subMcpName, verifier, redirectUri, ts, expiresAt],
+        );
+      });
 
       const url = new URL(oauth.authorize_url);
       url.searchParams.set('response_type', 'code');
@@ -172,23 +175,32 @@ export function createUserServerOAuthService(
     },
 
     async callback(userId, subMcpName, state, code) {
-      const scoped = await db.scoped(userId);
-      const rows = await scoped.query<OAuthStateRow>(
-        `SELECT state, user_id, sub_mcp_name, code_verifier, redirect_uri,
-                created_at, expires_at
-           FROM user_sub_mcp_oauth_state
-          WHERE state = $1 AND user_id = $2 AND sub_mcp_name = $3
-          LIMIT 1`,
-        [state, userId, subMcpName],
-      );
-      const row = rows[0];
+      // Pool-Hygiene: state-Row in eigener Transaction lesen + ggf. expire-
+      // cleanup. Token-Exchange (langer extern-Fetch) und finale state-row-
+      // Loeschung passieren danach in separater Transaction — wir wollen
+      // keine offene DB-Tx halten waehrend wir auf den OAuth-Provider warten.
+      const row = await db.transaction(userId, async (scoped) => {
+        const rows = await scoped.query<OAuthStateRow>(
+          `SELECT state, user_id, sub_mcp_name, code_verifier, redirect_uri,
+                  created_at, expires_at
+             FROM user_sub_mcp_oauth_state
+            WHERE state = $1 AND user_id = $2 AND sub_mcp_name = $3
+            LIMIT 1`,
+          [state, userId, subMcpName],
+        );
+        const r = rows[0];
+        if (!r) return null;
+        const exp = typeof r.expires_at === 'number' ? r.expires_at : Number(r.expires_at);
+        if (exp < now()) {
+          await scoped.query(`DELETE FROM user_sub_mcp_oauth_state WHERE state = $1`, [state]);
+          return 'expired' as const;
+        }
+        return r;
+      });
       if (!row) {
         throw HttpError.unauthorized('oauth_state_invalid');
       }
-      const expiresAt = typeof row.expires_at === 'number' ? row.expires_at : Number(row.expires_at);
-      if (expiresAt < now()) {
-        // Cleanup + throw
-        await scoped.query(`DELETE FROM user_sub_mcp_oauth_state WHERE state = $1`, [state]);
+      if (row === 'expired') {
         throw HttpError.unauthorized('oauth_state_expired');
       }
 
@@ -254,8 +266,11 @@ export function createUserServerOAuthService(
         await config.set(userId, subMcpName, '_oauth_access_token_expires_at', String(expiresAt));
       }
 
-      // State-Row loeschen (single-use)
-      await scoped.query(`DELETE FROM user_sub_mcp_oauth_state WHERE state = $1`, [state]);
+      // State-Row loeschen (single-use). Eigene Transaction damit kein
+      // db.scoped()-Leak entsteht.
+      await db.transaction(userId, async (scoped) => {
+        await scoped.query(`DELETE FROM user_sub_mcp_oauth_state WHERE state = $1`, [state]);
+      });
     },
 
     async cleanupExpired() {

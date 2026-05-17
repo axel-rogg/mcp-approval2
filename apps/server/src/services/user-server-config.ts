@@ -130,45 +130,51 @@ export function createUserServerConfigService(
     is_secret, created_at, updated_at
   `;
 
+  // ⚠️ Connection-Pool: ALLE Methoden nutzen db.transaction() statt
+  // db.scoped() — letzteres reserved eine Connection ohne release() und
+  // exhaustet den Postgres-Pool. Siehe user-subscriptions.ts.
   return {
     async listKeys(userId, subMcpName) {
-      const scoped = await db.scoped(userId);
-      const rows = await scoped.query<RawRow>(
-        `SELECT ${SELECT_COLS} FROM user_sub_mcp_config
-          WHERE user_id = $1 AND sub_mcp_name = $2
-          ORDER BY config_key ASC`,
-        [userId, subMcpName],
-      );
-      return rows.map(rowToEntry);
+      return await db.transaction(userId, async (scoped) => {
+        const rows = await scoped.query<RawRow>(
+          `SELECT ${SELECT_COLS} FROM user_sub_mcp_config
+            WHERE user_id = $1 AND sub_mcp_name = $2
+            ORDER BY config_key ASC`,
+          [userId, subMcpName],
+        );
+        return rows.map(rowToEntry);
+      });
     },
 
     async get(userId, subMcpName, configKey) {
-      const scoped = await db.scoped(userId);
-      const rows = await scoped.query<RawRow>(
-        `SELECT ${SELECT_COLS} FROM user_sub_mcp_config
-          WHERE user_id = $1 AND sub_mcp_name = $2 AND config_key = $3
-          LIMIT 1`,
-        [userId, subMcpName, configKey],
-      );
-      const row = rows[0];
-      if (!row) throw HttpError.notFound('config key not found');
-      const value = await decryptRow(row);
-      return { ...rowToEntry(row), value };
+      return await db.transaction(userId, async (scoped) => {
+        const rows = await scoped.query<RawRow>(
+          `SELECT ${SELECT_COLS} FROM user_sub_mcp_config
+            WHERE user_id = $1 AND sub_mcp_name = $2 AND config_key = $3
+            LIMIT 1`,
+          [userId, subMcpName, configKey],
+        );
+        const row = rows[0];
+        if (!row) throw HttpError.notFound('config key not found');
+        const value = await decryptRow(row);
+        return { ...rowToEntry(row), value };
+      });
     },
 
     async getAllValues(userId, subMcpName) {
-      const scoped = await db.scoped(userId);
-      const rows = await scoped.query<RawRow>(
-        `SELECT ${SELECT_COLS} FROM user_sub_mcp_config
-          WHERE user_id = $1 AND sub_mcp_name = $2`,
-        [userId, subMcpName],
-      );
-      const map = new Map<string, string>();
-      for (const r of rows) {
-        const v = await decryptRow(r);
-        map.set(r.config_key, v);
-      }
-      return map;
+      return await db.transaction(userId, async (scoped) => {
+        const rows = await scoped.query<RawRow>(
+          `SELECT ${SELECT_COLS} FROM user_sub_mcp_config
+            WHERE user_id = $1 AND sub_mcp_name = $2`,
+          [userId, subMcpName],
+        );
+        const map = new Map<string, string>();
+        for (const r of rows) {
+          const v = await decryptRow(r);
+          map.set(r.config_key, v);
+        }
+        return map;
+      });
     },
 
     async set(userId, subMcpName, configKey, value) {
@@ -184,24 +190,25 @@ export function createUserServerConfigService(
         const ts = now();
         const isSecret = isSecretKey(configKey);
 
-        const scoped = await db.scoped(userId);
-        const rows = await scoped.query<RawRow>(
-          `INSERT INTO user_sub_mcp_config
-             (user_id, sub_mcp_name, config_key,
-              wrapped_dek, kek_ref, ciphertext, nonce,
-              is_secret, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
-           ON CONFLICT (user_id, sub_mcp_name, config_key) DO UPDATE
-             SET wrapped_dek = EXCLUDED.wrapped_dek,
-                 kek_ref     = EXCLUDED.kek_ref,
-                 ciphertext  = EXCLUDED.ciphertext,
-                 nonce       = EXCLUDED.nonce,
-                 is_secret   = EXCLUDED.is_secret,
-                 updated_at  = EXCLUDED.updated_at
-           RETURNING ${SELECT_COLS}`,
-          [userId, subMcpName, configKey, wrappedDek, kekRef, ciphertext, nonce, isSecret, ts],
-        );
-        const row = rows[0];
+        const row = await db.transaction(userId, async (scoped) => {
+          const rows = await scoped.query<RawRow>(
+            `INSERT INTO user_sub_mcp_config
+               (user_id, sub_mcp_name, config_key,
+                wrapped_dek, kek_ref, ciphertext, nonce,
+                is_secret, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
+             ON CONFLICT (user_id, sub_mcp_name, config_key) DO UPDATE
+               SET wrapped_dek = EXCLUDED.wrapped_dek,
+                   kek_ref     = EXCLUDED.kek_ref,
+                   ciphertext  = EXCLUDED.ciphertext,
+                   nonce       = EXCLUDED.nonce,
+                   is_secret   = EXCLUDED.is_secret,
+                   updated_at  = EXCLUDED.updated_at
+             RETURNING ${SELECT_COLS}`,
+            [userId, subMcpName, configKey, wrappedDek, kekRef, ciphertext, nonce, isSecret, ts],
+          );
+          return rows[0];
+        });
         if (!row) throw new HttpError(500, 'internal', 'config upsert returned no row');
 
         await emitAudit(db, {
@@ -218,16 +225,18 @@ export function createUserServerConfigService(
     },
 
     async delete(userId, subMcpName, configKey) {
-      const scoped = await db.scoped(userId);
-      const result = await scoped.query<{ deleted: number }>(
-        `WITH del AS (
-          DELETE FROM user_sub_mcp_config
-           WHERE user_id = $1 AND sub_mcp_name = $2 AND config_key = $3
-          RETURNING 1
-        ) SELECT COUNT(*)::int AS deleted FROM del`,
-        [userId, subMcpName, configKey],
-      );
-      if ((result[0]?.deleted ?? 0) === 0) {
+      const deleted = await db.transaction(userId, async (scoped) => {
+        const result = await scoped.query<{ deleted: number }>(
+          `WITH del AS (
+            DELETE FROM user_sub_mcp_config
+             WHERE user_id = $1 AND sub_mcp_name = $2 AND config_key = $3
+            RETURNING 1
+          ) SELECT COUNT(*)::int AS deleted FROM del`,
+          [userId, subMcpName, configKey],
+        );
+        return result[0]?.deleted ?? 0;
+      });
+      if (deleted === 0) {
         throw HttpError.notFound('config key not found');
       }
       await emitAudit(db, {
@@ -239,12 +248,13 @@ export function createUserServerConfigService(
     },
 
     async deleteAllForServer(userId, subMcpName) {
-      const scoped = await db.scoped(userId);
-      await scoped.query(
-        `DELETE FROM user_sub_mcp_config
-          WHERE user_id = $1 AND sub_mcp_name = $2`,
-        [userId, subMcpName],
-      );
+      await db.transaction(userId, async (scoped) => {
+        await scoped.query(
+          `DELETE FROM user_sub_mcp_config
+            WHERE user_id = $1 AND sub_mcp_name = $2`,
+          [userId, subMcpName],
+        );
+      });
       await emitAudit(db, {
         action: 'user_server_config.delete_all',
         actorUserId: userId,

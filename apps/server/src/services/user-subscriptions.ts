@@ -72,54 +72,63 @@ export function createUserSubscriptionsService(
   const { db } = opts;
   const now = opts.now ?? (() => Date.now());
 
+  // ⚠️ Connection-Pool: ALLE Methoden nutzen db.transaction() statt
+  // db.scoped() — letzteres reserved eine Connection ohne release() und
+  // exhaustet damit den Postgres-Pool nach ~10 Calls (verifizierter
+  // /v1/inventory-Hang 2026-05-17). transaction() committed + released
+  // automatisch wenn der Callback resolved.
   return {
     async list(userId) {
-      const scoped = await db.scoped(userId);
-      const rows = await scoped.query<SubscriptionRowRaw>(
-        `SELECT user_id, sub_mcp_name, enabled, created_at, updated_at
-           FROM user_sub_mcp_subscriptions
-          WHERE user_id = $1
-          ORDER BY sub_mcp_name ASC`,
-        [userId],
-      );
-      return rows.map(rowToSubscription);
+      return await db.transaction(userId, async (scoped) => {
+        const rows = await scoped.query<SubscriptionRowRaw>(
+          `SELECT user_id, sub_mcp_name, enabled, created_at, updated_at
+             FROM user_sub_mcp_subscriptions
+            WHERE user_id = $1
+            ORDER BY sub_mcp_name ASC`,
+          [userId],
+        );
+        return rows.map(rowToSubscription);
+      });
     },
 
     async listEnabled(userId) {
-      const scoped = await db.scoped(userId);
-      const rows = await scoped.query<SubscriptionRowRaw>(
-        `SELECT user_id, sub_mcp_name, enabled, created_at, updated_at
-           FROM user_sub_mcp_subscriptions
-          WHERE user_id = $1 AND enabled = TRUE
-          ORDER BY sub_mcp_name ASC`,
-        [userId],
-      );
-      return rows.map(rowToSubscription);
+      return await db.transaction(userId, async (scoped) => {
+        const rows = await scoped.query<SubscriptionRowRaw>(
+          `SELECT user_id, sub_mcp_name, enabled, created_at, updated_at
+             FROM user_sub_mcp_subscriptions
+            WHERE user_id = $1 AND enabled = TRUE
+            ORDER BY sub_mcp_name ASC`,
+          [userId],
+        );
+        return rows.map(rowToSubscription);
+      });
     },
 
     async setEnabled(userId, subMcpName, enabled) {
-      const scoped = await db.scoped(userId);
       const ts = now();
-      // Upsert: erste Aktivierung legt die Row an. updated_at immer setzen.
-      await scoped.query(
-        `INSERT INTO user_sub_mcp_subscriptions
-           (user_id, sub_mcp_name, enabled, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $4)
-         ON CONFLICT (user_id, sub_mcp_name) DO UPDATE
-           SET enabled = EXCLUDED.enabled,
-               updated_at = EXCLUDED.updated_at`,
-        [userId, subMcpName, enabled, ts],
-      );
+      await db.transaction(userId, async (scoped) => {
+        // Upsert: erste Aktivierung legt die Row an. updated_at immer setzen.
+        await scoped.query(
+          `INSERT INTO user_sub_mcp_subscriptions
+             (user_id, sub_mcp_name, enabled, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $4)
+           ON CONFLICT (user_id, sub_mcp_name) DO UPDATE
+             SET enabled = EXCLUDED.enabled,
+                 updated_at = EXCLUDED.updated_at`,
+          [userId, subMcpName, enabled, ts],
+        );
+      });
     },
 
     async isEnabled(userId, subMcpName) {
-      const scoped = await db.scoped(userId);
-      const rows = await scoped.query<{ enabled: boolean }>(
-        `SELECT enabled FROM user_sub_mcp_subscriptions
-          WHERE user_id = $1 AND sub_mcp_name = $2 LIMIT 1`,
-        [userId, subMcpName],
-      );
-      return rows[0]?.enabled === true;
+      return await db.transaction(userId, async (scoped) => {
+        const rows = await scoped.query<{ enabled: boolean }>(
+          `SELECT enabled FROM user_sub_mcp_subscriptions
+            WHERE user_id = $1 AND sub_mcp_name = $2 LIMIT 1`,
+          [userId, subMcpName],
+        );
+        return rows[0]?.enabled === true;
+      });
     },
 
     async ensureCatalogRows(userId) {
@@ -127,18 +136,19 @@ export function createUserSubscriptionsService(
       // User noch nicht in user_sub_mcp_subscriptions hat, mit enabled=FALSE
       // einfuegen. Damit erscheint jeder Server in der "Verfuegbar"-Liste
       // ohne dass der User explizit Rows anlegen muss.
-      const scoped = await db.scoped(userId);
       const ts = now();
-      await scoped.query(
-        `INSERT INTO user_sub_mcp_subscriptions
-           (user_id, sub_mcp_name, enabled, created_at, updated_at)
-         SELECT $1, name, FALSE, $2, $2
-           FROM sub_mcp_servers
-          WHERE is_catalog_default = TRUE
-            AND (owner_user_id IS NULL OR owner_user_id = $1)
-         ON CONFLICT (user_id, sub_mcp_name) DO NOTHING`,
-        [userId, ts],
-      );
+      await db.transaction(userId, async (scoped) => {
+        await scoped.query(
+          `INSERT INTO user_sub_mcp_subscriptions
+             (user_id, sub_mcp_name, enabled, created_at, updated_at)
+           SELECT $1, name, FALSE, $2, $2
+             FROM sub_mcp_servers
+            WHERE is_catalog_default = TRUE
+              AND (owner_user_id IS NULL OR owner_user_id = $1)
+           ON CONFLICT (user_id, sub_mcp_name) DO NOTHING`,
+          [userId, ts],
+        );
+      });
     },
   };
 }
