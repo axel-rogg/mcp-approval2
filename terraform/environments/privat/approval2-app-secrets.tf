@@ -173,6 +173,27 @@ resource "doppler_secret" "approval2_sub_mcp_token_gcloud" {
 }
 
 # ----------------------------------------------------------------------------
+# Cross-Repo-Sync (CF-Worker-Seite)
+# ----------------------------------------------------------------------------
+# Diese Tokens muessen auch als SERVICE_TOKEN auf den 3 CF-Worker-Sub-MCPs
+# liegen (mcp-utils, mcp-gws, mcp-gcloud). CF-Provider 5.x bietet aber KEIN
+# standalone `cloudflare_workers_secret` — Secrets sind nur als bindings
+# innerhalb `cloudflare_workers_script.bindings` setzbar. Die Worker-Scripts
+# selbst werden aus separaten Repos via `wrangler deploy` hochgeladen, daher
+# laesst sich der Token nicht TF-cross-repo-managen ohne den Worker-Code in
+# diese TF-State zu ziehen.
+#
+# Sync-Pfad (einmalig pro Token-Rotation):
+#   1. `terraform output -raw sub_mcp_token_utils  | tr -d '\n' | wrangler secret put SERVICE_TOKEN --name mcp-utils`
+#   2. `terraform output -raw sub_mcp_token_gws    | tr -d '\n' | wrangler secret put SERVICE_TOKEN --name mcp-gws`
+#   3. `terraform output -raw sub_mcp_token_gcloud | tr -d '\n' | wrangler secret put SERVICE_TOKEN --name mcp-gcloud`
+#
+# Alternative (langfristig): jeden Worker-Repo eine eigene Doppler-Project
+# anbinden + via cloudflare_secrets_store_secret + bindings — dann waere
+# auch der Worker-Side TF-managed. TODO sobald die Roadmap das hochpriorisiert.
+# ----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
 # Outputs — Operator-Helpers
 # ----------------------------------------------------------------------------
 
