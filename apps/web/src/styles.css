@@ -1013,12 +1013,14 @@ code {
   transition: opacity 0.12s ease, background 0.12s ease;
 }
 
-.body-copy-btn {
-  left: 0.5rem;
-}
-
+/* Beide rechts (User-Wunsch 2026-05-17). Edit-Pencil ganz aussen,
+   Copy daneben mit etwas Abstand. */
 .body-edit-pencil {
   right: 0.5rem;
+}
+
+.body-copy-btn {
+  right: 2.4rem;
 }
 
 .body-copy-btn:hover,
