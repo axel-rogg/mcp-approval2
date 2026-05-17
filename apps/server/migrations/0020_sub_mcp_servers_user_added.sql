@@ -40,7 +40,11 @@ CREATE INDEX IF NOT EXISTS idx_submcp_owner
 ALTER TABLE user_sub_mcp_subscriptions DROP CONSTRAINT IF EXISTS user_sub_mcp_subscriptions_sub_mcp_name_fkey;
 ALTER TABLE user_sub_mcp_config        DROP CONSTRAINT IF EXISTS user_sub_mcp_config_sub_mcp_name_fkey;
 
-DROP INDEX IF EXISTS idx_sub_mcp_name;
+-- CASCADE: deploy-Fail-Workaround. Die DROP CONSTRAINT statements oben
+-- erwischen die FK-namen nicht (Postgres autogen kann variieren),
+-- daher Catch-All via CASCADE. Drops gleichzeitig FK + Index.
+-- Die FKs werden danach (Lines 54-59) sauber wieder erstellt.
+DROP INDEX IF EXISTS idx_sub_mcp_name CASCADE;
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_submcp_name_per_owner
   ON sub_mcp_servers(name, COALESCE(owner_user_id, '00000000-0000-0000-0000-000000000000'::UUID));
 
