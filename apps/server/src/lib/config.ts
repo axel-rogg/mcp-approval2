@@ -256,14 +256,40 @@ export function resolveOrigin(
 }
 
 /**
- * Extrahiert die WebAuthn-RP-ID (eTLD+1-Host) aus einem Origin-URL-String.
- * Beispiel: `https://mcp2.ai-toolhub.org` -> `mcp2.ai-toolhub.org`.
+ * Liefert die WebAuthn-RP-ID. Wenn `config.RP_ID` gesetzt und ein registrable
+ * Suffix des Request-Hosts ist (host === config.RP_ID OR host endet auf
+ * `.${config.RP_ID}`), wird `config.RP_ID` benutzt — fuer Cross-Subdomain-
+ * Setups (z.B. PWA auf `app2.ai-toolhub.org`, Server auf `mcp2.ai-toolhub.org`,
+ * gemeinsame RP-ID `ai-toolhub.org`).
+ *
+ * Sonst Fallback auf den Host-FQDN — single-origin Setup oder Coop-workers.dev-
+ * Bypass.
+ *
+ * Beispiele:
+ *   resolveRpId('https://mcp2.ai-toolhub.org', {RP_ID: 'ai-toolhub.org'})
+ *     -> 'ai-toolhub.org'
+ *   resolveRpId('https://mcp-approval2.fly.dev', {RP_ID: 'ai-toolhub.org'})
+ *     -> 'mcp-approval2.fly.dev'   (kein Suffix-Match -> Host als Fallback)
+ *   resolveRpId('https://localhost:8787', {RP_ID: 'localhost'})
+ *     -> 'localhost'
  */
-export function resolveRpId(origin: string): string {
+export function resolveRpId(
+  origin: string,
+  config?: { readonly RP_ID?: string },
+): string {
+  let host: string;
   try {
-    return new URL(origin).hostname;
+    host = new URL(origin).hostname;
   } catch {
-    // Kein gueltiger URL -> behandle als Hostname-String direkt.
-    return origin;
+    host = origin;
   }
+  const baseRpId = config?.RP_ID;
+  if (
+    baseRpId &&
+    baseRpId.length > 0 &&
+    (host === baseRpId || host.endsWith('.' + baseRpId))
+  ) {
+    return baseRpId;
+  }
+  return host;
 }

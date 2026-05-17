@@ -128,10 +128,16 @@ export async function finishAuthentication(
       ? { ...credentialBase, transports: credentialTransports }
       : credentialBase;
 
+  // Multi-Origin: PWA kann auf einem anderen Sub-Domain leben als API-Server
+  // (z.B. app2.ai-toolhub.org vs mcp2.ai-toolhub.org). simplewebauthn akzeptiert
+  // ein Array — alle erlaubten Origins durchreichen.
+  const allowedOrigins = Array.from(
+    new Set([config.RP_ORIGIN, ...config.ALLOWED_ORIGINS].filter(Boolean)),
+  );
   const verification = await verifyAuthenticationResponse({
     response: input.response,
     expectedChallenge: input.expectedChallenge,
-    expectedOrigin: config.RP_ORIGIN,
+    expectedOrigin: allowedOrigins,
     expectedRPID: config.RP_ID,
     credential: credentialForVerify,
     // SEC-009: UV-Bit muss in der Assertion gesetzt sein.

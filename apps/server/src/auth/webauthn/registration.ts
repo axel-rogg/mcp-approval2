@@ -88,10 +88,19 @@ export async function finishRegistration(
   db: DbAdapter,
   input: EnrollFinishInput,
 ): Promise<EnrollFinishResult> {
+  // Multi-Origin: verifyRegistrationResponse akzeptiert ein Array als
+  // expectedOrigin — die User-PWA kann auf einem anderen Sub-Domain leben
+  // (z.B. app2.ai-toolhub.org) als der API-Server (mcp2.ai-toolhub.org).
+  // Beide muessen die gleiche RP-ID (eTLD+1 'ai-toolhub.org') teilen, aber
+  // unterschiedliche Origins haben. ALLOWED_ORIGINS ist die Allowlist
+  // (CORS/Approval gleich), RP_ORIGIN ist nur der Default-Server-Origin.
+  const allowedOrigins = Array.from(
+    new Set([config.RP_ORIGIN, ...config.ALLOWED_ORIGINS].filter(Boolean)),
+  );
   const verification: VerifiedRegistrationResponse = await verifyRegistrationResponse({
     response: input.response,
     expectedChallenge: input.expectedChallenge,
-    expectedOrigin: config.RP_ORIGIN,
+    expectedOrigin: allowedOrigins,
     expectedRPID: config.RP_ID,
     // SEC-009: zur Enrollment-Time pruefen wir, dass der Authenticator UV
     // tatsaechlich performed hat (Flag im authData). Ohne UV → 400.

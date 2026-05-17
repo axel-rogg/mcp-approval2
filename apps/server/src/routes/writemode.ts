@@ -241,7 +241,7 @@ export function writemodeUserRoutes(
     };
     const expectedChallenge = utf8ToBase64Url(canonicalize(challengePayload));
     const origin = resolveOrigin(c.req.raw, deps.server.config);
-    const rpId = resolveRpId(origin);
+    const rpId = resolveRpId(origin, deps.server.config);
 
     try {
       await deps.verifyActivation({

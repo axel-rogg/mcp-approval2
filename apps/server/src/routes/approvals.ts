@@ -250,7 +250,7 @@ export function approvalsRoutes(deps: ApprovalsRouteDeps): Hono<AppBindings> {
       // fail-closed sterben.
       if (verifyAssertion) {
         const origin = resolveOrigin(c.req.raw, server.config);
-        const rpId = resolveRpId(origin);
+        const rpId = resolveRpId(origin, server.config);
         const assertion = {
           credentialIdB64: body.credentialIdB64,
           authenticatorDataB64: body.authenticatorDataB64,
