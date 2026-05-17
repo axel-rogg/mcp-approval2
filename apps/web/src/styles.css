@@ -6,40 +6,49 @@
 
 :root {
   color-scheme: light dark;
-  --bg: #f4f6f9;
-  --bg-elev: #ffffff;
+  /* erdige Palette portiert aus v1 (mcp-approval) — warm, natuerlich,
+     orange-rost als Akzent, waldgruen fuer OK, rost-rot fuer Danger */
+  --bg: #ffffff;
+  --bg-elev: #f6f7f9;
   --bg-input: #ffffff;
-  --fg: #1f2937;
-  --fg-muted: #6b7280;
-  --border: #e5e7eb;
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
+  --fg: #0b0d10;
+  --fg-muted: #51606e;
+  --border: #d8dde3;
+  --accent: #e2570c;
+  --accent-hover: #b8480a;
   --accent-fg: #ffffff;
-  --danger: #b91c1c;
-  --danger-bg: #fee2e2;
-  --warn: #b45309;
-  --ok: #047857;
-  --ok-bg: #d1fae5;
+  --danger: #cf222e;
+  --danger-bg: #ffebe9;
+  --warn: #b35900;
+  --ok: #1a7f37;
+  --ok-bg: #dafbe1;
+  --info: #57606a;
   --radius: 0.6rem;
+  --radius-sm: 0.35rem;
   --space: 1rem;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --tap: 44px;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
+  --font-sys: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #0f172a;
-    --bg-elev: #1e293b;
-    --bg-input: #0f172a;
-    --fg: #f3f4f6;
-    --fg-muted: #9ca3af;
-    --border: #334155;
-    --accent: #3b82f6;
-    --accent-hover: #60a5fa;
-    --accent-fg: #ffffff;
-    --danger: #f87171;
-    --danger-bg: #7f1d1d;
-    --ok: #34d399;
-    --ok-bg: #064e3b;
+    --bg: #0b0d10;
+    --bg-elev: #161b22;
+    --bg-input: #0d1117;
+    --fg: #e6edf3;
+    --fg-muted: #8b949e;
+    --border: #30363d;
+    --accent: #fb923c;
+    --accent-hover: #fdba74;
+    --accent-fg: #0b0d10;
+    --danger: #f85149;
+    --danger-bg: #3a0f12;
+    --warn: #d29922;
+    --ok: #2ea043;
+    --ok-bg: #0f2a17;
+    --info: #8b949e;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
   }
 }
@@ -54,7 +63,7 @@ body {
   padding: 0;
   background: var(--bg);
   color: var(--fg);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+  font-family: var(--font-sys);
   font-size: 16px;
   line-height: 1.5;
   min-height: 100vh;
