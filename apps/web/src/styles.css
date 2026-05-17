@@ -675,8 +675,14 @@ code {
   background: var(--bg);
 }
 
+/* Summary-Card — Sticky-Note-Look mit leicht gelblichem Hintergrund.
+   User-Wunsch 2026-05-17: visuell von anderen Cards abgehoben damit man
+   auf den ersten Blick sieht "das ist der Summary". Earthy parchment-tone
+   passt zur Palette ohne grell zu wirken. */
 .storage-summary {
   position: relative;
+  background: #fdf6dd;            /* parchment / sticky-note cream */
+  border-color: #e6cf7c;          /* mustard tint, ~2× stärker als --border */
 }
 
 .storage-summary-text {
@@ -684,6 +690,7 @@ code {
   overflow-wrap: anywhere;
   margin: 0;
   line-height: 1.55;
+  color: #3a2f10;                 /* warm-dunkler Kontrast auf parchment */
 }
 
 /* Edit-Pencil floated top-right inside summary card. */
@@ -691,6 +698,11 @@ code {
   position: absolute;
   top: 0.5rem;
   right: 0.5rem;
+  background: transparent;
+}
+
+.storage-summary > .edit-pencil:hover {
+  background: rgba(0, 0, 0, 0.05);
 }
 
 .storage-meta dl {
