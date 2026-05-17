@@ -815,16 +815,32 @@ code {
   padding: 0.5rem 1rem 0.75rem;
 }
 
+.app-detail-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
 .app-back-link {
   font-size: 0.85rem;
   color: var(--fg-muted);
-  align-self: flex-start;
   text-decoration: none;
 }
 
 .app-back-link:hover {
   color: var(--accent);
   text-decoration: none;
+}
+
+.app-delete-btn {
+  color: var(--fg-muted);
+}
+
+.app-delete-btn:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--danger-bg);
 }
 
 .app-detail-title {
