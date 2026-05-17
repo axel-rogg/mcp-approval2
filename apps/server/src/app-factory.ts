@@ -60,6 +60,7 @@ import { credentialsRoutes } from './routes/credentials.js';
 import { knowledgeProxyRoutes } from './routes/knowledge-proxy.js';
 import { kcProxyRoutes } from './routes/kc-proxy.js';
 import { adminRoutes } from './routes/admin.js';
+import { inventoryRoutes } from './routes/inventory.js';
 import { gdprRoutes } from './routes/gdpr.js';
 import { approvalsRoutes } from './routes/approvals.js';
 import { createApprovalAssertionVerifier } from './auth/webauthn/approval-verify.js';
@@ -626,6 +627,17 @@ export async function createApp(
   app.route(
     '/',
     mcpProtocolRoutes({ server, registry, approvals: approvalService }),
+  );
+
+  // PWA-Tools-View: GET /v1/inventory — authenticated, read-only Liste der
+  // registrierten Tools + Sub-MCP-Gateways (mit cached tools/list).
+  app.route(
+    '/',
+    inventoryRoutes({
+      server,
+      registry,
+      ...(deps.subMcpRegistry ? { subMcpRegistry: deps.subMcpRegistry } : {}),
+    }),
   );
 
   // ─────────────────────────────────────────────────────────────────────
