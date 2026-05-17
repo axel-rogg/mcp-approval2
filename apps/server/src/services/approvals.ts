@@ -463,7 +463,7 @@ export function createApprovalService(opts: ApprovalServiceOptions): ApprovalSer
               WHERE user_id = $1
                 AND status IN (${statusPlaceholders.join(',')})
                 ${sinceClause}
-              ORDER BY COALESCE(approved_at, rejected_at, expired_at, created_at) DESC
+              ORDER BY created_at DESC
               LIMIT ${limitPh}`,
             params,
           );
