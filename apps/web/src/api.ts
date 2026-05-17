@@ -241,7 +241,10 @@ export function createApiClient(baseUrl?: string): ApiClient {
     },
 
     async listApprovals(args) {
-      const out = await request<{ items: PendingApproval[] }>('/v1/approvals/pending', {
+      // Server-route ist /v1/approvals (list) mit query-filter — NICHT
+      // /v1/approvals/pending. Letzteres trifft auf /v1/approvals/:id und
+      // Postgres wirft "invalid input syntax for type uuid: pending".
+      const out = await request<{ items: PendingApproval[] }>('/v1/approvals', {
         ...(args?.status ? { query: { status: args.status } } : {}),
       });
       return out.items;
