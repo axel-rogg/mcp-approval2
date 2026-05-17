@@ -8,6 +8,7 @@
  *   - BlobAdapter      (S3-API primary, LocalFS for dev)
  *   - KekProvider      (OpenBao for prod, Local for dev/tests)
  *   - AiAdapter        (Vertex AI; Stub in Phase 0)
+ *   - EmailAdapter     (Resend for prod, Console for dev/pilot bootstrap)
  */
 
 // DB
@@ -71,6 +72,18 @@ export type {
   VertexGenerateContentResponse,
   VertexPredictResponse,
 } from './ai/vertex.js';
+
+// Email
+export type {
+  EmailAdapter,
+  EmailMessage,
+  SendResult as EmailSendResult,
+} from './email/interface.js';
+export { EmailSendError } from './email/interface.js';
+export { ConsoleEmailAdapter } from './email/console.js';
+export type { ConsoleEmailAdapterOptions } from './email/console.js';
+export { ResendEmailAdapter } from './email/resend.js';
+export type { ResendEmailAdapterOptions } from './email/resend.js';
 
 // Knowledge (Storage-Service-Boundary)
 export type {
