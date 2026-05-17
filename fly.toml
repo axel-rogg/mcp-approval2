@@ -75,11 +75,12 @@ kill_timeout   = 30
   # Bei Erst-Deploy ohne Custom-Domain: Werte auf .fly.dev anpassen oder
   # via fly secrets temporär überschreiben.
   BASE_URL              = "https://mcp2.ai-toolhub.org"
-  # eTLD+1 fuer Multi-Origin: PWA lebt auf app2.ai-toolhub.org, API auf
-  # mcp2.ai-toolhub.org — beide brauchen die gleiche RP-ID damit Passkeys
-  # cross-subdomain funktionieren. Aenderung dieses Werts invalidiert alle
-  # registrierten Passkeys (re-enroll noetig).
-  WEBAUTHN_RP_ID        = "ai-toolhub.org"
+  # RP-ID = PWA-Origin (app2.*). MCP-API auf mcp2.* macht keine WebAuthn-
+  # Operations selbst, sie verifiziert nur die Assertion mit expectedRPID=app2.
+  # Apex 'ai-toolhub.org' funktioniert NICHT (kein A-Record → Related-Origin-
+  # Fallback failed im Browser). Aenderung dieses Werts invalidiert
+  # registrierte Passkeys.
+  WEBAUTHN_RP_ID        = "app2.ai-toolhub.org"
   WEBAUTHN_RP_NAME      = "mcp-approval2"
   WEBAUTHN_ORIGINS      = "https://mcp2.ai-toolhub.org,https://mcp-approval2.fly.dev"
   ALLOWED_ORIGINS       = "https://mcp2.ai-toolhub.org,https://app2.ai-toolhub.org,https://mcp-approval2.fly.dev"
