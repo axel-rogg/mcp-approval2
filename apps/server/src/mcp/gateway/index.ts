@@ -68,6 +68,15 @@ export {
 } from './seed_satellites.js';
 
 export {
+  seedOAuthCatalogServers,
+  DEFAULT_OAUTH_CATALOG_SERVERS,
+  type OAuthCatalogServerSeed,
+  type OAuthKind,
+  type SeedOAuthCatalogArgs,
+  type SeedOAuthCatalogResult,
+} from './seed_oauth_catalog.js';
+
+export {
   applyGatewayDiscovery,
   SubMcpWrappersCache,
   type ApplyGatewayDiscoveryArgs,

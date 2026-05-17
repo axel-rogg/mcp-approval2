@@ -127,6 +127,7 @@ import {
   createSubMcpRegistry,
   refreshSubMcpToolCache,
   seedSatelliteWorkers,
+  seedOAuthCatalogServers,
   subMcpDiscoverRoutes,
   SubMcpForwarder,
   SubMcpWrappersCache,
@@ -595,6 +596,21 @@ export async function createApp(
             `updated=${seedResult.updated.join(',') || '-'} ` +
             `registered-without-token=${seedResult.registeredWithoutToken.join(',') || '-'} ` +
             `skipped(legacy)=${seedResult.skipped.map((s) => s.name).join(',') || '-'}`,
+        );
+      }
+
+      // Catalog-OAuth-Server (cf, github) — registriert als Catalog-Defaults
+      // mit auth_mode='oauth'. Pro-User-OAuth-Flow läuft danach über die PWA
+      // (siehe routes/me/servers.ts → /v1/me/servers/:name/oauth/start).
+      const oauthSeedResult = await seedOAuthCatalogServers({ db: server.db });
+      if (
+        oauthSeedResult.registered.length > 0 ||
+        oauthSeedResult.updated.length > 0
+      ) {
+        // eslint-disable-next-line no-console
+        console.info(
+          `[mcp-approval2] oauth-catalog seed: registered=${oauthSeedResult.registered.join(',') || '-'} ` +
+            `updated=${oauthSeedResult.updated.join(',') || '-'}`,
         );
       }
       subMcpReg.invalidate();

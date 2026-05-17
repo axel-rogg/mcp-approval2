@@ -13,6 +13,10 @@ import {
   resolveSubMcpSensitivity,
 } from './wrapper_tools.js';
 import { DEFAULT_SATELLITE_WORKERS, seedSatelliteWorkers } from './seed_satellites.js';
+import {
+  DEFAULT_OAUTH_CATALOG_SERVERS,
+  seedOAuthCatalogServers,
+} from './seed_oauth_catalog.js';
 import { SubMcpForwarder } from './forwarder.js';
 import { SubMcpNotFoundError, type SubMcpServerConfig } from './types.js';
 import type { ToolContext } from '../protocol/tool.js';
@@ -409,6 +413,69 @@ describe('seedSatelliteWorkers', () => {
     expect(byName.get('utils')?.serviceTokenEnvVar).toBe('SUB_MCP_TOKEN_UTILS');
     expect(byName.get('gws')?.serviceTokenEnvVar).toBe('SUB_MCP_TOKEN_GWS');
     expect(byName.get('gcloud')?.serviceTokenEnvVar).toBe('SUB_MCP_TOKEN_GCLOUD');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// seedOAuthCatalogServers — Catalog-OAuth-Server (cf, github)
+// ---------------------------------------------------------------------------
+
+describe('seedOAuthCatalogServers', () => {
+  it('DEFAULT_OAUTH_CATALOG_SERVERS contains cf (dcr) + github (pre)', () => {
+    expect(DEFAULT_OAUTH_CATALOG_SERVERS).toHaveLength(2);
+    const byName = new Map(DEFAULT_OAUTH_CATALOG_SERVERS.map((s) => [s.name, s]));
+
+    const cf = byName.get('cf');
+    expect(cf?.oauthKind).toBe('dcr');
+    expect(cf?.baseUrl).toBe('https://bindings.mcp.cloudflare.com/sse');
+    expect(cf?.oauthMeta.provider).toBe('cloudflare');
+    expect(cf?.oauthMeta.registration_endpoint).toBeDefined();
+
+    const gh = byName.get('github');
+    expect(gh?.oauthKind).toBe('pre');
+    expect(gh?.oauthMeta.provider).toBe('github');
+    expect(gh?.oauthMeta.token_url).toContain('github.com');
+    // GitHub-Mode hat kein registration_endpoint (pre-registered)
+    expect(gh?.oauthMeta.registration_endpoint).toBeUndefined();
+  });
+
+  it('inserts both servers as catalog-defaults with auth_mode=oauth', async () => {
+    const { db, captured } = makeStubDb([
+      [{ name: 'cf', was_new: true }],
+      [{ name: 'github', was_new: true }],
+    ]);
+    const result = await seedOAuthCatalogServers({ db });
+    expect(result.registered.sort()).toEqual(['cf', 'github']);
+    expect(result.updated).toEqual([]);
+    expect(captured).toHaveLength(2);
+
+    // Beide INSERTs müssen auth_mode='oauth' setzen + config_schema._meta.oauth
+    for (const c of captured) {
+      expect(String(c.sql)).toContain("'oauth'");
+      const cfgSchema = JSON.parse(String(c.params[4])) as {
+        _meta: { oauth: { kind: string; authorize_url: string; token_url: string } };
+      };
+      expect(cfgSchema._meta.oauth.kind).toMatch(/^(dcr|pre)$/);
+      expect(cfgSchema._meta.oauth.authorize_url).toMatch(/^https:\/\//);
+      expect(cfgSchema._meta.oauth.token_url).toMatch(/^https:\/\//);
+    }
+  });
+
+  it('reports updated when ON CONFLICT branch fires with was_new=false', async () => {
+    const { db } = makeStubDb([
+      [{ name: 'cf', was_new: false }],
+      [{ name: 'github', was_new: false }],
+    ]);
+    const result = await seedOAuthCatalogServers({ db });
+    expect(result.registered).toEqual([]);
+    expect(result.updated.sort()).toEqual(['cf', 'github']);
+  });
+
+  it('idempotent: empty INSERT-return means already-in-sync', async () => {
+    const { db } = makeStubDb([[], []]);
+    const result = await seedOAuthCatalogServers({ db });
+    expect(result.registered).toEqual([]);
+    expect(result.updated).toEqual([]);
   });
 });
 
