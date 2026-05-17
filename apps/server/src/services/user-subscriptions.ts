@@ -7,7 +7,8 @@
  * First-Login: alle Catalog-Defaults werden lazy in user_sub_mcp_subscriptions
  * eingestreut mit enabled=FALSE (per-User-Decision: opt-in).
  *
- * RLS: User sieht nur eigene Rows (Migration 0015). Service nutzt
+ * RLS: User sieht nur eigene Rows (Migration 0018, renumbered from 0015 nach
+ * Drift-Konflikt mit `0015_webauthn_counter_rename`). Service nutzt
  * `db.scoped(userId)` damit current_setting('app.current_user') greift.
  */
 import type { DbAdapter } from '@mcp-approval2/adapters';
