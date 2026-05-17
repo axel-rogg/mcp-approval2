@@ -11,10 +11,15 @@
  * purges old caches.
  */
 
-const CACHE_VERSION = 'mcp-approval2-v2';
+// Bump bei jedem PWA-Asset-Update. Activate-Hook purged alle Caches mit
+// anderem Key, install-Hook precached die STATIC_ASSETS-Liste neu.
+const CACHE_VERSION = 'mcp-approval2-v3-2026-05-17';
+
+// index.html / '/' bewusst NICHT precached — sie werden network-first geholt,
+// damit Vite-Builds mit neuen Asset-Hash-Verweisen sofort sichtbar werden.
+// Cache-first fuer hashed assets (Vite-Build legt assets/index-<hash>.{js,css}
+// an — immutable by design, also Cache-first sicher).
 const STATIC_ASSETS = [
-  '/',
-  '/index.html',
   '/manifest.json',
   '/icon-192.svg',
 ];
@@ -120,6 +125,24 @@ self.addEventListener('fetch', (event) => {
   // Never cache API responses
   if (API_PREFIXES.some((p) => url.pathname.startsWith(p))) {
     event.respondWith(fetch(req));
+    return;
+  }
+
+  // Network-first fuer index.html / '/' — vermeidet Stale-Shell-Bug bei dem
+  // ein gecachter index.html auf alte (404'ende) Asset-Hashes verweist.
+  // Cache nur als Offline-Fallback.
+  if (url.pathname === '/' || url.pathname === '/index.html') {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          if (res && res.ok) {
+            const clone = res.clone();
+            caches.open(CACHE_VERSION).then((cache) => cache.put(req, clone));
+          }
+          return res;
+        })
+        .catch(() => caches.match(req).then((c) => c || new Response('Offline', { status: 503 }))),
+    );
     return;
   }
 
