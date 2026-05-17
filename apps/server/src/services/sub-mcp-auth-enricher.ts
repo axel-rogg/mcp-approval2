@@ -43,20 +43,46 @@ export interface SubMcpAuthEnricherOpts {
   readonly now?: () => number;
   /** Map subMcpName → auth-strategy-kind. Default: hardcoded for gws + gcloud. */
   readonly strategy?: Map<string, AuthStrategy>;
+  /**
+   * Lookup-Funktion fuer shared-app-OAuth-Apps (gws + gcloud Default).
+   * Liefert client_id + client_secret aus env-Vars. Default-Implementation
+   * liest GOOGLE_WORKSPACE_CLIENT_ID/SECRET mit Fallback auf
+   * GOOGLE_CLIENT_ID/SECRET. In Tests: stub.
+   */
+  readonly sharedAppCredentials?: (
+    serverName: string,
+  ) => { clientId: string; clientSecret: string } | null;
 }
 
-export type AuthStrategy = 'google-oauth' | 'gcp-service-account' | 'oauth-bearer' | 'none';
+export type AuthStrategy =
+  | 'google-oauth'
+  | 'gcp-service-account'
+  | 'google-oauth-or-sa'
+  | 'oauth-bearer'
+  | 'none';
 
 /**
- * Default-Mapping subMcpName → strategy. `oauth-bearer` ist der generische
- * Pfad fuer externe MCP-Server die per OAuth2 access_token authentifizieren
- * (GitHub-MCP, Cloudflare-MCP-Pre-Registered, Notion, ...). Der token-URL
- * kommt pro Server aus sub_mcp_servers.config_schema._meta.oauth.token_url
- * (siehe enrich-Branch unten).
+ * Default-Strategy pro bekanntem Satellite.
+ *
+ * - `gws`    → google-oauth (User-Account, GWS-Scopes)
+ * - `gcloud` → google-oauth-or-sa (Hybrid 2026-05-18, beide Pfade erlaubt):
+ *                Prio 1: _service_account_json gesetzt → lokaler
+ *                        JWT-Bearer-Grant, fester SA-Account.
+ *                        Use-Case: Headless/CI/Production, kein User-OAuth-Roundtrip noetig.
+ *                Prio 2: _oauth_refresh_token gesetzt → OAuth-Refresh,
+ *                        User-Account.
+ *                        Use-Case: Familien-/Solo-UX, kein Key-Material zum kopieren.
+ *                Beide Pfade produzieren den gleichen Forward-Header
+ *                (x-google-access-token + optional x-gcp-project-id).
+ * - `github` → oauth-bearer (Refresh-Token-Grant, pre-registered Client per User)
+ *
+ * `oauth-bearer` ist der generische Pfad fuer externe MCP-Server die per
+ * OAuth2 access_token authentifizieren (GitHub-MCP, Notion-MCP, ...). Der
+ * token-URL kommt pro Server aus sub_mcp_servers.config_schema._meta.oauth.token_url.
  */
 export const DEFAULT_AUTH_STRATEGIES: ReadonlyMap<string, AuthStrategy> = new Map([
   ['gws', 'google-oauth'],
-  ['gcloud', 'gcp-service-account'],
+  ['gcloud', 'google-oauth-or-sa'],
   ['github', 'oauth-bearer'],
 ]);
 
@@ -98,11 +124,33 @@ function parseScopes(raw: string | undefined): ReadonlyArray<string> | undefined
   return items.length > 0 ? items : undefined;
 }
 
+/**
+ * Default-Lookup fuer shared-app-Credentials (gws + gcloud).
+ *   1. GOOGLE_WORKSPACE_CLIENT_ID + GOOGLE_WORKSPACE_CLIENT_SECRET
+ *   2. GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET (Fallback)
+ */
+function defaultSharedAppCredentials(
+  _serverName: string,
+): { clientId: string; clientSecret: string } | null {
+  const env = typeof process !== 'undefined' ? process.env : {};
+  const candidates: Array<[string, string]> = [
+    ['GOOGLE_WORKSPACE_CLIENT_ID', 'GOOGLE_WORKSPACE_CLIENT_SECRET'],
+    ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'],
+  ];
+  for (const [idVar, secretVar] of candidates) {
+    const clientId = env[idVar];
+    const clientSecret = env[secretVar];
+    if (clientId && clientSecret) return { clientId, clientSecret };
+  }
+  return null;
+}
+
 export function createSubMcpAuthEnricher(opts: SubMcpAuthEnricherOpts): SubMcpAuthEnricher {
   const { config } = opts;
   const fetchImpl = opts.fetchImpl ?? fetch;
   const now = opts.now ?? (() => Date.now());
   const strategy = opts.strategy ?? DEFAULT_AUTH_STRATEGIES;
+  const sharedAppCredentials = opts.sharedAppCredentials ?? defaultSharedAppCredentials;
   const tokenCache = new Map<string, CachedToken>();
 
   function cacheKey(userId: string, subMcpName: string): string {
@@ -149,7 +197,7 @@ export function createSubMcpAuthEnricher(opts: SubMcpAuthEnricherOpts): SubMcpAu
 
   return {
     async enrich({ userId, subMcpName }) {
-      const strat = strategy.get(subMcpName) ?? 'none';
+      let strat = strategy.get(subMcpName) ?? 'none';
       if (strat === 'none') return {};
 
       // Per-User-Config lesen
@@ -160,10 +208,22 @@ export function createSubMcpAuthEnricher(opts: SubMcpAuthEnricherOpts): SubMcpAu
         return {}; // keine config → Worker faellt auf Legacy-Pfad zurueck
       }
 
+      // Hybrid-Strategy: User waehlt pro-Server zwischen SA-Pfad und OAuth-Pfad.
+      // Wenn _service_account_json gesetzt → SA-Pfad (Prio). Sonst OAuth-Pfad.
+      // Use-Case: gcloud-Headless-CI nutzt SA, gcloud-Family-User nutzt OAuth.
+      if (strat === 'google-oauth-or-sa') {
+        const hasSa = cfgMap.get('_service_account_json');
+        strat = hasSa ? 'gcp-service-account' : 'google-oauth';
+      }
+
       if (strat === 'google-oauth') {
         const refreshToken = cfgMap.get('_oauth_refresh_token');
-        const clientId = cfgMap.get('_oauth_client_id');
-        const clientSecret = cfgMap.get('_oauth_client_secret');
+        // shared-app (gws + gcloud Default): client_id/secret nicht in user-
+        // config, sondern in env (eine OAuth-App fuer alle User). Fallback
+        // auf user-config falls per-User pre-registered (Legacy).
+        const sharedCreds = sharedAppCredentials(subMcpName);
+        const clientId = cfgMap.get('_oauth_client_id') ?? sharedCreds?.clientId;
+        const clientSecret = cfgMap.get('_oauth_client_secret') ?? sharedCreds?.clientSecret;
         if (!refreshToken || !clientId || !clientSecret) {
           return {}; // unvollstaendig — Worker-Legacy-Fallback
         }

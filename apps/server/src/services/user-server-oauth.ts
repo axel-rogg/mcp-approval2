@@ -33,7 +33,20 @@ const STATE_LENGTH = 32;
 
 export interface OAuthSchemaMeta {
   readonly provider?: string;
-  readonly kind?: 'pre' | 'dcr';
+  /**
+   * - 'pre' (pre-registered): User legt eigene OAuth-App an, traegt client_id/
+   *   client_secret in user_sub_mcp_config[_oauth_client_id/_oauth_client_secret] ein.
+   *   Beispiel: GitHub-MCP (GitHub App per User).
+   * - 'dcr' (Dynamic Client Registration RFC 7591): approval2 registriert
+   *   beim ersten Authorize automatisch einen Client beim AuthZ-Server.
+   *   Beispiel: Cloudflare-MCP.
+   * - 'shared-app': eine globale OAuth-App (Operator-Setup einmalig). client_id
+   *   + client_secret kommen aus env-Vars (default: GOOGLE_WORKSPACE_CLIENT_ID
+   *   / GOOGLE_WORKSPACE_CLIENT_SECRET, mit Fallback auf GOOGLE_CLIENT_ID
+   *   / GOOGLE_CLIENT_SECRET). Refresh-Token bleibt per-User. Beispiel:
+   *   gws + gcloud (Google-Workspace-OAuth ueber User-Konto).
+   */
+  readonly kind?: 'pre' | 'dcr' | 'shared-app';
   readonly scopes?: ReadonlyArray<string>;
   readonly authorize_url?: string;
   readonly token_url?: string;
@@ -50,6 +63,13 @@ export interface OAuthSchemaMeta {
    * Wenn TRUE: V2 versucht discovery; FALSE: error wenn registration_endpoint fehlt.
    */
   readonly discover?: boolean;
+  /**
+   * shared-app only: Override fuer env-Var-Namen. Wenn nicht gesetzt, nutzt
+   * V2 GOOGLE_WORKSPACE_CLIENT_ID/SECRET mit Fallback auf
+   * GOOGLE_CLIENT_ID/SECRET.
+   */
+  readonly client_id_env?: string;
+  readonly client_secret_env?: string;
 }
 
 export interface OAuthStartResult {
@@ -89,12 +109,53 @@ function computeCodeChallenge(verifier: string): string {
   return base64UrlEncode(createHash('sha256').update(verifier).digest());
 }
 
+/**
+ * Default-Lookup fuer shared-app-Credentials. Liest aus process.env:
+ *   1. <meta.client_id_env> + <meta.client_secret_env>  (Override pro Server)
+ *   2. GOOGLE_WORKSPACE_CLIENT_ID + GOOGLE_WORKSPACE_CLIENT_SECRET (Default)
+ *   3. GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET           (Fallback: gleiche
+ *      App wie Login-OIDC, funktioniert wenn der Consent-Screen die GWS-
+ *      Scopes deklariert hat)
+ * Wenn keiner gesetzt: null → Caller wirft.
+ */
+function defaultSharedAppCredentials(
+  _serverName: string,
+  meta: OAuthSchemaMeta,
+): { clientId: string; clientSecret: string } | null {
+  const env = typeof process !== 'undefined' ? process.env : {};
+  const clientIdEnv = meta.client_id_env;
+  const clientSecretEnv = meta.client_secret_env;
+  const candidates: Array<[string | undefined, string | undefined]> = [
+    [clientIdEnv, clientSecretEnv],
+    ['GOOGLE_WORKSPACE_CLIENT_ID', 'GOOGLE_WORKSPACE_CLIENT_SECRET'],
+    ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'],
+  ];
+  for (const [idVar, secretVar] of candidates) {
+    if (!idVar || !secretVar) continue;
+    const clientId = env[idVar];
+    const clientSecret = env[secretVar];
+    if (clientId && clientSecret) {
+      return { clientId, clientSecret };
+    }
+  }
+  return null;
+}
+
 export interface UserServerOAuthServiceOpts {
   readonly db: DbAdapter;
   readonly registry: SubMcpRegistry;
   readonly config: UserServerConfigService;
   readonly fetchImpl?: typeof fetch;
   readonly now?: () => number;
+  /**
+   * Lookup-Funktion fuer 'shared-app'-kind: gibt client_id / client_secret
+   * aus env-Vars zurueck. In Production: closure ueber process.env / env.
+   * In Tests: stub.
+   */
+  readonly sharedAppCredentials?: (
+    serverName: string,
+    meta: OAuthSchemaMeta,
+  ) => { clientId: string; clientSecret: string } | null;
 }
 
 interface OAuthStateRow {
@@ -113,6 +174,7 @@ export function createUserServerOAuthService(
   const { db, registry, config } = opts;
   const fetchImpl = opts.fetchImpl ?? fetch;
   const now = opts.now ?? (() => Date.now());
+  const sharedAppCredentials = opts.sharedAppCredentials ?? defaultSharedAppCredentials;
 
   async function getOAuthSchema(subMcpName: string): Promise<OAuthSchemaMeta> {
     const cfg = await registry.getByName(subMcpName).catch(() => null);
@@ -201,6 +263,24 @@ export function createUserServerOAuthService(
       }
       const userConfig = await config.getAllValues(userId, subMcpName);
       let clientId = userConfig.get('_oauth_client_id') ?? userConfig.get('client_id');
+
+      // shared-app: globale OAuth-App (Operator-Setup einmalig). Refresh-Token
+      // bleibt per-User, aber alle User durchlaufen Authorize mit demselben
+      // client_id/secret. Beispiel: gws + gcloud nutzen die Google-OAuth-App
+      // die schon fuer Login angelegt wurde.
+      if (oauth.kind === 'shared-app') {
+        const creds = sharedAppCredentials(subMcpName, oauth);
+        if (!creds) {
+          throw HttpError.badRequest(
+            'invalid_request',
+            `server '${subMcpName}' kind='shared-app' aber Operator hat keine ${oauth.client_id_env ?? 'GOOGLE_WORKSPACE_CLIENT_ID'} / GOOGLE_CLIENT_ID in env gesetzt`,
+          );
+        }
+        clientId = creds.clientId;
+        // client_secret wird NICHT in user_sub_mcp_config gespeichert (waere
+        // Doppelung der env-Var). Statt dessen liest callback() ihn beim
+        // Token-Exchange erneut aus den shared-app-Credentials.
+      }
 
       // DCR (RFC 7591) — wenn kind='dcr' und kein client_id im config:
       // dynamisch beim AuthZ-Server registrieren mit V2's redirect_uri.
@@ -316,8 +396,25 @@ export function createUserServerOAuthService(
         throw HttpError.badRequest('invalid_request', 'token_url missing in schema');
       }
       const userConfig = await config.getAllValues(userId, subMcpName);
-      const clientId = userConfig.get('_oauth_client_id') ?? userConfig.get('client_id');
-      const clientSecret = userConfig.get('_oauth_client_secret');
+      let clientId = userConfig.get('_oauth_client_id') ?? userConfig.get('client_id');
+      let clientSecret = userConfig.get('_oauth_client_secret');
+
+      // shared-app: client_id/secret aus env (gleicher Lookup wie start()).
+      // Wir speichern beides NICHT in user_sub_mcp_config — der refresh-grant
+      // (sub-mcp-auth-enricher.ts) liest sie ebenso aus env. Nur der
+      // refresh_token landet user-encrypted in der Config.
+      if (oauth.kind === 'shared-app') {
+        const creds = sharedAppCredentials(subMcpName, oauth);
+        if (!creds) {
+          throw HttpError.badRequest(
+            'invalid_request',
+            `server '${subMcpName}' kind='shared-app' aber Operator hat keine client_id/secret in env`,
+          );
+        }
+        clientId = creds.clientId;
+        clientSecret = creds.clientSecret;
+      }
+
       if (!clientId) {
         throw HttpError.badRequest('invalid_request', 'client_id missing');
       }

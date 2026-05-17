@@ -55,7 +55,58 @@ export interface SatelliteWorkerSeedEntry {
   readonly baseUrl: string;
   /** Name der env-var, in der das Plain-Service-Token liegt. */
   readonly serviceTokenEnvVar: string;
+  /**
+   * Optionaler Inner-Auth-Setup. Aktuell genutzt fuer gws + gcloud um den
+   * per-User Google-OAuth-Flow zu deklarieren (kind='shared-app' →
+   * UserServerOAuthService nimmt clientId/Secret aus env statt aus
+   * user_sub_mcp_config). Wird beim seedSatelliteWorkers in
+   * sub_mcp_servers.config_schema._meta.oauth abgelegt.
+   */
+  readonly innerOAuth?: {
+    readonly kind: 'shared-app';
+    readonly provider: 'google';
+    readonly authorize_url: string;
+    readonly token_url: string;
+    readonly scopes: ReadonlyArray<string>;
+    /**
+     * env-var-Namen fuer client_id/secret. Default: GOOGLE_WORKSPACE_CLIENT_ID
+     * / GOOGLE_WORKSPACE_CLIENT_SECRET mit Fallback auf GOOGLE_CLIENT_ID /
+     * GOOGLE_CLIENT_SECRET (Login-App, falls keine separate Workspace-App
+     * angelegt ist).
+     */
+    readonly clientIdEnv?: string;
+    readonly clientSecretEnv?: string;
+  };
+  /**
+   * Optionale weitere User-konfigurierbare Felder (config_schema.config_fields).
+   * Beispiel gcloud: _service_account_json als Alternative zum OAuth-Pfad.
+   */
+  readonly configFields?: ReadonlyArray<{
+    readonly key: string;
+    readonly label: string;
+    readonly type: 'text' | 'password' | 'textarea';
+    readonly is_secret?: boolean;
+    readonly description?: string;
+  }>;
 }
+
+/**
+ * Bundle der Google-Workspace-Scopes (analog v1 `src/auth/google_workspace.ts`).
+ * Wenn der User gws verbindet, holt approval2 alle Scopes auf einmal —
+ * Worker-Side entscheidet pro Tool welche es braucht.
+ */
+const GWS_SCOPES: ReadonlyArray<string> = [
+  'openid',
+  'email',
+  'https://www.googleapis.com/auth/calendar',
+  'https://www.googleapis.com/auth/calendar.events',
+  'https://www.googleapis.com/auth/tasks',
+  'https://www.googleapis.com/auth/gmail.modify',
+  'https://www.googleapis.com/auth/spreadsheets',
+  'https://www.googleapis.com/auth/documents',
+  'https://www.googleapis.com/auth/drive',
+  'https://www.googleapis.com/auth/contacts',
+];
 
 export const DEFAULT_SATELLITE_WORKERS: ReadonlyArray<SatelliteWorkerSeedEntry> = [
   {
@@ -69,12 +120,52 @@ export const DEFAULT_SATELLITE_WORKERS: ReadonlyArray<SatelliteWorkerSeedEntry> 
     displayName: 'Google Workspace Gateway',
     baseUrl: 'https://mcp-gws.axelrogg.workers.dev',
     serviceTokenEnvVar: 'SUB_MCP_TOKEN_GWS',
+    innerOAuth: {
+      kind: 'shared-app',
+      provider: 'google',
+      authorize_url: 'https://accounts.google.com/o/oauth2/v2/auth',
+      token_url: 'https://oauth2.googleapis.com/token',
+      scopes: GWS_SCOPES,
+    },
   },
   {
     name: 'gcloud',
     displayName: 'Google Cloud Gateway',
     baseUrl: 'https://mcp-gcloud.axelrogg.workers.dev',
     serviceTokenEnvVar: 'SUB_MCP_TOKEN_GCLOUD',
+    innerOAuth: {
+      kind: 'shared-app',
+      provider: 'google',
+      authorize_url: 'https://accounts.google.com/o/oauth2/v2/auth',
+      token_url: 'https://oauth2.googleapis.com/token',
+      scopes: ['openid', 'email', 'https://www.googleapis.com/auth/cloud-platform'],
+    },
+    configFields: [
+      {
+        key: '_gcp_project_id',
+        label: 'GCP Project-Id',
+        type: 'text',
+        is_secret: false,
+        description:
+          'Pflicht (bei OAuth-Pfad). Beispiel: my-project-12345. Bei SA-Pfad kann das project_id auch im SA-JSON stehen.',
+      },
+      {
+        key: '_service_account_json',
+        label: 'Service-Account JSON (optional Alternative)',
+        type: 'textarea',
+        is_secret: true,
+        description:
+          'Optional Alternative zu OAuth: pasten Sie das volle SA-JSON aus GCP-Console (IAM → Service Accounts → Keys). approval2 macht JWT-Bearer-Grant lokal, der Private-Key verlaesst approval2 nie. Wenn gesetzt: hat Prioritaet ueber OAuth (Headless-CI-Setup, fester SA-Account statt User-Account).',
+      },
+      {
+        key: '_gcp_scopes',
+        label: 'Custom Scopes (space/comma-separated)',
+        type: 'text',
+        is_secret: false,
+        description:
+          'Optional. Default ist cloud-platform. Engerer Scope wie devstorage.read_only / compute.readonly bei Bedarf.',
+      },
+    ],
   },
 ] as const;
 
@@ -133,10 +224,40 @@ export async function seedSatelliteWorkers(args: SeedSatelliteWorkersArgs): Prom
     if (!tokenHash) {
       registeredWithoutToken.push(gw.name);
     }
+
+    // config_schema._meta-Block — wird von UserServerOAuthService (fuer
+    // /v1/me/servers/:name/oauth/start) und vom PWA-Drawer (fuer
+    // config_fields) gelesen.
+    const meta: Record<string, unknown> = {};
+    if (gw.innerOAuth) {
+      meta['oauth'] = {
+        kind: gw.innerOAuth.kind,
+        provider: gw.innerOAuth.provider,
+        authorize_url: gw.innerOAuth.authorize_url,
+        token_url: gw.innerOAuth.token_url,
+        scopes: [...gw.innerOAuth.scopes],
+        ...(gw.innerOAuth.clientIdEnv ? { client_id_env: gw.innerOAuth.clientIdEnv } : {}),
+        ...(gw.innerOAuth.clientSecretEnv
+          ? { client_secret_env: gw.innerOAuth.clientSecretEnv }
+          : {}),
+      };
+    }
+    if (gw.configFields && gw.configFields.length > 0) {
+      meta['config_fields'] = gw.configFields.map((f) => ({
+        key: f.key,
+        label: f.label,
+        type: f.type,
+        is_secret: f.is_secret === true,
+        ...(f.description ? { description: f.description } : {}),
+      }));
+    }
+    const configSchemaJson =
+      Object.keys(meta).length > 0 ? JSON.stringify({ _meta: meta }) : null;
+
     const ts = now();
-    // INSERT ON CONFLICT UPDATE — idempotent. Bringt Hash + URL auf env-Stand.
-    // `enabled` wird beim UPDATE NICHT geflippt, damit ein manueller toggle via
-    // gateway_server_toggle nicht von einem Boot ueberschrieben wird.
+    // INSERT ON CONFLICT UPDATE — idempotent. Bringt Hash + URL + config_schema
+    // auf env-Stand. `enabled` wird beim UPDATE NICHT geflippt, damit ein manueller
+    // toggle via gateway_server_toggle nicht von einem Boot ueberschrieben wird.
     // is_catalog_default=TRUE damit der per-user-Subscription-Layer den
     // Server in die "Verfuegbar"-Liste streut (siehe PLAN-per-user-server-
     // store.md). owner_user_id bleibt NULL = Catalog-Default fuer alle User.
@@ -146,21 +267,23 @@ export async function seedSatelliteWorkers(args: SeedSatelliteWorkersArgs): Prom
     // name-pro-Owner waere ein eigener Refactor (siehe Migration-Kommentar).
     const result = await raw.query<{ name: string; was_new: boolean }>(
       `INSERT INTO sub_mcp_servers
-         (name, display_name, base_url, auth_mode, auth_config, enabled,
-          is_catalog_default, created_at, updated_at)
-       VALUES ($1, $2, $3, 'service_bearer', $4::jsonb, TRUE, TRUE, $5, $5)
+         (name, display_name, base_url, auth_mode, auth_config, config_schema,
+          enabled, is_catalog_default, created_at, updated_at)
+       VALUES ($1, $2, $3, 'service_bearer', $4::jsonb, $6::jsonb, TRUE, TRUE, $5, $5)
        ON CONFLICT (name) DO UPDATE
-         SET display_name = EXCLUDED.display_name,
-             base_url     = EXCLUDED.base_url,
-             auth_config  = EXCLUDED.auth_config,
+         SET display_name  = EXCLUDED.display_name,
+             base_url      = EXCLUDED.base_url,
+             auth_config   = EXCLUDED.auth_config,
+             config_schema = EXCLUDED.config_schema,
              is_catalog_default = TRUE,
-             updated_at   = EXCLUDED.updated_at
+             updated_at    = EXCLUDED.updated_at
          WHERE sub_mcp_servers.auth_config IS DISTINCT FROM EXCLUDED.auth_config
             OR sub_mcp_servers.base_url    IS DISTINCT FROM EXCLUDED.base_url
+            OR sub_mcp_servers.config_schema IS DISTINCT FROM EXCLUDED.config_schema
             OR sub_mcp_servers.display_name IS DISTINCT FROM EXCLUDED.display_name
             OR sub_mcp_servers.is_catalog_default IS DISTINCT FROM TRUE
        RETURNING name, (xmax = 0) AS was_new`,
-      [gw.name, gw.displayName, gw.baseUrl, authConfig, ts],
+      [gw.name, gw.displayName, gw.baseUrl, authConfig, ts, configSchemaJson],
     );
     const row = result[0];
     if (!row) {

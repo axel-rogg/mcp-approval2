@@ -130,18 +130,20 @@ export async function seedOAuthCatalogServers(
     // _meta.oauth-Block — analog zum Format das Discovery aus
     // tools/list._meta liest.
     const authConfig = JSON.stringify({});
+    // PWA liest `configSchema.oauth` direkt (top-level), nicht
+    // `configSchema._meta.oauth`. Discovery-Pfad (registry.updateConfigSchema)
+    // schreibt auch top-level. Wir matchen das hier — sonst landet die PWA
+    // im Fallback-Branch und zeigt Service-Bearer-Form statt OAuth-Form.
     const configSchema = JSON.stringify({
-      _meta: {
-        oauth: {
-          kind: srv.oauthKind,
-          provider: srv.oauthMeta.provider,
-          authorize_url: srv.oauthMeta.authorize_url,
-          token_url: srv.oauthMeta.token_url,
-          default_scopes: [...srv.oauthMeta.default_scopes],
-          ...(srv.oauthMeta.registration_endpoint
-            ? { registration_endpoint: srv.oauthMeta.registration_endpoint }
-            : {}),
-        },
+      oauth: {
+        kind: srv.oauthKind,
+        provider: srv.oauthMeta.provider,
+        authorize_url: srv.oauthMeta.authorize_url,
+        token_url: srv.oauthMeta.token_url,
+        default_scopes: [...srv.oauthMeta.default_scopes],
+        ...(srv.oauthMeta.registration_endpoint
+          ? { registration_endpoint: srv.oauthMeta.registration_endpoint }
+          : {}),
       },
     });
     const ts = now();

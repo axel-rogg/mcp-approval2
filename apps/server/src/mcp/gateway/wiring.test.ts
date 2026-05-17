@@ -414,6 +414,57 @@ describe('seedSatelliteWorkers', () => {
     expect(byName.get('gws')?.serviceTokenEnvVar).toBe('SUB_MCP_TOKEN_GWS');
     expect(byName.get('gcloud')?.serviceTokenEnvVar).toBe('SUB_MCP_TOKEN_GCLOUD');
   });
+
+  it('gws + gcloud declare inner-OAuth (kind=shared-app) with Google endpoints', () => {
+    const byName = new Map(DEFAULT_SATELLITE_WORKERS.map((g) => [g.name, g]));
+    const gws = byName.get('gws');
+    expect(gws?.innerOAuth?.kind).toBe('shared-app');
+    expect(gws?.innerOAuth?.provider).toBe('google');
+    expect(gws?.innerOAuth?.authorize_url).toContain('accounts.google.com');
+    expect(gws?.innerOAuth?.scopes).toContain(
+      'https://www.googleapis.com/auth/calendar',
+    );
+    expect(gws?.innerOAuth?.scopes).toContain(
+      'https://www.googleapis.com/auth/gmail.modify',
+    );
+
+    const gcloud = byName.get('gcloud');
+    expect(gcloud?.innerOAuth?.kind).toBe('shared-app');
+    expect(gcloud?.innerOAuth?.scopes).toContain(
+      'https://www.googleapis.com/auth/cloud-platform',
+    );
+    expect(gcloud?.configFields?.find((f) => f.key === '_service_account_json')).toBeDefined();
+    expect(gcloud?.configFields?.find((f) => f.key === '_gcp_project_id')).toBeDefined();
+
+    // utils hat keinen inner-OAuth (eigener Worker mit eigener Logik)
+    expect(byName.get('utils')?.innerOAuth).toBeUndefined();
+  });
+
+  it('writes config_schema._meta.oauth for gws + gcloud at seed time', async () => {
+    const { db, captured } = makeStubDb([
+      [{ name: 'gcloud', was_new: true }],
+      [{ name: 'gws', was_new: true }],
+      [{ name: 'utils', was_new: true }],
+    ]);
+    await seedSatelliteWorkers({ db, env: {} });
+    expect(captured).toHaveLength(3);
+
+    const gwsCall = captured.find((c) => c.params[0] === 'gws');
+    expect(gwsCall).toBeDefined();
+    // param[5] = config_schema JSON
+    const gwsSchema = JSON.parse(String(gwsCall?.params[5])) as {
+      _meta: { oauth: { kind: string; provider: string; scopes: string[] } };
+    };
+    expect(gwsSchema._meta.oauth.kind).toBe('shared-app');
+    expect(gwsSchema._meta.oauth.provider).toBe('google');
+    expect(gwsSchema._meta.oauth.scopes).toContain(
+      'https://www.googleapis.com/auth/calendar',
+    );
+
+    // utils hat KEIN inner-OAuth → config_schema sollte null sein
+    const utilsCall = captured.find((c) => c.params[0] === 'utils');
+    expect(utilsCall?.params[5]).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
