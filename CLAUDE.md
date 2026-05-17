@@ -147,7 +147,11 @@ mcp-approval2/
 
 - `main` ist Default-Branch
 - Branch-Strategie: direkt auf `main`, kleine atomare Commits
-- `[deploy]`-Tag in Commit-Subject **nur** wenn Runtime tatsächlich deployed werden soll (Pilot heute idle)
+- **`[deploy]`-Tag in Commit-Subject ist der einzige Auto-Deploy-Trigger.** `Deploy to Fly.io` UND `Build & Push Container` haben einen Job-Level-Guard
+  `if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || contains(github.event.head_commit.message, '[deploy]')`.
+  Ohne `[deploy]`-Tag: Workflow startet kurz, Job skipped sofort — **kein Docker-Build, kein Fly-Deploy**. Erspart Compute + reduziert Lärm in der Actions-UI. (Konvention von mcp-approval v1 übernommen.)
+- Manueller Deploy: `gh workflow run deploy-fly.yml` (workflow_dispatch) — z.B. um eine Doku-Korrektur ohne Code-Change zu deployen.
+- CI (`ci.yml`) läuft auf jedem Push (Branches: `'**'`) — das ist unkritisch, Concurrency-Cancel-in-progress ist aktiv.
 - Co-Authored-By-Footer für Claude-generierte Commits
 
 ## Konventionen

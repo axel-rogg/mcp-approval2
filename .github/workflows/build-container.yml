@@ -1,5 +1,13 @@
 name: Build & Push Container
 
+# Trigger-Konvention (siehe CLAUDE.md "Branch / Push"):
+# - workflow_dispatch (manuell)
+# - push.tags 'v*' (Release-Tag)
+# - push.main mit '[deploy]' in der Commit-Subject (analog Deploy-Workflow)
+#
+# Ohne '[deploy]'-Tag: Workflow startet, Job skipped sofort — kein Docker-Build,
+# kein GHCR-Push. Spart Compute + reduziert Lärm in der Actions-UI.
+
 on:
   push:
     tags: ['v*']
@@ -11,9 +19,20 @@ on:
       - '.github/workflows/build-container.yml'
   workflow_dispatch:
 
+# Concurrency: bei schnellen Folge-Pushes alte Builds canceln (sparen Build-Minuten)
+concurrency:
+  group: build-container-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Skip wenn push.main UND kein [deploy] in der commit-msg.
+    # Tag-Pushes ('v*') und workflow_dispatch laufen immer durch.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/') ||
+      contains(github.event.head_commit.message, '[deploy]')
     permissions:
       contents: read
       packages: write
