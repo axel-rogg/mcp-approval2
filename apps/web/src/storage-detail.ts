@@ -18,34 +18,13 @@ import type { ApiClient, Session } from './api.js';
 import { logout } from './auth.js';
 import { renderHeader } from './components/header.js';
 import { dispatchRenderer } from './renderers/index.js';
+import { decodeBody } from './renderers/utils.js';
 
 function formatBytes(n: number | undefined): string {
   if (n === undefined || n === null) return '–';
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / 1024 / 1024).toFixed(2)} MB`;
-}
-
-function decodeBody(obj: KnowledgeObject): string {
-  if (!obj.body) return '';
-  const encoding = obj.bodyEncoding ?? 'utf8';
-  if (encoding === 'utf8') return obj.body;
-  if (encoding === 'base64') {
-    try {
-      const decoded = atob(obj.body);
-      // If it looks like text, render it; otherwise show hex preview
-      if (/^[\x09\x0a\x0d\x20-\x7e]*$/.test(decoded)) return decoded;
-      // Hex preview of first 256 bytes
-      let hex = '';
-      for (let i = 0; i < Math.min(decoded.length, 256); i++) {
-        hex += decoded.charCodeAt(i).toString(16).padStart(2, '0') + ' ';
-      }
-      return `<binary, ${decoded.length} bytes>\n${hex}${decoded.length > 256 ? '…' : ''}`;
-    } catch {
-      return '<unable to decode base64 body>';
-    }
-  }
-  return obj.body;
 }
 
 /**
@@ -73,140 +52,103 @@ function showToast(msg: string): void {
 }
 
 /**
- * Group + render refs section. Returns null when both directions empty.
+ * Render compact refs section as collapsible `<details>` with chip-style
+ * link buttons. Default-collapsed (User-Wunsch). Returns null when both
+ * directions empty.
  *
- * PLAN-document-linking §10.5 D1 + D4 (Direction-derived labels):
- *   outgoing.role='resource'   → "Anhang"
- *   outgoing.role='references' → "Siehe auch"
- *   outgoing.role='depends_on' → "Benötigt"
- *   incoming.role='resource'   → "Teil von"  (= part_of, direction-derived)
- *   incoming.role='references' → "Referenziert von"
- *   incoming.role='depends_on' → "Wird benutzt von"
+ * PLAN-document-linking §10.5 D1 + D4. Direction-derived role labels:
+ *   outgoing.resource   → "📎"   incoming.resource   → "↩ Teil von"
+ *   outgoing.references → "↗"    incoming.references → "↩"
+ *   outgoing.depends_on → "⚙"    incoming.depends_on → "↩"
  *
- * Click on Ref → navigate to `#/storage/<uuid>`. Summary gestripped via
- * stripIpiWrappers, dann erste 200 chars per textContent (XSS-safe).
+ * Click navigates via `<a href="#/storage/<id>">` (hash-change ist History-Entry).
  */
 function renderRefsSection(refs: KnowledgeObject['refs']): HTMLElement | null {
   const outgoing = refs?.outgoing ?? [];
   const incoming = refs?.incoming ?? [];
   if (outgoing.length === 0 && incoming.length === 0) return null;
 
-  const section = document.createElement('section');
-  section.className = 'storage-refs card';
+  const details = document.createElement('details');
+  details.className = 'storage-refs card';
+  // Default collapsed — User reagiert auf Wunsch nach Kompaktheit.
+  details.open = false;
 
-  const heading = document.createElement('h3');
-  heading.className = 'storage-refs-heading';
-  heading.textContent = '🔗 Verknüpfungen';
-  section.appendChild(heading);
+  const summary = document.createElement('summary');
+  summary.className = 'storage-refs-summary-row';
+  const total = outgoing.length + incoming.length;
+  summary.textContent = `🔗 Verknüpfungen (${total})`;
+  details.appendChild(summary);
 
-  // Group by direction + role.
-  const outGroups = groupByRole(outgoing);
-  const inGroups = groupByRole(incoming);
+  const inner = document.createElement('div');
+  inner.className = 'storage-refs-body';
 
-  const directions: Array<{
-    label: (role: string) => string;
-    groups: Map<string, RefView[]>;
-    truncated: boolean;
-  }> = [
-    { label: outgoingLabel, groups: outGroups, truncated: refs?.truncated.outgoing ?? false },
-    { label: incomingLabel, groups: inGroups, truncated: refs?.truncated.incoming ?? false },
-  ];
-
-  for (const d of directions) {
-    for (const [role, list] of d.groups) {
-      const group = document.createElement('div');
-      group.className = 'storage-refs-group';
-      const lbl = document.createElement('div');
-      lbl.className = 'storage-refs-group-label';
-      lbl.textContent = `${d.label(role)} (${list.length})`;
-      group.appendChild(lbl);
-      const ul = document.createElement('ul');
-      ul.className = 'storage-refs-list';
-      for (const ref of list) {
-        ul.appendChild(renderRefRow(ref));
-      }
-      group.appendChild(ul);
-      section.appendChild(group);
-    }
+  if (outgoing.length > 0) {
+    inner.appendChild(renderChipGroup(outgoing, refLabelOutgoing));
+  }
+  if (incoming.length > 0) {
+    inner.appendChild(renderChipGroup(incoming, refLabelIncoming));
   }
 
   if (refs?.truncated.outgoing || refs?.truncated.incoming) {
     const more = document.createElement('div');
     more.className = 'storage-refs-truncated';
-    more.textContent = 'Weitere Refs nicht angezeigt — refs_limit erhöhen für vollständige Liste.';
-    section.appendChild(more);
+    more.textContent = '… weitere nicht angezeigt';
+    inner.appendChild(more);
   }
 
-  return section;
+  details.appendChild(inner);
+  return details;
 }
 
-function groupByRole(refs: ReadonlyArray<RefView>): Map<string, RefView[]> {
-  const map = new Map<string, RefView[]>();
-  for (const r of refs) {
-    const list = map.get(r.role) ?? [];
-    list.push(r);
-    map.set(r.role, list);
+function renderChipGroup(
+  refs: ReadonlyArray<RefView>,
+  labelFn: (role: string) => string,
+): HTMLElement {
+  const row = document.createElement('div');
+  row.className = 'storage-refs-chip-row';
+  for (const ref of refs) {
+    row.appendChild(renderRefChip(ref, labelFn(ref.role)));
   }
-  return map;
+  return row;
 }
 
-function outgoingLabel(role: string): string {
+function refLabelOutgoing(role: string): string {
   switch (role) {
     case 'resource':
-      return '📎 Anhang';
+      return '📎';
     case 'references':
-      return '↗ Siehe auch';
+      return '↗';
     case 'depends_on':
-      return '⚙ Benötigt';
+      return '⚙';
     default:
-      return `↗ ${role}`;
+      return '·';
   }
 }
 
-function incomingLabel(role: string): string {
+function refLabelIncoming(role: string): string {
   switch (role) {
     case 'resource':
       return '↩ Teil von';
     case 'references':
-      return '↩ Referenziert von';
+      return '↩ ref von';
     case 'depends_on':
-      return '↩ Wird benutzt von';
+      return '↩ benutzt von';
     default:
-      return `↩ ${role}`;
+      return '↩';
   }
 }
 
-function renderRefRow(ref: RefView): HTMLLIElement {
-  const li = document.createElement('li');
-  li.className = 'storage-refs-row';
-
-  const link = document.createElement('a');
-  link.className = 'storage-refs-link';
-  link.href = `#/storage/${ref.id}`;
-  // Click default-navigates via hash-change — kein preventDefault nötig.
-
-  const title = document.createElement('div');
-  title.className = 'storage-refs-title';
-  title.textContent = stripIpiWrappers(ref.title ?? ref.id);
-  link.appendChild(title);
-
+function renderRefChip(ref: RefView, prefix: string): HTMLAnchorElement {
+  const a = document.createElement('a');
+  a.className = 'storage-refs-chip';
+  a.href = `#/storage/${ref.id}`;
+  const title = stripIpiWrappers(ref.title ?? ref.id);
+  a.textContent = `${prefix} ${title}`;
   if (ref.summary) {
-    const sum = document.createElement('div');
-    sum.className = 'storage-refs-summary';
-    const cleaned = stripIpiWrappers(ref.summary);
-    sum.textContent = cleaned.length > 200 ? cleaned.slice(0, 197) + '…' : cleaned;
-    link.appendChild(sum);
+    // Title-attribute = native tooltip on hover, no permanent visual clutter.
+    a.title = stripIpiWrappers(ref.summary);
   }
-
-  if (ref.subtype) {
-    const badge = document.createElement('span');
-    badge.className = 'storage-refs-subtype';
-    badge.textContent = ref.subtype;
-    link.appendChild(badge);
-  }
-
-  li.appendChild(link);
-  return li;
+  return a;
 }
 
 export async function renderStorageDetail(
