@@ -25,6 +25,18 @@ const ConfigSchema = z.object({
   SESSION_TTL_SEC: z.coerce.number().int().positive().default(30 * 60),
   REFRESH_TTL_SEC: z.coerce.number().int().positive().default(30 * 24 * 60 * 60),
 
+  // Cookie-Domain fuer Cross-Subdomain-Sharing.
+  //
+  // Multi-Origin-Setup (PWA auf app2.ai-toolhub.org, API auf mcp2.ai-toolhub.org):
+  // OAuth-State + Session + Refresh-Cookies muessen von beiden Subdomains
+  // lesbar sein. setCookie ohne `domain` scoped sie auf den exact-host —
+  // OAuth-Flow scheitert mit "missing oauth state cookie" wenn /start auf
+  // app2 lief und /callback auf mcp2 ankommt.
+  //
+  // Setze auf `.ai-toolhub.org` in production (fuehrender Punkt!), leer
+  // lassen in dev (localhost-Browser akzeptiert keine domain-Attribute).
+  COOKIE_DOMAIN: z.string().default(''),
+
   // RS256 service-boundary keys (mcp-approval2 → mcp-knowledge2 JWTs).
   // PEM-encoded. PKCS#8 for the private half, SPKI for the public half.
   // Optional at the schema level — in dev/test we fall back to HS256 with a

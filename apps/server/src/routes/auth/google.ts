@@ -14,6 +14,7 @@ import { randomBytes } from 'node:crypto';
 import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { AppBindings, ServerContext } from '../../lib/context.js';
 import { HttpError } from '../../lib/errors.js';
+import { authCookieOpts, deleteCookieOpts } from '../../lib/cookie.js';
 import { GoogleOAuthProvider } from '../../auth/idp/google.js';
 import { acceptInvite } from '../../auth/invite/accept.js';
 import { bootstrapIfNeeded } from '../../auth/bootstrap.js';
@@ -69,13 +70,7 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
       ...(inviteToken ? { inviteToken } : {}),
       ...(returnTo ? { returnTo } : {}),
     };
-    setCookie(c, STATE_COOKIE, JSON.stringify(payload), {
-      httpOnly: true,
-      secure: server.config.NODE_ENV === 'production',
-      sameSite: 'Lax',
-      maxAge: 10 * 60,
-      path: '/',
-    });
+    setCookie(c, STATE_COOKIE, JSON.stringify(payload), authCookieOpts(server.config, { maxAge: 10 * 60 }));
     const startArgs = inviteToken ? { state, nonce, inviteToken } : { state, nonce };
     const { authorizationUrl } = await idp.start(startArgs);
     return c.redirect(authorizationUrl);
@@ -96,7 +91,7 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
     } catch {
       throw HttpError.badRequest('invalid_request', 'corrupt oauth state cookie');
     }
-    deleteCookie(c, STATE_COOKIE, { path: '/' });
+    deleteCookie(c, STATE_COOKIE, deleteCookieOpts(server.config));
 
     const profile = await idp.complete({
       code,
@@ -180,26 +175,14 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
     });
 
     // Refresh-Token als HTTP-only-Cookie
-    setCookie(c, 'refresh_token', refresh.rawToken, {
-      httpOnly: true,
-      secure: server.config.NODE_ENV === 'production',
-      sameSite: 'Lax',
-      maxAge: server.config.REFRESH_TTL_SEC,
-      path: '/',
-    });
+    setCookie(c, 'refresh_token', refresh.rawToken, authCookieOpts(server.config, { maxAge: server.config.REFRESH_TTL_SEC }));
 
     // AS-3 (§1.1): wenn die Login-Start-Phase eine `returnTo` mitgegeben
     // hat (z.B. /oauth/authorize-Browser-Flow), redirect dorthin nach
     // Session-Bake. Wir setzen ein same-origin-Session-Cookie (`session_jwt`)
     // damit der nachgelagerte Authorize-Endpoint den User wiedererkennt.
     if (stateCookie.returnTo && isSafeReturnPath(stateCookie.returnTo, server.config.ORIGIN)) {
-      setCookie(c, 'session_jwt', accessToken, {
-        httpOnly: true,
-        secure: server.config.NODE_ENV === 'production',
-        sameSite: 'Lax',
-        maxAge: server.config.SESSION_TTL_SEC,
-        path: '/',
-      });
+      setCookie(c, 'session_jwt', accessToken, authCookieOpts(server.config, { maxAge: server.config.SESSION_TTL_SEC }));
       return c.redirect(stateCookie.returnTo, 302);
     }
 

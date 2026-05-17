@@ -205,6 +205,7 @@ function buildConfigFromEnv(env: CfEnv): AppConfig {
     JWT_AUDIENCE: env.JWT_AUDIENCE ?? 'mcp-approval2-api',
     SESSION_TTL_SEC: 30 * 60,
     REFRESH_TTL_SEC: 30 * 24 * 60 * 60,
+    COOKIE_DOMAIN: '',
     GOOGLE_CLIENT_ID: required('GOOGLE_OAUTH_CLIENT_ID'),
     GOOGLE_CLIENT_SECRET: required('GOOGLE_OAUTH_CLIENT_SECRET'),
     GOOGLE_REDIRECT_URI: googleRedirect,
