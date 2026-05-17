@@ -1,13 +1,20 @@
 /**
- * Sub-MCP-Boot-Seeder.
+ * Sub-MCP-Boot-Seeder fuer eigene Satellite-Worker.
  *
  * Plan-Ref: PLAN-architecture-v1.md §5.4.
  *
- * Iteriert eine Liste bekannter CF-Sub-MCP-Gateways (utils/gws/gcloud) und
- * registriert sie idempotent in `sub_mcp_servers`. Voraussetzung pro Server:
- * das passende Plain-Service-Token muss in env-var `SUB_MCP_TOKEN_<NAME>`
- * gesetzt sein. Ohne Token → skip (nicht-registriert, kein Forwarding moeglich,
- * gut so: fail-closed).
+ * **Naming-Hinweis (2026-05-17):** Diese Datei hiess frueher `seed.ts` mit
+ * `seedSatelliteWorkers`/`DEFAULT_SATELLITE_WORKERS`. "CF" meinte dabei "laeuft auf
+ * Cloudflare Workers" — NICHT den offiziellen Cloudflare-MCP-Server
+ * (`bindings.mcp.cloudflare.com`). Letzterer ist `cf` als Catalog-OAuth-
+ * Server und wird in `seed_oauth_servers.ts` registriert.
+ *
+ * Iteriert eine Liste bekannter Bearer-authenticated Satellite-Worker
+ * (utils/gws/gcloud) und registriert sie idempotent in `sub_mcp_servers`.
+ * Voraussetzung pro Server: das passende Plain-Service-Token muss in env-var
+ * `SUB_MCP_TOKEN_<NAME>` gesetzt sein. Ohne Token → trotzdem als
+ * Catalog-Default registriert (visible im Tools-Tab), aber Forward-Calls
+ * fail'n bis ein Token aufgepflegt wird (fail-closed).
  *
  * Idempotent:
  *   - Wenn Row mit `name` existiert: hash + base_url werden auf den env-Wert
@@ -19,20 +26,30 @@
  * (`DEFAULT_TOKEN_RESOLVER` in registry.ts).
  *
  * Diese Datei ist optional am Boot. Wenn keiner der drei env-vars gesetzt ist
- * → no-op. Damit ist die Datei in Tests, dev-Umgebungen und Coop-Maschinen
- * harmless.
+ * → Catalog-Eintraege ohne Token (registeredWithoutToken). Damit ist die Datei
+ * in Tests, dev-Umgebungen und Coop-Maschinen harmless.
  */
 import { createHash } from 'node:crypto';
 import type { DbAdapter } from '@mcp-approval2/adapters';
 
 /**
- * Default-Konfiguration der drei CF-Sub-MCP-Gateways. URLs entsprechen den
- * Custom-Domains aus den jeweiligen wrangler.jsonc:
- *   utils  → utils.ai-toolhub.org    (8 Tools — now/cal/diagram)
- *   gws    → gws.ai-toolhub.org      (59 Google-Workspace-Tools)
- *   gcloud → gcloud.ai-toolhub.org   (4 GCP-Tools)
+ * Default-Konfiguration der drei Bearer-authenticated Satellite-Worker.
+ *
+ *   utils  → 8 Tools — now/cal/diagram
+ *   gws    → 59 Google-Workspace-Tools (inner-Auth: x-google-access-token
+ *            vom enricher, siehe sub-mcp-auth-enricher.ts)
+ *   gcloud → 4 GCP-Tools (inner-Auth: x-google-access-token vom enricher)
+ *
+ * URLs zeigen aktuell auf workers.dev statt Custom-Domain
+ * (utils|gws|gcloud.ai-toolhub.org) weil die Custom-Domains hinter Cloudflare
+ * Access (Zero-Trust) liegen und externe Bearer-Calls mit 403 blocken.
+ * V2 (Fly.io) ist nicht im CF Account → kann nicht durch Access
+ * authentifizieren. workers.dev hat keinen Access davor → direkter Worker-
+ * Zugriff mit MCP_BEARER_TOKEN. Sub-MCP-Worker env-var-Name heisst dort
+ * MCP_BEARER_TOKEN (nicht SERVICE_TOKEN), daher das wrangler-Sync-Skript
+ * pusht in diese Variable.
  */
-export interface CfGatewaySeedEntry {
+export interface SatelliteWorkerSeedEntry {
   readonly name: string;
   readonly displayName: string;
   readonly baseUrl: string;
@@ -40,16 +57,7 @@ export interface CfGatewaySeedEntry {
   readonly serviceTokenEnvVar: string;
 }
 
-// 2026-05-17: URLs auf workers.dev statt Custom-Domain.
-// Custom-Domains (utils|gws|gcloud.ai-toolhub.org) liegen hinter Cloudflare
-// Access (Zero-Trust) → blocken externe Bearer-Calls mit 403 egal welcher
-// Token. V2 (Fly.io) ist nicht im CF Account → kann nicht durch Access
-// authentifizieren. workers.dev hat KEINEN Access davor → direkter Worker-
-// Zugriff mit MCP_BEARER_TOKEN.
-//
-// Sub-MCP-Worker env-var-Name heisst MCP_BEARER_TOKEN (nicht SERVICE_TOKEN),
-// daher das wrangler-Sync-Skript pusht in diese Variable.
-export const DEFAULT_CF_GATEWAYS: ReadonlyArray<CfGatewaySeedEntry> = [
+export const DEFAULT_SATELLITE_WORKERS: ReadonlyArray<SatelliteWorkerSeedEntry> = [
   {
     name: 'utils',
     displayName: 'Utils Gateway (date/calendar/diagram)',
@@ -70,10 +78,10 @@ export const DEFAULT_CF_GATEWAYS: ReadonlyArray<CfGatewaySeedEntry> = [
   },
 ] as const;
 
-export interface SeedCfGatewaysArgs {
+export interface SeedSatelliteWorkersArgs {
   readonly db: DbAdapter;
-  /** Override fuer Tests — sonst werden DEFAULT_CF_GATEWAYS verwendet. */
-  readonly gateways?: ReadonlyArray<CfGatewaySeedEntry>;
+  /** Override fuer Tests — sonst werden DEFAULT_SATELLITE_WORKERS verwendet. */
+  readonly gateways?: ReadonlyArray<SatelliteWorkerSeedEntry>;
   /** Override fuer Tests — sonst process.env. */
   readonly env?: Record<string, string | undefined>;
   /** Override fuer Tests — sonst Date.now(). */
@@ -102,8 +110,8 @@ function sha256Hex(s: string): string {
  * Build der Wrapper-Tools (damit der Tool-Cache via Discovery danach
  * gepflegt werden kann).
  */
-export async function seedCfGateways(args: SeedCfGatewaysArgs): Promise<SeedResult> {
-  const gateways = args.gateways ?? DEFAULT_CF_GATEWAYS;
+export async function seedSatelliteWorkers(args: SeedSatelliteWorkersArgs): Promise<SeedResult> {
+  const gateways = args.gateways ?? DEFAULT_SATELLITE_WORKERS;
   const env = args.env ?? (typeof process !== 'undefined' ? process.env : {});
   const now = args.now ?? (() => Date.now());
   const registered: string[] = [];

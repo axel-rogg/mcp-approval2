@@ -12,7 +12,7 @@ import {
   makeForwardingTool,
   resolveSubMcpSensitivity,
 } from './wrapper_tools.js';
-import { DEFAULT_CF_GATEWAYS, seedCfGateways } from './seed.js';
+import { DEFAULT_SATELLITE_WORKERS, seedSatelliteWorkers } from './seed_satellites.js';
 import { SubMcpForwarder } from './forwarder.js';
 import { SubMcpNotFoundError, type SubMcpServerConfig } from './types.js';
 import type { ToolContext } from '../protocol/tool.js';
@@ -307,7 +307,7 @@ describe('buildSubMcpWrapperTools', () => {
 });
 
 // ---------------------------------------------------------------------------
-// seedCfGateways — idempotent INSERT/UPDATE per env-var
+// seedSatelliteWorkers — idempotent INSERT/UPDATE per env-var
 // ---------------------------------------------------------------------------
 
 interface CapturedSql {
@@ -341,7 +341,7 @@ function makeStubDb(
   return { db, captured };
 }
 
-describe('seedCfGateways', () => {
+describe('seedSatelliteWorkers', () => {
   it('registers catalog-defaults even without env-tokens (registeredWithoutToken)', async () => {
     // Phase 2 PLAN-per-user-server-store: Catalog-Defaults werden IMMER
     // angelegt damit "Verfuegbar"-Liste in der PWA sichtbar ist. Token-
@@ -351,7 +351,7 @@ describe('seedCfGateways', () => {
       [{ name: 'gws', was_new: true }],
       [{ name: 'utils', was_new: true }],
     ]);
-    const result = await seedCfGateways({ db, env: {} });
+    const result = await seedSatelliteWorkers({ db, env: {} });
     expect(result.registered.sort()).toEqual(['gcloud', 'gws', 'utils']);
     expect(result.registeredWithoutToken.sort()).toEqual(['gcloud', 'gws', 'utils']);
     expect(result.updated).toEqual([]);
@@ -367,7 +367,7 @@ describe('seedCfGateways', () => {
       [{ name: 'gws', was_new: true }],
       [{ name: 'utils', was_new: true }],
     ]);
-    const result = await seedCfGateways({
+    const result = await seedSatelliteWorkers({
       db,
       env: { SUB_MCP_TOKEN_UTILS: 'plain-utils-token' },
     });
@@ -388,24 +388,24 @@ describe('seedCfGateways', () => {
       [{ name: 'gws', was_new: false }],
       [{ name: 'utils', was_new: false }],
     ]);
-    const result = await seedCfGateways({ db, env: {} });
+    const result = await seedSatelliteWorkers({ db, env: {} });
     expect(result.registered).toEqual([]);
     expect(result.updated.sort()).toEqual(['gcloud', 'gws', 'utils']);
   });
 
   it('treats empty INSERT return as already-in-sync', async () => {
     const { db } = makeStubDb([[], [], []]);
-    const result = await seedCfGateways({ db, env: {} });
+    const result = await seedSatelliteWorkers({ db, env: {} });
     expect(result.registered).toEqual([]);
     expect(result.updated).toEqual([]);
   });
 
-  it('DEFAULT_CF_GATEWAYS contains the three expected entries with correct URLs', () => {
-    expect(DEFAULT_CF_GATEWAYS).toHaveLength(3);
-    const byName = new Map(DEFAULT_CF_GATEWAYS.map((g) => [g.name, g]));
-    expect(byName.get('utils')?.baseUrl).toBe('https://utils.ai-toolhub.org');
-    expect(byName.get('gws')?.baseUrl).toBe('https://gws.ai-toolhub.org');
-    expect(byName.get('gcloud')?.baseUrl).toBe('https://gcloud.ai-toolhub.org');
+  it('DEFAULT_SATELLITE_WORKERS contains the three expected entries with correct URLs', () => {
+    expect(DEFAULT_SATELLITE_WORKERS).toHaveLength(3);
+    const byName = new Map(DEFAULT_SATELLITE_WORKERS.map((g) => [g.name, g]));
+    expect(byName.get('utils')?.baseUrl).toBe('https://mcp-utils.axelrogg.workers.dev');
+    expect(byName.get('gws')?.baseUrl).toBe('https://mcp-gws.axelrogg.workers.dev');
+    expect(byName.get('gcloud')?.baseUrl).toBe('https://mcp-gcloud.axelrogg.workers.dev');
     expect(byName.get('utils')?.serviceTokenEnvVar).toBe('SUB_MCP_TOKEN_UTILS');
     expect(byName.get('gws')?.serviceTokenEnvVar).toBe('SUB_MCP_TOKEN_GWS');
     expect(byName.get('gcloud')?.serviceTokenEnvVar).toBe('SUB_MCP_TOKEN_GCLOUD');

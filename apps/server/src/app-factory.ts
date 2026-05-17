@@ -126,7 +126,7 @@ import {
   buildSubMcpWrapperTools,
   createSubMcpRegistry,
   refreshSubMcpToolCache,
-  seedCfGateways,
+  seedSatelliteWorkers,
   subMcpDiscoverRoutes,
   SubMcpForwarder,
   SubMcpWrappersCache,
@@ -559,16 +559,19 @@ export async function createApp(
       }
     }
 
-    // Sub-MCP-Gateway-Wrapper-Tools (utils / gws / gcloud auf Cloudflare).
+    // Sub-MCP-Gateway-Wrapper-Tools (eigene Satellite-Worker auf Cloudflare:
+    // utils / gws / gcloud). Catalog-OAuth-Server (cf, github) werden separat
+    // in seedOAuthCatalogServers() registriert.
     //
-    // Pflicht-Voraussetzung: SUB_MCP_TOKEN_<NAME> env-vars (per Gateway) im
-    // Doppler/Fly-Secret-Store. Kein Token → Sub-MCP wird nicht registriert.
-    // Damit ist die ganze Phase opt-in pro Gateway und ohne Token harmless.
+    // Pflicht-Voraussetzung Satellite-Worker: SUB_MCP_TOKEN_<NAME> env-vars
+    // (per Gateway) im Doppler/Fly-Secret-Store. Kein Token → Catalog-Eintrag
+    // wird trotzdem registriert (sichtbar im Tools-Tab), aber Forward-Calls
+    // fail'n bis ein Token aufgepflegt ist (fail-closed).
     //
     // Ablauf:
-    //   1. seedCfGateways — INSERT/UPDATE der drei sub_mcp_servers-Rows
+    //   1. seedSatelliteWorkers — INSERT/UPDATE der drei sub_mcp_servers-Rows
     //      idempotent. Token-Hash aus env, base_url/display_name aus
-    //      DEFAULT_CF_GATEWAYS. Wenn kein Token → skip.
+    //      DEFAULT_SATELLITE_WORKERS.
     //   2. refreshSubMcpToolCache — initialer tools/list-Roundtrip pro
     //      enabled Sub-MCP, damit tools_cache befuellt ist. Discovery-Cron
     //      laeuft danach periodisch (siehe internal/v1/cron-Pfad).
@@ -579,7 +582,7 @@ export async function createApp(
     // Errors pro Phase werden geloggt + non-fatal — ein nicht-erreichbarer
     // gws darf approval2-Boot nicht stoppen.
     try {
-      const seedResult = await seedCfGateways({ db: server.db });
+      const seedResult = await seedSatelliteWorkers({ db: server.db });
       if (
         seedResult.registered.length > 0 ||
         seedResult.updated.length > 0 ||

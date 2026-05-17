@@ -60,12 +60,12 @@ export {
 } from './wrapper_tools.js';
 
 export {
-  seedCfGateways,
-  DEFAULT_CF_GATEWAYS,
-  type CfGatewaySeedEntry,
-  type SeedCfGatewaysArgs,
+  seedSatelliteWorkers,
+  DEFAULT_SATELLITE_WORKERS,
+  type SatelliteWorkerSeedEntry,
+  type SeedSatelliteWorkersArgs,
   type SeedResult,
-} from './seed.js';
+} from './seed_satellites.js';
 
 export {
   applyGatewayDiscovery,
