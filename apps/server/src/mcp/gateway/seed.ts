@@ -40,23 +40,32 @@ export interface CfGatewaySeedEntry {
   readonly serviceTokenEnvVar: string;
 }
 
+// 2026-05-17: URLs auf workers.dev statt Custom-Domain.
+// Custom-Domains (utils|gws|gcloud.ai-toolhub.org) liegen hinter Cloudflare
+// Access (Zero-Trust) → blocken externe Bearer-Calls mit 403 egal welcher
+// Token. V2 (Fly.io) ist nicht im CF Account → kann nicht durch Access
+// authentifizieren. workers.dev hat KEINEN Access davor → direkter Worker-
+// Zugriff mit MCP_BEARER_TOKEN.
+//
+// Sub-MCP-Worker env-var-Name heisst MCP_BEARER_TOKEN (nicht SERVICE_TOKEN),
+// daher das wrangler-Sync-Skript pusht in diese Variable.
 export const DEFAULT_CF_GATEWAYS: ReadonlyArray<CfGatewaySeedEntry> = [
   {
     name: 'utils',
     displayName: 'Utils Gateway (date/calendar/diagram)',
-    baseUrl: 'https://utils.ai-toolhub.org',
+    baseUrl: 'https://mcp-utils.axelrogg.workers.dev',
     serviceTokenEnvVar: 'SUB_MCP_TOKEN_UTILS',
   },
   {
     name: 'gws',
     displayName: 'Google Workspace Gateway',
-    baseUrl: 'https://gws.ai-toolhub.org',
+    baseUrl: 'https://mcp-gws.axelrogg.workers.dev',
     serviceTokenEnvVar: 'SUB_MCP_TOKEN_GWS',
   },
   {
     name: 'gcloud',
     displayName: 'Google Cloud Gateway',
-    baseUrl: 'https://gcloud.ai-toolhub.org',
+    baseUrl: 'https://mcp-gcloud.axelrogg.workers.dev',
     serviceTokenEnvVar: 'SUB_MCP_TOKEN_GCLOUD',
   },
 ] as const;
