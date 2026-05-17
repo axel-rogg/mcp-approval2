@@ -81,10 +81,29 @@ export interface MarkDispatchedArgs {
   readonly outboxId: string;
 }
 
+export interface ResendOutboxArgs {
+  readonly principalRole: 'admin' | 'member';
+  readonly outboxId: string;
+}
+
+export interface ResendOutboxResult {
+  readonly status: 'sent' | 'failed' | 'logged';
+  readonly provider: string;
+  readonly providerMessageId: string | null;
+  readonly errorDetail: string | null;
+}
+
 export interface EmailOutboxService {
   sendAndPersist(args: SendAndPersistArgs): Promise<SendAndPersistResult>;
   listOutbox(args: ListOutboxArgs): Promise<OutboxRow[]>;
   markDispatched(args: MarkDispatchedArgs): Promise<void>;
+  /**
+   * Admin-only: laedt eine existing outbox-row + re-schickt sie via
+   * EmailAdapter. Status + provider_message_id der Row werden upgedated.
+   * Sinnvoll bei status=failed (transient API-Fail) oder status=logged
+   * (User wechselte vom console- auf den resend-Provider).
+   */
+  resend(args: ResendOutboxArgs): Promise<ResendOutboxResult>;
 }
 
 export interface EmailOutboxServiceOptions {
@@ -241,6 +260,65 @@ export function createEmailOutboxService(
           WHERE id = $2 AND manually_dispatched_at IS NULL`,
         [now(), args.outboxId],
       );
+    },
+
+    async resend(args) {
+      requireAdmin(args.principalRole);
+      const raw = db.unsafe('email_outbox_resend_load');
+      const rows = await raw.query<{
+        toEmail: string;
+        subject: string;
+        bodyHtml: string;
+        bodyText: string;
+      }>(
+        `SELECT to_email AS "toEmail", subject, body_html AS "bodyHtml", body_text AS "bodyText"
+           FROM email_outbox WHERE id = $1 LIMIT 1`,
+        [args.outboxId],
+      );
+      const row = rows[0];
+      if (!row) {
+        throw new HttpError(404, 'not_found', `outbox row ${args.outboxId} not found`);
+      }
+
+      let provider = email?.providerName ?? 'console';
+      let providerMessageId: string | null = null;
+      let status: 'sent' | 'failed' | 'logged' = 'logged';
+      let errorDetail: string | null = null;
+
+      if (email) {
+        try {
+          const result = await email.send({
+            to: row.toEmail,
+            subject: row.subject,
+            html: row.bodyHtml,
+            text: row.bodyText,
+          });
+          provider = result.provider;
+          providerMessageId = result.id;
+          status = provider === 'console' ? 'logged' : 'sent';
+        } catch (err) {
+          status = 'failed';
+          if (err instanceof EmailSendError) {
+            errorDetail = `${err.providerDetail} (status=${err.status ?? 'n/a'})`;
+          } else {
+            errorDetail = err instanceof Error ? err.message : String(err);
+          }
+        }
+      }
+
+      // Update existing row in-place (kein neuer Eintrag — Audit-Trail von
+      // "neuer Versuch" lebt im provider_message_id-Wechsel + created_at
+      // bleibt der originale Zeitpunkt).
+      const upd = db.unsafe('email_outbox_resend_update');
+      await upd.query(
+        `UPDATE email_outbox
+            SET provider = $1, provider_message_id = $2, status = $3,
+                error_detail = $4, manually_dispatched_at = NULL
+          WHERE id = $5`,
+        [provider, providerMessageId, status, errorDetail, args.outboxId],
+      );
+
+      return { status, provider, providerMessageId, errorDetail };
     },
   };
 }

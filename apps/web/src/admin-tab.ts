@@ -150,7 +150,7 @@ async function renderUsersSubtab(
   const table = document.createElement('table');
   table.className = 'admin-table admin-users-table';
   table.innerHTML = `<thead><tr>
-    <th>Email</th><th>Role / Status</th><th>Last login</th><th>Actions</th>
+    <th>Email</th><th>Role</th><th>Status</th><th>Last login</th>
   </tr></thead>`;
   const tbody = document.createElement('tbody');
   for (const u of users) {
@@ -176,54 +176,15 @@ function renderUserRow(
   const titleAttr = u.display_name ? ` title="${escapeHtml(u.display_name)}"` : '';
   tr.innerHTML = `
     <td${titleAttr}><code>${escapeHtml(u.email)}</code></td>
-    <td class="admin-pill-stack">
-      <span class="pill pill-${u.role}">${u.role}</span>
-      <span class="pill pill-${u.status}">${u.status}</span>
-    </td>
-    <td class="small muted">${fmtDate(u.last_login_at)}</td>
   `;
-  const actionsTd = document.createElement('td');
-  actionsTd.className = 'admin-actions-stack';
-
   const isSelf = u.id === session.userId;
 
-  if (u.status === 'active') {
-    const susBtn = document.createElement('button');
-    susBtn.type = 'button';
-    susBtn.className = 'btn btn-secondary btn-small';
-    susBtn.textContent = 'Suspend';
-    susBtn.disabled = isSelf;
-    if (isSelf) susBtn.title = 'Self-suspend not allowed';
-    susBtn.addEventListener('click', async () => {
-      const reason = window.prompt('Suspend-Grund (optional):') ?? undefined;
-      try {
-        await api.suspendUser(u.id, reason || undefined);
-        showToast(`${u.email} suspendiert`, 'success');
-        await reload();
-      } catch (err) {
-        showToast(`Suspend fail: ${(err as Error).message}`, 'error');
-      }
-    });
-    actionsTd.appendChild(susBtn);
-  } else if (u.status === 'suspended') {
-    const unsBtn = document.createElement('button');
-    unsBtn.type = 'button';
-    unsBtn.className = 'btn btn-small';
-    unsBtn.textContent = 'Unsuspend';
-    unsBtn.addEventListener('click', async () => {
-      try {
-        await api.unsuspendUser(u.id);
-        showToast(`${u.email} aktiviert`, 'success');
-        await reload();
-      } catch (err) {
-        showToast(`Unsuspend fail: ${(err as Error).message}`, 'error');
-      }
-    });
-    actionsTd.appendChild(unsBtn);
-  }
-
+  // ── Role-Zelle: <select> als inline-action. Wechsel triggert changeRole. ──
+  const roleTd = document.createElement('td');
   const roleSel = document.createElement('select');
-  roleSel.className = 'btn-small';
+  roleSel.className = `admin-inline-select pill-${u.role}`;
+  roleSel.disabled = u.status === 'deleted';
+  if (roleSel.disabled) roleSel.title = 'User is deleted';
   for (const r of ['member', 'admin'] as const) {
     const opt = document.createElement('option');
     opt.value = r;
@@ -233,6 +194,7 @@ function renderUserRow(
   }
   roleSel.addEventListener('change', async () => {
     const newRole = roleSel.value as 'admin' | 'member';
+    if (newRole === u.role) return;
     if (!confirm(`Rolle von ${u.email} → ${newRole}?`)) {
       roleSel.value = u.role;
       return;
@@ -246,31 +208,96 @@ function renderUserRow(
       showToast(`Role-Change fail: ${(err as Error).message}`, 'error');
     }
   });
-  actionsTd.appendChild(roleSel);
+  roleTd.appendChild(roleSel);
+  tr.appendChild(roleTd);
 
-  if (u.status !== 'deleted') {
-    const delBtn = document.createElement('button');
-    delBtn.type = 'button';
-    delBtn.className = 'btn btn-danger btn-small';
-    delBtn.textContent = 'Delete';
-    delBtn.disabled = isSelf;
-    if (isSelf) delBtn.title = 'Self-delete not allowed';
-    delBtn.addEventListener('click', async () => {
-      if (!confirm(`User ${u.email} unwiderruflich auf 'deleted' setzen?\n(Crypto-Shred erfolgt via GDPR-Erase-Cron separat.)`)) {
-        return;
-      }
-      try {
+  // ── Status-Zelle: <select> mit allen Transitions als Aktionen. ──
+  // active → [active, suspended, deleted]
+  // suspended → [active, suspended, deleted]
+  // deleted → [deleted] (no further change)
+  // Self-protect: own user kann nicht suspended/deleted gewaehlt werden.
+  const statusTd = document.createElement('td');
+  const statusSel = document.createElement('select');
+  statusSel.className = `admin-inline-select pill-${u.status}`;
+  if (u.status === 'deleted') {
+    statusSel.disabled = true;
+    const opt = document.createElement('option');
+    opt.value = 'deleted';
+    opt.textContent = 'deleted';
+    opt.selected = true;
+    statusSel.appendChild(opt);
+  } else {
+    const options: Array<{ value: string; label: string; disabled?: boolean; title?: string }> = [
+      { value: 'active', label: 'active' },
+      {
+        value: 'suspended',
+        label: 'suspended',
+        disabled: isSelf,
+        ...(isSelf ? { title: 'Self-suspend not allowed' } : {}),
+      },
+      {
+        value: 'deleted',
+        label: 'deleted',
+        disabled: isSelf,
+        ...(isSelf ? { title: 'Self-delete not allowed' } : {}),
+      },
+    ];
+    for (const o of options) {
+      const opt = document.createElement('option');
+      opt.value = o.value;
+      opt.textContent = o.label;
+      if (o.value === u.status) opt.selected = true;
+      if (o.disabled) opt.disabled = true;
+      if (o.title) opt.title = o.title;
+      statusSel.appendChild(opt);
+    }
+  }
+  statusSel.addEventListener('change', async () => {
+    const target = statusSel.value as 'active' | 'suspended' | 'deleted';
+    if (target === u.status) return;
+    try {
+      if (target === 'suspended') {
+        const reason = window.prompt(`${u.email} suspendieren — Grund (optional):`) ?? undefined;
+        if (reason === undefined) {
+          statusSel.value = u.status;
+          return;
+        }
+        await api.suspendUser(u.id, reason || undefined);
+        showToast(`${u.email} suspendiert`, 'success');
+      } else if (target === 'active') {
+        if (!confirm(`${u.email} reaktivieren?`)) {
+          statusSel.value = u.status;
+          return;
+        }
+        await api.unsuspendUser(u.id);
+        showToast(`${u.email} aktiviert`, 'success');
+      } else if (target === 'deleted') {
+        if (
+          !confirm(
+            `User ${u.email} auf 'deleted' setzen?\n(Sessions revoked, Soft-Delete; Crypto-Shred via GDPR-Erase-Cron separat.)`,
+          )
+        ) {
+          statusSel.value = u.status;
+          return;
+        }
         await api.deleteUser(u.id);
         showToast(`${u.email} gelöscht`, 'success');
-        await reload();
-      } catch (err) {
-        showToast(`Delete fail: ${(err as Error).message}`, 'error');
       }
-    });
-    actionsTd.appendChild(delBtn);
-  }
+      await reload();
+    } catch (err) {
+      statusSel.value = u.status;
+      showToast(`Status-Change fail: ${(err as Error).message}`, 'error');
+    }
+  });
+  statusTd.appendChild(statusSel);
+  tr.appendChild(statusTd);
 
-  tr.appendChild(actionsTd);
+  // ── Last-Login ──
+  const dateTd = document.createElement('td');
+  dateTd.className = 'small muted';
+  dateTd.textContent = fmtDate(u.last_login_at);
+  tr.appendChild(dateTd);
+
   return tr;
 }
 
@@ -358,7 +385,7 @@ async function renderOutboxSubtab(root: HTMLElement, api: AdminApi): Promise<voi
   const table = document.createElement('table');
   table.className = 'admin-table';
   table.innerHTML = `<thead><tr>
-    <th>Wann</th><th>Kind</th><th>To</th><th>Subject</th><th>Status</th><th>Aktion</th>
+    <th>Wann</th><th>To</th><th>Subject</th><th>Status</th><th>Aktion</th>
   </tr></thead>`;
   const tbody = document.createElement('tbody');
   for (const r of rows) {
@@ -382,13 +409,33 @@ function renderOutboxRow(
     : '';
   tr.innerHTML = `
     <td class="small muted">${fmtDate(r.createdAt)}</td>
-    <td><span class="pill pill-${r.kind}">${r.kind}</span></td>
     <td><code>${escapeHtml(r.toEmail)}</code></td>
     <td>${escapeHtml(r.subject)}</td>
     <td><span class="pill pill-${r.status}">${r.status}</span>${dispatchedSuffix}</td>
   `;
   const actionsTd = document.createElement('td');
   actionsTd.className = 'row';
+
+  const resendBtn = document.createElement('button');
+  resendBtn.type = 'button';
+  resendBtn.className = 'btn btn-small';
+  resendBtn.textContent = '↻ Resend';
+  resendBtn.title = 'Email nochmal via aktuellem Provider versenden';
+  resendBtn.addEventListener('click', async () => {
+    if (!confirm(`Email "${r.subject}" an ${r.toEmail} nochmal senden?`)) return;
+    resendBtn.disabled = true;
+    try {
+      const result = await api.resendOutbox(r.id);
+      const tone = result.status === 'sent' ? 'success' : result.status === 'failed' ? 'error' : 'info';
+      const detail = result.errorDetail ? ` — ${result.errorDetail}` : '';
+      showToast(`Resend: ${result.status} (${result.provider})${detail}`, tone);
+      await reload();
+    } catch (err) {
+      showToast(`Resend fail: ${(err as Error).message}`, 'error');
+      resendBtn.disabled = false;
+    }
+  });
+  actionsTd.appendChild(resendBtn);
 
   const viewBtn = document.createElement('button');
   viewBtn.type = 'button';

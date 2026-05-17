@@ -89,6 +89,12 @@ export interface AdminApi {
   createInvite(email: string): Promise<CreateInviteResult>;
   listOutbox(args?: { kind?: OutboxEntry['kind']; status?: OutboxEntry['status']; limit?: number }): Promise<OutboxEntry[]>;
   markDispatched(outboxId: string): Promise<void>;
+  resendOutbox(outboxId: string): Promise<{
+    status: 'sent' | 'failed' | 'logged';
+    provider: string;
+    providerMessageId: string | null;
+    errorDetail: string | null;
+  }>;
 }
 
 export function createAdminApi(): AdminApi {
@@ -193,6 +199,20 @@ export function createAdminApi(): AdminApi {
         base,
       );
       await jsonOrThrow(res);
+    },
+
+    async resendOutbox(outboxId) {
+      const res = await authedFetch(
+        `/v1/admin/email-outbox/${encodeURIComponent(outboxId)}/resend`,
+        { method: 'POST' },
+        base,
+      );
+      return jsonOrThrow<{
+        status: 'sent' | 'failed' | 'logged';
+        provider: string;
+        providerMessageId: string | null;
+        errorDetail: string | null;
+      }>(res);
     },
   };
 }

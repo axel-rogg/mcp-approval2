@@ -160,5 +160,16 @@ export function adminRoutes(deps: AdminRouteDeps): Hono<AppBindings> {
     return c.json({ status: 'dispatched' });
   });
 
+  app.post('/email-outbox/:id/resend', async (c) => {
+    if (!deps.emailOutbox) {
+      throw new HttpError(503, 'not_found', 'email outbox service not configured');
+    }
+    const actor = c.get('user');
+    if (!actor) throw new HttpError(401, 'unauthorized', 'authentication required');
+    const outboxId = c.req.param('id');
+    const result = await deps.emailOutbox.resend({ principalRole: actor.role, outboxId });
+    return c.json(result);
+  });
+
   return app;
 }
