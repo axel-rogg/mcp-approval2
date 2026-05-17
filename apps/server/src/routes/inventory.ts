@@ -21,9 +21,11 @@
  */
 import { Hono } from 'hono';
 import type { AppBindings, ServerContext } from '../lib/context.js';
+import { HttpError } from '../lib/errors.js';
 import { auth } from '../middleware/auth.js';
 import type { ToolRegistry } from '../mcp/protocol/registry.js';
 import type { SubMcpRegistry } from '../mcp/gateway/registry.js';
+import type { UserSubscriptionsService } from '../services/user-subscriptions.js';
 
 /**
  * Liefert die Tool-Namen die zu mcp-knowledge2 gehoeren. Wird in app-factory.ts
@@ -43,6 +45,13 @@ export interface InventoryRouteDeps {
   readonly server: ServerContext;
   readonly registry: ToolRegistry;
   readonly subMcpRegistry?: SubMcpRegistry;
+  /**
+   * Per-User-Subscriptions. Wenn gesetzt: Inventory filtert sub_mcp_gateways
+   * auf user-aktivierte Server + listet die nicht-aktivierten unter
+   * `available`. Wenn nicht gesetzt (Tests, Bootstrap-Mode): Legacy-
+   * Verhalten ohne Filter.
+   */
+  readonly subscriptions?: UserSubscriptionsService;
   /**
    * KC2-Tool-Snapshot-Getter. Wird pro-Request aufgerufen damit sich
    * KC-Manifest-Refresh-Changes propagieren ohne dass dieser Endpoint
@@ -85,9 +94,22 @@ interface GatewayEntry {
   readonly requiredCredentials: ReadonlyArray<RequiredCredentialEntry>;
 }
 
+interface AvailableServerEntry {
+  readonly name: string;
+  readonly displayName: string;
+  readonly toolsCount: number;
+  readonly requiredCredentials: ReadonlyArray<RequiredCredentialEntry>;
+}
+
 interface InventoryResponse {
   readonly native: ReadonlyArray<NativeToolEntry>;
   readonly gateways: ReadonlyArray<GatewayEntry>;
+  /**
+   * Catalog-Default-Server die der User noch NICHT aktiviert hat. PWA
+   * zeigt das als "Verfuegbar"-Sektion mit [Aktivieren]-Knopf.
+   * Leer wenn keine Subscriptions-Service verkabelt ist (Legacy-Mode).
+   */
+  readonly available: ReadonlyArray<AvailableServerEntry>;
 }
 
 function sensitivityFromAnnotations(annotations: unknown): 'read' | 'write' | 'danger' {
@@ -223,22 +245,54 @@ async function mapGateways(
 }
 
 export function inventoryRoutes(deps: InventoryRouteDeps): Hono<AppBindings> {
-  const { server, registry, subMcpRegistry, kcSnapshot } = deps;
+  const { server, registry, subMcpRegistry, kcSnapshot, subscriptions } = deps;
   const app = new Hono<AppBindings>();
   const guard = auth(server);
 
   app.get('/v1/inventory', guard, async (c) => {
+    const user = c.get('user');
+    if (!user) throw HttpError.unauthorized('authentication required');
+
     const kc = kcSnapshot
       ? kcSnapshot()
       : ({ toolNames: new Set<string>(), refreshedAt: null } satisfies KcWrapperSnapshot);
     const native = mapNative(registry, kc.toolNames);
-    const subMcpGateways = subMcpRegistry ? await mapGateways(subMcpRegistry) : [];
+    const allSubMcpGateways = subMcpRegistry ? await mapGateways(subMcpRegistry) : [];
     const knowledge2Entry = mapKnowledge2Gateway(registry, kc);
-    // knowledge2 erscheint zuerst, dann sub-mcp-gateways alphabetisch.
+
+    // Per-User-Subscription-Filter (Phase 1). Wenn subscriptions verkabelt:
+    // - seed catalog-rows lazy beim first read
+    // - subscribed-Liste filtert die Gateway-Cards
+    // - available-Liste sammelt catalog-defaults die User noch nicht aktiviert hat
+    // Wenn nicht verkabelt (Bootstrap/Tests): Legacy-mode, alle Gateways sichtbar.
+    let visibleGateways = allSubMcpGateways;
+    const available: AvailableServerEntry[] = [];
+    if (subscriptions) {
+      await subscriptions.ensureCatalogRows(user.userId);
+      const subs = await subscriptions.list(user.userId);
+      const enabledNames = new Set(subs.filter((s) => s.enabled).map((s) => s.subMcpName));
+      const knownNames = new Set(subs.map((s) => s.subMcpName));
+
+      visibleGateways = allSubMcpGateways.filter((g) => enabledNames.has(g.name));
+      for (const g of allSubMcpGateways) {
+        if (!enabledNames.has(g.name) && knownNames.has(g.name)) {
+          available.push({
+            name: g.name,
+            displayName: g.displayName,
+            toolsCount: g.tools.length,
+            requiredCredentials: g.requiredCredentials,
+          });
+        }
+      }
+    }
+
+    // KC2 ist embedded (Phase 1 Decision: nicht subscribable, immer aktiv
+    // wenn kc_wrappers booted). Erscheint also IMMER, ohne Subscription-Toggle.
     const gateways: GatewayEntry[] = [];
     if (knowledge2Entry) gateways.push(knowledge2Entry);
-    gateways.push(...subMcpGateways);
-    const body: InventoryResponse = { native, gateways };
+    gateways.push(...visibleGateways);
+
+    const body: InventoryResponse = { native, gateways, available };
     return c.json(body);
   });
 

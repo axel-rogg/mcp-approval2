@@ -166,6 +166,11 @@ interface ServerSection {
 
 interface ServerCardCallbacks {
   readonly onRefresh?: (name: string | null) => Promise<void>;
+  /**
+   * Toggle Subscription. Nur für Sub-MCP-Gateways die NICHT 'native' oder
+   * 'knowledge2' sind. true = aktivieren, false = deaktivieren.
+   */
+  readonly onToggleSubscription?: (name: string, enabled: boolean) => Promise<void>;
 }
 
 /**
@@ -251,6 +256,26 @@ function renderServerCard(
       void cb.onRefresh?.(s.name);
     });
     titleRow.appendChild(refreshBtn);
+  }
+
+  // Deaktivieren-Toggle. Nur fuer Sub-MCP-Gateways die KEIN 'knowledge2'
+  // sind (KC2 ist embedded, immer aktiv). Sub-route + jeder User darf
+  // seine eigene Subscription togglen.
+  if (s.isGateway && s.name !== 'knowledge2' && cb.onToggleSubscription) {
+    const disableBtn = document.createElement('button');
+    disableBtn.type = 'button';
+    disableBtn.className = 'btn btn-secondary btn-small server-card-disable';
+    disableBtn.textContent = 'Deaktivieren';
+    disableBtn.title = `${s.displayName} fuer deinen Account deaktivieren`;
+    disableBtn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (!window.confirm(`${s.displayName} deaktivieren? Tools verschwinden aus deiner Liste.`)) {
+        return;
+      }
+      void cb.onToggleSubscription?.(s.name, false);
+    });
+    titleRow.appendChild(disableBtn);
   }
 
   summary.appendChild(titleRow);
@@ -397,11 +422,87 @@ async function renderServersView(
     const sections = sectionsFromInventory(inv);
     listHost.replaceChildren();
     for (const s of sections) {
-      listHost.appendChild(renderServerCard(s, { onRefresh: handleRefresh }, haveProviders));
+      listHost.appendChild(
+        renderServerCard(
+          s,
+          { onRefresh: handleRefresh, onToggleSubscription: handleToggleSubscription },
+          haveProviders,
+        ),
+      );
+    }
+
+    // Verfuegbar-Section: Catalog-Defaults die der User noch nicht aktiviert
+    // hat. Render je Card als kompakte Box mit [Aktivieren]-Knopf.
+    if (inv.available && inv.available.length > 0) {
+      const availHeader = document.createElement('h2');
+      availHeader.className = 'tools-available-header';
+      availHeader.textContent = 'Verfügbar';
+      listHost.appendChild(availHeader);
+      const availDesc = document.createElement('p');
+      availDesc.className = 'muted small';
+      availDesc.textContent =
+        'Diese MCP-Server sind verkabelt aber noch nicht von dir aktiviert. ' +
+        'Aktivieren bringt die Tools in deine Liste — Tokens / OAuth musst du danach konfigurieren.';
+      listHost.appendChild(availDesc);
+
+      for (const av of inv.available) {
+        const card = document.createElement('section');
+        card.className = 'card available-server-card';
+
+        const head = document.createElement('div');
+        head.className = 'available-server-card-head';
+        const title = document.createElement('strong');
+        title.textContent = av.displayName;
+        head.appendChild(title);
+        const pill = document.createElement('span');
+        pill.className = 'pill';
+        pill.textContent = `${av.toolsCount} tools`;
+        head.appendChild(pill);
+        card.appendChild(head);
+
+        if (av.requiredCredentials.length > 0) {
+          const sub = document.createElement('div');
+          sub.className = 'muted small';
+          sub.textContent = `Benötigt: ${av.requiredCredentials.map((c) => c.provider).join(', ')}`;
+          card.appendChild(sub);
+        }
+
+        const enableBtn = document.createElement('button');
+        enableBtn.type = 'button';
+        enableBtn.className = 'btn btn-primary btn-small';
+        enableBtn.textContent = 'Aktivieren';
+        enableBtn.addEventListener('click', () => {
+          void handleToggleSubscription(av.name, true);
+        });
+        card.appendChild(enableBtn);
+
+        listHost.appendChild(card);
+      }
     }
 
     const total = inv.native.length + inv.gateways.reduce((a, g) => a + g.tools.length, 0);
-    footerHost.textContent = `Gesamt: ${total} Tools über ${1 + inv.gateways.length} Server`;
+    const availableCount = inv.available?.length ?? 0;
+    footerHost.textContent =
+      `Gesamt: ${total} Tools über ${1 + inv.gateways.length} aktivierte Server` +
+      (availableCount > 0 ? ` · ${availableCount} weitere verfügbar` : '');
+  }
+
+  async function handleToggleSubscription(name: string, enabled: boolean): Promise<void> {
+    status.classList.remove('err');
+    status.textContent = enabled ? `Aktiviere ${name}…` : `Deaktiviere ${name}…`;
+    try {
+      await api.setServerSubscription(name, enabled);
+      status.textContent = enabled ? `${name} aktiviert.` : `${name} deaktiviert.`;
+      await loadAndRender();
+    } catch (err) {
+      status.classList.add('err');
+      if (err instanceof ApiError && err.status === 401) {
+        onSessionExpired();
+        return;
+      }
+      const msg = err instanceof ApiError ? `${err.code}: ${err.message}` : String(err);
+      status.textContent = `Fehler: ${msg}`;
+    }
   }
 
   async function handleRefresh(name: string | null): Promise<void> {

@@ -1938,3 +1938,167 @@ code {
   cursor: not-allowed;
 }
 
+
+/* ───────────────────────────────────────────────────────────────────────
+   Tools-Tab — Available-Section (User-Subscription Phase 1)
+   ─────────────────────────────────────────────────────────────────────── */
+
+.tools-available-header {
+  margin-top: 1.5rem;
+  margin-bottom: 0.3rem;
+  font-size: 1.1rem;
+}
+
+.available-server-card {
+  padding: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  background: var(--bg-elev);
+}
+
+.available-server-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.server-card-disable {
+  margin-left: auto;
+}
+
+/* ============================================================================
+ * Admin-Tab (Multi-User Tier 1, 2026-05-17)
+ * ============================================================================
+ *
+ * Kompakte Tabelle (Users / Audit / Outbox). User-Feedback: action-row mit
+ * Buttons + Select war "zu gross" — wir reduzieren font-size + paddings damit
+ * mehr per row sichtbar ist.
+ */
+
+.admin-content {
+  font-size: 0.85rem;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.admin-table thead th {
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-table tbody td {
+  padding: 0.4rem 0.6rem;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--border);
+}
+
+.admin-table tbody tr:hover {
+  background: var(--bg-elev);
+}
+
+.admin-table code {
+  font-size: 0.78rem;
+}
+
+/* Action-Cell mit Buttons + Select — alle elemente small + tight spacing */
+.admin-table td.row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.admin-table td.row .btn,
+.admin-table td.row button,
+.admin-table td.row select {
+  font-size: 0.75rem;
+  padding: 0.25rem 0.55rem;
+  height: auto;
+  line-height: 1.2;
+}
+
+.admin-table td.row select {
+  padding: 0.25rem 0.4rem;
+}
+
+/* Pill-Varianten fuer role/status/audit-result/outbox-kind. Wir vererben den
+ * .pill-Default-Style oben (compact, uppercase, 0.75rem). Hier nur die
+ * farbigen Tints — wenn keine Variante matched, kommt der default-tint
+ * (.pill ohne suffix). */
+.pill-admin {
+  background: var(--warn-bg, #fff7e6);
+  color: var(--warn, #b25400);
+  border-color: var(--warn, #b25400);
+}
+
+.pill-member {
+  background: transparent;
+}
+
+.pill-active,
+.pill-success,
+.pill-sent {
+  background: var(--ok-bg);
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.pill-suspended,
+.pill-failed,
+.pill-failure,
+.pill-error,
+.pill-deleted {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.pill-logged,
+.pill-noop,
+.pill-denied,
+.pill-invited,
+.pill-invite,
+.pill-recovery,
+.pill-notification {
+  background: var(--bg-elev);
+  color: var(--fg-muted);
+}
+
+/* Audit-Tabelle: noch enger weil mehr Spalten */
+.admin-table.audit-table {
+  font-size: 0.78rem;
+}
+
+.admin-table.audit-table tbody td {
+  padding: 0.3rem 0.5rem;
+}
+
+/* Sub-Tab-Nav am Admin-Tab oben — Buttons als "Tab-Pills" */
+.subnav.row {
+  gap: 0.35rem;
+  margin-bottom: 0.8rem;
+}
+
+.subnav .btn[aria-current="page"] {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+/* Outbox-Body-Code-Snippets im Admin-Tab kompakt halten */
+.admin-invite-result code {
+  font-size: 0.75rem;
+}
+

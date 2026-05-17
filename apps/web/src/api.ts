@@ -77,9 +77,18 @@ export interface InventoryGateway {
   readonly requiredCredentials: ReadonlyArray<InventoryRequiredCredential>;
 }
 
+export interface InventoryAvailableServer {
+  readonly name: string;
+  readonly displayName: string;
+  readonly toolsCount: number;
+  readonly requiredCredentials: ReadonlyArray<InventoryRequiredCredential>;
+}
+
 export interface InventoryResponse {
   readonly native: ReadonlyArray<InventoryNativeTool>;
   readonly gateways: ReadonlyArray<InventoryGateway>;
+  /** Catalog-Defaults die der User noch nicht aktiviert hat. */
+  readonly available?: ReadonlyArray<InventoryAvailableServer>;
 }
 
 export interface RediscoverGatewayResult {
@@ -122,6 +131,11 @@ export interface ApiClient {
   // Inventory (Tools/Servers)
   listInventory(): Promise<InventoryResponse>;
   rediscoverGateways(name?: string): Promise<RediscoverGatewaysResponse>;
+  /**
+   * Toggle per-user-subscription auf einen Sub-MCP-Server.
+   * PATCH /v1/me/servers/:name/subscription
+   */
+  setServerSubscription(name: string, enabled: boolean): Promise<void>;
 
   // Credentials
   listCredentials(): Promise<CredentialMeta[]>;
@@ -372,6 +386,13 @@ export function createApiClient(baseUrl?: string): ApiClient {
           body: name ? { name } : {},
         },
       );
+    },
+
+    async setServerSubscription(name: string, enabled: boolean) {
+      await request<void>(`/v1/me/servers/${encodeURIComponent(name)}/subscription`, {
+        method: 'PATCH',
+        body: { enabled },
+      });
     },
 
     async listCredentials() {

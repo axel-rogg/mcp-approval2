@@ -107,19 +107,24 @@ export async function seedCfGateways(args: SeedCfGatewaysArgs): Promise<SeedResu
     // INSERT ON CONFLICT UPDATE — idempotent. Bringt Hash + URL auf env-Stand.
     // `enabled` wird beim UPDATE NICHT geflippt, damit ein manueller toggle via
     // gateway_server_toggle nicht von einem Boot ueberschrieben wird.
+    // is_catalog_default=TRUE damit der per-user-Subscription-Layer den
+    // Server in die "Verfuegbar"-Liste streut (siehe PLAN-per-user-server-
+    // store.md). owner_user_id bleibt NULL = Catalog-Default fuer alle User.
     const result = await raw.query<{ name: string; was_new: boolean }>(
       `INSERT INTO sub_mcp_servers
          (name, display_name, base_url, auth_mode, auth_config, enabled,
-          created_at, updated_at)
-       VALUES ($1, $2, $3, 'service_bearer', $4::jsonb, TRUE, $5, $5)
-       ON CONFLICT (name) DO UPDATE
+          is_catalog_default, created_at, updated_at)
+       VALUES ($1, $2, $3, 'service_bearer', $4::jsonb, TRUE, TRUE, $5, $5)
+       ON CONFLICT (name, COALESCE(owner_user_id, '00000000-0000-0000-0000-000000000000'::UUID)) DO UPDATE
          SET display_name = EXCLUDED.display_name,
              base_url     = EXCLUDED.base_url,
              auth_config  = EXCLUDED.auth_config,
+             is_catalog_default = TRUE,
              updated_at   = EXCLUDED.updated_at
          WHERE sub_mcp_servers.auth_config IS DISTINCT FROM EXCLUDED.auth_config
             OR sub_mcp_servers.base_url    IS DISTINCT FROM EXCLUDED.base_url
             OR sub_mcp_servers.display_name IS DISTINCT FROM EXCLUDED.display_name
+            OR sub_mcp_servers.is_catalog_default IS DISTINCT FROM TRUE
        RETURNING name, (xmax = 0) AS was_new`,
       [gw.name, gw.displayName, gw.baseUrl, authConfig, ts],
     );

@@ -62,6 +62,8 @@ import { knowledgeProxyRoutes } from './routes/knowledge-proxy.js';
 import { kcProxyRoutes } from './routes/kc-proxy.js';
 import { adminRoutes } from './routes/admin.js';
 import { inventoryRoutes } from './routes/inventory.js';
+import { myServersRoutes } from './routes/me/servers.js';
+import { createUserSubscriptionsService } from './services/user-subscriptions.js';
 import { gdprRoutes } from './routes/gdpr.js';
 import { approvalsRoutes } from './routes/approvals.js';
 import { createApprovalAssertionVerifier } from './auth/webauthn/approval-verify.js';
@@ -724,12 +726,20 @@ export async function createApp(
   // knowledge2-Snapshot wird per-Request aus dem module-scoped
   // `kcWrappersCache` gelesen — kc-manifest-refresh updated den Cache, der
   // Inventory-Endpoint sieht das ohne Re-Mount.
+  // UserSubscriptionsService: per-User-Subscription auf Sub-MCP-Server.
+  // PLAN-per-user-server-store Phase 1. Inventory + /v1/me/servers nutzen
+  // ihn.
+  const userSubscriptionsService = createUserSubscriptionsService({
+    db: server.db,
+  });
+
   app.route(
     '/',
     inventoryRoutes({
       server,
       registry,
       subMcpRegistry: subMcpReg,
+      subscriptions: userSubscriptionsService,
       kcSnapshot: () => {
         const cached = kcWrappersCache.get(server);
         if (!cached) {
@@ -741,6 +751,16 @@ export async function createApp(
           displayName: 'Knowledge Core (mcp-knowledge2)',
         };
       },
+    }),
+  );
+
+  // /v1/me/servers — per-User-Subscription-Mgmt (GET list + PATCH toggle).
+  app.route(
+    '/',
+    myServersRoutes({
+      server,
+      registry: subMcpReg,
+      subscriptions: userSubscriptionsService,
     }),
   );
 
