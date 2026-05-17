@@ -37,10 +37,20 @@ import { HttpError } from '../../lib/errors.js';
 import type { AppsService, AppInstance } from '../../apps/api.js';
 import { findUserByEmail } from '../../services/user.js';
 import { emitAudit } from '../../services/audit.js';
+import {
+  syncArgsFromUser,
+  type UserSyncService,
+} from '../../services/user-sync.js';
 
 export interface InternalAppsImportDeps {
   readonly server: ServerContext;
   readonly apps: AppsService;
+  /**
+   * Optional UserSyncService — wenn vorhanden, pushed der Endpoint den User
+   * vorm ersten createApp an KC2. KC2's verifyOnBehalfOf braucht den User in
+   * seiner users-Tabelle (resolveByEmail), sonst 403 "OBO subject not provisioned".
+   */
+  readonly userSync?: UserSyncService;
 }
 
 const AppPayloadSchema = z.object({
@@ -67,7 +77,7 @@ interface ImportError {
 }
 
 export function internalAppsImportRoutes(deps: InternalAppsImportDeps): Hono<AppBindings> {
-  const { server, apps } = deps;
+  const { server, apps, userSync } = deps;
   const app = new Hono<AppBindings>();
 
   app.post('/internal/v1/apps/import', zValidator('json', ImportBodySchema), async (c) => {
@@ -82,6 +92,28 @@ export function internalAppsImportRoutes(deps: InternalAppsImportDeps): Hono<App
       throw HttpError.notFound(`user with email "${body.userEmail}" not found`, {
         userEmail: body.userEmail,
       });
+    }
+
+    // KC2 verifyOnBehalfOf braucht den User in seiner users-Tabelle. Bei einem
+    // Single-User-Pilot ist der erste createApp-Call vor irgend einem Approval
+    // → User noch nicht zu KC2 gesynced (sync passiert sonst beim admin-Action).
+    // Best-effort Sync, ignoriert Failures (User ist evtl. schon drin).
+    if (userSync) {
+      try {
+        await userSync.push(
+          syncArgsFromUser({
+            id: user.id,
+            email: user.email,
+            displayName: user.displayName ?? user.email,
+            status: user.status === 'active' || user.status === 'invited' || user.status === 'suspended'
+              ? user.status
+              : 'active',
+            externalId: user.externalId,
+          }),
+        );
+      } catch {
+        // emitAudit innerhalb userSync.push hat schon geloggt — wir machen weiter.
+      }
     }
 
     const imported: ImportedEntry[] = [];

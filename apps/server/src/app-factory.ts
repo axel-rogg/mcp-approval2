@@ -399,7 +399,14 @@ export async function createApp(
       db: server.db,
       ...(userSyncService ? { userSync: userSyncService } : {}),
     });
-    app.route('/v1/admin', adminRoutes({ admin: adminService }));
+    const emailOutboxService = createEmailOutboxService({
+      db: server.db,
+      ...(server.email ? { email: server.email } : {}),
+    });
+    app.route(
+      '/v1/admin',
+      adminRoutes({ admin: adminService, emailOutbox: emailOutboxService }),
+    );
   }
 
   // GDPR self-service (export + erase)
@@ -839,6 +846,7 @@ export async function createApp(
         internalAppsImportRoutes({
           server,
           apps: optionalServices.apps,
+          ...(userSyncService ? { userSync: userSyncService } : {}),
         }),
       );
     }
