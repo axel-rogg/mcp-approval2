@@ -36,6 +36,7 @@
  */
 import { Hono } from 'hono';
 import type { AppBindings, ServerContext } from '../lib/context.js';
+import { baseLogger as logger } from '../lib/logger.js';
 
 const NAME_RE = /^[a-z][a-z0-9_-]{0,63}$/;
 
@@ -45,10 +46,27 @@ export function oauthBridgeRoutes(_server: ServerContext): Hono<AppBindings> {
   app.get('/oauth/sub-mcp-callback', (c) => {
     const url = new URL(c.req.url);
     const name = url.searchParams.get('name') ?? '';
+    const code = url.searchParams.get('code') ?? '';
+    const state = url.searchParams.get('state') ?? '';
+    const error = url.searchParams.get('error') ?? '';
+    logger.info(
+      {
+        event: 'oauth.bridge.hit',
+        name,
+        hasCode: code.length > 0,
+        hasState: state.length > 0,
+        error: error || null,
+        // Origin-Hints fuer Debugging Multi-Origin-Setups
+        host: c.req.header('x-forwarded-host') ?? c.req.header('host') ?? null,
+        proto: c.req.header('x-forwarded-proto') ?? null,
+      },
+      'oauth-bridge incoming callback',
+    );
     // Defense: Name validieren bevor wir ihn in die PWA-URL hineinpacken
     // (sonst beliebige Hash-Route exploitable als Open-Redirect-Vehicle —
     // zwar im selben Origin, aber XSS-vermeidung).
     if (!NAME_RE.test(name)) {
+      logger.warn({ event: 'oauth.bridge.invalid_name', name }, 'rejected');
       return c.text('invalid name', 400);
     }
     // Alle anderen Query-Params (code, state, error, error_description,

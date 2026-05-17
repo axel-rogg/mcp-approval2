@@ -20,6 +20,7 @@ import { zValidator } from '@hono/zod-validator';
 import type { AppBindings, ServerContext } from '../../lib/context.js';
 import { HttpError } from '../../lib/errors.js';
 import { auth } from '../../middleware/auth.js';
+import { baseLogger as logger } from '../../lib/logger.js';
 import type { SubMcpRegistry } from '../../mcp/gateway/registry.js';
 import type { UserSubscriptionsService } from '../../services/user-subscriptions.js';
 import type { UserServerConfigService } from '../../services/user-server-config.js';
@@ -371,6 +372,20 @@ export function myServersRoutes(deps: MyServersRouteDeps): Hono<AppBindings> {
         if (!user) throw HttpError.unauthorized('authentication required');
         const name = c.req.param('name');
         const body = c.req.valid('json');
+        // Debug-Diagnostik: PWA sendet `redirectUri` mit. Wenn `#` drin →
+        // alter Bundle, der User wuerde gleich beim GitHub-Authorize ein
+        // "redirect_uri not associated" sehen. Loggen damit wir's nachher
+        // grep'en koennen.
+        logger.info(
+          {
+            event: 'oauth.start',
+            server: name,
+            userId: user.userId,
+            redirectUri: body.redirectUri,
+            hasHashFragment: body.redirectUri.includes('#'),
+          },
+          'sub-mcp oauth-start',
+        );
         const result = await oauthSvc.start(user.userId, name, body.redirectUri);
         return c.json(result);
       },

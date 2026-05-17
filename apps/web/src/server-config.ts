@@ -334,9 +334,41 @@ export async function renderServerConfig(
         // RFC 6749 §3.1.2 verbietet Fragments in redirect_uri — GitHub-
         // App und andere strict-Provider rejecten sonst beim authorize.
         const redirectUri = `${window.location.origin}/oauth/sub-mcp-callback?name=${encodeURIComponent(serverName)}`;
+        // Debug-Diagnostik: zeige redirect_uri an damit User bei
+        // "redirect_uri not associated"-Fehler sofort sieht ob (a) der
+        // Browser-Bundle aktuell ist (kein # in URI) und (b) was er in
+        // GitHub-App registrieren muss.
+        // eslint-disable-next-line no-console
+        console.info('[oauth] starting authorize', {
+          server: serverName,
+          redirectUri,
+          bundleVersion: 'v5-oauth-bridge',
+          hasHash: redirectUri.includes('#'),
+        });
+        if (redirectUri.includes('#')) {
+          alert(
+            'Bundle-Drift erkannt: dein Browser sendet noch eine ' +
+              'Hash-URL als redirect_uri (#). Das bedeutet du nutzt einen ' +
+              'alten PWA-Bundle. Schliesse ALLE Tabs dieser PWA + oeffne sie neu, ' +
+              'dann nochmal Authorize klicken.\n\nredirect_uri = ' +
+              redirectUri,
+          );
+          authorizeBtn.disabled = false;
+          return;
+        }
         const result = await api.startServerOAuth(serverName, redirectUri);
+        // Vor Redirect: zeige dem User in der Status-Zeile exakt was an
+        // GitHub gesendet wird. Bei "redirect_uri not associated" weiss
+        // er sofort welche URL in der GitHub-App registriert sein muss.
+        const debugLine = `→ redirect_uri = ${redirectUri}\n→ falls Error: trag GENAU diese URL (ohne ?name=...) in GitHub-App callbacks ein:\n   ${window.location.origin}/oauth/sub-mcp-callback`;
+        // eslint-disable-next-line no-console
+        console.info('[oauth] authorize-url ready', { authorizeUrl: result.authorizeUrl, redirectUri, debugLine });
+        authorizeStatus.textContent = `→ ${redirectUri}`;
         // Pre-Save: SessionStorage damit der Callback-Route den state matchen kann
         sessionStorage.setItem(`oauth_state_${serverName}`, result.state);
+        // Kurz delayed damit User die Status-Line lesen kann bei sehr
+        // schnellen Bildschirmen. 500ms ist subjektiv kurz aber ausreichend.
+        await new Promise((r) => setTimeout(r, 500));
         window.location.href = result.authorizeUrl;
       } catch (err) {
         authorizeBtn.disabled = false;
