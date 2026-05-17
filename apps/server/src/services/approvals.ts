@@ -525,12 +525,18 @@ export function createApprovalService(opts: ApprovalServiceOptions): ApprovalSer
     },
 
     async setResult(args) {
+      // SEC-018: single-write-Guard — verhindert dass ein zweiter Dispatch
+      // (gleiche approval_id) das erste Result ueberschreibt. Mit dem CAS
+      // auf `result_emitted_at IS NULL` ist setResult idempotent: erste
+      // erfolgreiche Schreib gewinnt, alle weiteren werden im UPDATE
+      // gedropped. Wir werfen kein Error im no-op-Fall, weil Caller die
+      // result-Row separat re-fetcht.
       const ts = now();
       const raw = db.unsafe('approval_set_result');
       await raw.query(
         `UPDATE pending_approvals
            SET result_json = $1, result_emitted_at = $2
-         WHERE id = $3`,
+         WHERE id = $3 AND result_emitted_at IS NULL`,
         [JSON.stringify(args.result), ts, args.id],
       );
     },

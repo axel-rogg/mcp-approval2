@@ -73,7 +73,7 @@ Findings sind innerhalb der Severity nach **Schweregrad/Wahrscheinlichkeit** sor
   }
   ```
   Plus: `pending_approvals.result_emitted_at IS NULL`-Guard auf der UPDATE-Klausel von `setResult()` (siehe HIGH-Liste), damit eine genehmigte Approval nicht beliebig oft re-dispatched werden kann.
-- **Status:** OPEN — **Cutover-Blocker**.
+- **Status:** ✅ FIXED 2026-05-17 (Phase A) — [transport.ts](../../apps/server/src/mcp/protocol/transport.ts) bei bypassApproval dispatcht jetzt mit `row.toolInput`. Defense-in-Depth: wenn `params.arguments` non-empty UND von `row.toolInput` abweicht (stable-stringify-Compare), wird mit `Forbidden('arguments diverge from approval payload')` rejected. Plus: SEC-018-Block (`row.resultEmittedAt !== null` → Forbidden 'already consumed') verhindert Re-Dispatch derselben Approval. 4 neue Regression-Tests in [transport.test.ts](../../apps/server/src/mcp/protocol/transport.test.ts).
 
 ### SEC-005 — DCR offen + auto-Browser-Redirect → 1-Klick-Account-Takeover <a id="sec-005"></a>
 
@@ -262,6 +262,7 @@ Findings sind innerhalb der Severity nach **Schweregrad/Wahrscheinlichkeit** sor
 - **File:** [apps/server/src/services/approvals.ts:527-536](../../apps/server/src/services/approvals.ts#L527-L536)
 - `UPDATE pending_approvals SET result_json=$1, result_emitted_at=$2 WHERE id=$3` ohne `AND result_emitted_at IS NULL`. Kombiniert mit SEC-004 (MCP-Resume reuses approval_id mit anderen args): zweiter Dispatch überschreibt das erste Result.
 - **Fix:** `WHERE id=$3 AND result_emitted_at IS NULL` — single-use. Bei 0 affected Rows → 409 `approval_already_consumed`.
+- **Status:** ✅ FIXED 2026-05-17 (Phase A) — [services/approvals.ts setResult](../../apps/server/src/services/approvals.ts) hat jetzt `AND result_emitted_at IS NULL` im UPDATE. Zweiter Aufruf ist no-op (kein 409 — Caller liest die already-emitted Row via fetch zurueck). Transport-Layer (SEC-004-Fix) blockt Re-Dispatch zusaetzlich auf API-Ebene mit Forbidden. Regression-Test in [approvals.test.ts](../../apps/server/src/services/approvals.test.ts).
 
 ### SEC-019 — kc_wrappers nutzen `z.unknown()` als Input-Schema → keine Pre-Approval-Validation
 

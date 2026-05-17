@@ -344,7 +344,17 @@ async function handleToolsCall(
 
   // Approval-Resume-Pfad: wenn Client `approval_id` mitschickt + valid + own +
   // approved, dispatchen wir mit bypassApproval=true. Wenn anything off → 403.
+  //
+  // SEC-004: bei bypassApproval MUSS der Dispatch `row.toolInput` nutzen, nicht
+  // die client-supplied `params.arguments`. Sonst kann ein Angreifer eine
+  // Approval fuer "save notes.md (Einkaufsliste)" einholen, danach mit
+  // selbem approval_id einen tools/call mit args={filename:'~/.ssh/authorized_keys'}
+  // schicken — die displayed-and-signed Args wuerden ignoriert.
+  // Plus defense-in-depth: wenn params.arguments NICHT-leer ist und von
+  // row.toolInput abweicht, rejecten wir den Call statt still die signed Args
+  // zu nehmen.
   let bypassApproval = false;
+  let approvalRowToolInput: Record<string, unknown> | undefined;
   if (approvalId) {
     if (!env.approvals) {
       env.cancels.finish(cancelKey);
@@ -375,6 +385,32 @@ async function handleToolsCall(
         'approval tool_name mismatch',
       );
     }
+    // SEC-018: blockieren wenn die Approval schon einmal dispatched wurde —
+    // damit derselbe approval_id nicht beliebig oft mit potentiell anderen
+    // Argumenten re-dispatched werden kann.
+    if (row.resultEmittedAt !== null) {
+      env.cancels.finish(cancelKey);
+      return rpcError(
+        req.id,
+        JsonRpcErrorCode.Forbidden,
+        'approval already consumed (result emitted)',
+      );
+    }
+    // SEC-004 defense-in-depth: client-supplied args MUESSEN entweder leer
+    // sein (= reines Resume-Signal) oder exakt mit der signed payload
+    // uebereinstimmen.
+    const clientArgs = params.arguments ?? {};
+    const clientArgsEmpty =
+      typeof clientArgs === 'object' && clientArgs !== null && Object.keys(clientArgs).length === 0;
+    if (!clientArgsEmpty && !approvalArgsMatch(clientArgs, row.toolInput)) {
+      env.cancels.finish(cancelKey);
+      return rpcError(
+        req.id,
+        JsonRpcErrorCode.Forbidden,
+        'arguments diverge from approval payload',
+      );
+    }
+    approvalRowToolInput = row.toolInput;
     bypassApproval = true;
   }
 
@@ -382,7 +418,11 @@ async function handleToolsCall(
   try {
     dispatchResult = await env.registry.dispatch({
       name: params.name,
-      input: params.arguments ?? {},
+      // SEC-004: bei bypassApproval dispatchen wir IMMER mit den signed Args
+      // aus der Approval-Row, niemals mit client-supplied arguments.
+      input: bypassApproval && approvalRowToolInput !== undefined
+        ? approvalRowToolInput
+        : (params.arguments ?? {}),
       ctx: toolCtx,
       bypassApproval,
     });
@@ -426,6 +466,30 @@ async function handleToolsCall(
 
   const ok: JsonRpcSuccess = rpcSuccess(req.id, dispatchResult.result);
   return ok;
+}
+
+/**
+ * Deep-equal-Vergleich fuer Approval-Args (SEC-004). Order-stable JSON-Serialisation
+ * — bewusst klein gehalten, weil tool_input nur JSON-safe-Values enthaelt
+ * (kommt durch zValidator) — keine Dates, keine Functions, keine Symbols.
+ *
+ * Wir serialisieren beide Seiten mit sortierten Object-Keys, dann string-eq.
+ * Bei Mismatch returnt false → Caller wirft Forbidden.
+ */
+function approvalArgsMatch(client: unknown, signed: Record<string, unknown>): boolean {
+  return stableStringify(client) === stableStringify(signed);
+}
+
+function stableStringify(v: unknown): string {
+  if (v === null || v === undefined) return 'null';
+  if (typeof v !== 'object') return JSON.stringify(v);
+  if (Array.isArray(v)) {
+    return `[${v.map((x) => stableStringify(x)).join(',')}]`;
+  }
+  const obj = v as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  const parts = keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`);
+  return `{${parts.join(',')}}`;
 }
 
 function bytesToB64Url(b: Uint8Array): string {

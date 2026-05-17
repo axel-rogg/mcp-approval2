@@ -405,6 +405,216 @@ describe('POST /mcp — invalid messages', () => {
   });
 });
 
+// SEC-004 + SEC-018: MCP-Approval-Resume muss signed args nutzen, nicht
+// client-supplied args, und darf nicht beliebig re-dispatched werden.
+describe('POST /mcp tools/call — approval-resume (SEC-004/SEC-018)', () => {
+  // Minimal mock-approval-service: liefert eine vorgegebene approved-Row mit
+  // signed toolInput, traegt setResult mit CAS-Simulation nach.
+  function makeApprovalsStub(opts: {
+    id: string;
+    userId: string;
+    toolName: string;
+    toolInput: Record<string, unknown>;
+    resultEmittedAt?: number | null;
+  }) {
+    let resultEmittedAt: number | null = opts.resultEmittedAt ?? null;
+    let resultJson: Record<string, unknown> | null = null;
+    return {
+      async get(args: { id: string; userId: string }) {
+        if (args.id !== opts.id || args.userId !== opts.userId) return null;
+        return {
+          id: opts.id,
+          userId: opts.userId,
+          toolName: opts.toolName,
+          toolInput: opts.toolInput,
+          displayTemplate: null,
+          displayRendered: null,
+          sensitivity: 'write' as const,
+          status: 'approved' as const,
+          approvalChallenge: null,
+          approvalSignature: null,
+          approvedAt: 1,
+          rejectedAt: null,
+          rejectionReason: null,
+          expiredAt: null,
+          prfSessionId: null,
+          resultJson,
+          resultEmittedAt,
+          requestId: null,
+          originIp: null,
+          createdAt: 0,
+          expiresAt: 999_999_999_999,
+        };
+      },
+      async setResult(args: { id: string; result: Record<string, unknown> }) {
+        if (resultEmittedAt !== null) return; // SEC-018 CAS-Simulation
+        resultEmittedAt = Date.now();
+        resultJson = args.result;
+      },
+      // Unused, aber Interface-konform
+      async create() {
+        throw new Error('not used in this test');
+      },
+      async list() {
+        return [];
+      },
+      async approve() {
+        throw new Error('not used');
+      },
+      async reject() {
+        throw new Error('not used');
+      },
+      async sweepExpired() {
+        return 0;
+      },
+    } as unknown as import('../../services/approvals.js').ApprovalService;
+  }
+
+  function makeAppWithApprovals(
+    registry: ToolRegistry,
+    approvals: import('../../services/approvals.js').ApprovalService,
+  ): Hono<AppBindings> {
+    const server = makeServerContext();
+    const app = new Hono<AppBindings>();
+    app.use('*', requestId());
+    app.onError(errorHandler());
+    app.route('/', mcpTransport({ server, registry, approvals }));
+    return app;
+  }
+
+  function makeWriteTool(): Tool<{ value: string }, string> {
+    return {
+      name: 'write.set',
+      description: 'set thing',
+      inputSchema: z.object({ value: z.string() }),
+      sensitivity: 'write',
+      displayTemplate: 'Set to {{value}}',
+      async execute(_ctx, input) {
+        return `set:${input.value}`;
+      },
+    };
+  }
+
+  it('SEC-004: dispatch nutzt row.toolInput (signed), nicht client-args', async () => {
+    const reg = new ToolRegistry();
+    let dispatchedInput: unknown = null;
+    reg.register({
+      name: 'write.set',
+      description: 'set thing',
+      inputSchema: z.object({ value: z.string() }),
+      sensitivity: 'write',
+      displayTemplate: 'Set to {{value}}',
+      async execute(_ctx, input) {
+        dispatchedInput = input;
+        return `set:${(input as { value: string }).value}`;
+      },
+    });
+    const approvals = makeApprovalsStub({
+      id: 'apv-1',
+      userId: 'user-1',
+      toolName: 'write.set',
+      toolInput: { value: 'SIGNED' },
+    });
+    const app = makeAppWithApprovals(reg, approvals);
+    // Client schickt KEINE args mit (Resume-only-Signal) → server muss
+    // signed value 'SIGNED' nehmen.
+    const res = await call(
+      app,
+      jsonRpcReq(
+        'tools/call',
+        { name: 'write.set', approval_id: 'apv-1' },
+        100,
+      ),
+      bearer,
+    );
+    expect(res.status).toBe(200);
+    expect((dispatchedInput as { value: string }).value).toBe('SIGNED');
+  });
+
+  it('SEC-004: client-args weichen ab → 403 forbidden', async () => {
+    const reg = new ToolRegistry();
+    reg.register(makeWriteTool());
+    const approvals = makeApprovalsStub({
+      id: 'apv-2',
+      userId: 'user-1',
+      toolName: 'write.set',
+      toolInput: { value: 'SIGNED' },
+    });
+    const app = makeAppWithApprovals(reg, approvals);
+    const res = await call(
+      app,
+      jsonRpcReq(
+        'tools/call',
+        { name: 'write.set', arguments: { value: 'ATTACKER' }, approval_id: 'apv-2' },
+        101,
+      ),
+      bearer,
+    );
+    const body = (await res.json()) as JsonRpcError;
+    expect(body.error.code).toBe(JsonRpcErrorCode.Forbidden);
+    expect(body.error.message).toMatch(/diverge from approval payload/i);
+  });
+
+  it('SEC-004: client-args identisch zu signed → ok', async () => {
+    const reg = new ToolRegistry();
+    let dispatchedInput: unknown = null;
+    reg.register({
+      name: 'write.set',
+      description: 'set thing',
+      inputSchema: z.object({ value: z.string() }),
+      sensitivity: 'write',
+      displayTemplate: 'Set to {{value}}',
+      async execute(_ctx, input) {
+        dispatchedInput = input;
+        return `set:${(input as { value: string }).value}`;
+      },
+    });
+    const approvals = makeApprovalsStub({
+      id: 'apv-3',
+      userId: 'user-1',
+      toolName: 'write.set',
+      toolInput: { value: 'X' },
+    });
+    const app = makeAppWithApprovals(reg, approvals);
+    const res = await call(
+      app,
+      jsonRpcReq(
+        'tools/call',
+        { name: 'write.set', arguments: { value: 'X' }, approval_id: 'apv-3' },
+        102,
+      ),
+      bearer,
+    );
+    expect(res.status).toBe(200);
+    expect((dispatchedInput as { value: string }).value).toBe('X');
+  });
+
+  it('SEC-018: approval bereits konsumiert → 403', async () => {
+    const reg = new ToolRegistry();
+    reg.register(makeWriteTool());
+    const approvals = makeApprovalsStub({
+      id: 'apv-4',
+      userId: 'user-1',
+      toolName: 'write.set',
+      toolInput: { value: 'SIGNED' },
+      resultEmittedAt: 1, // schon dispatched
+    });
+    const app = makeAppWithApprovals(reg, approvals);
+    const res = await call(
+      app,
+      jsonRpcReq(
+        'tools/call',
+        { name: 'write.set', approval_id: 'apv-4' },
+        103,
+      ),
+      bearer,
+    );
+    const body = (await res.json()) as JsonRpcError;
+    expect(body.error.code).toBe(JsonRpcErrorCode.Forbidden);
+    expect(body.error.message).toMatch(/already consumed/i);
+  });
+});
+
 describe('GET /mcp/sse', () => {
   it('streams 200 with text/event-stream', async () => {
     const reg = new ToolRegistry();

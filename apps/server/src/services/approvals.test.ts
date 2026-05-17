@@ -185,7 +185,8 @@ function makeMemoryDb(): DbAdapter & { _rows: Map<string, ApprovalRow>; _audit: 
     if (t.startsWith('UPDATE pending_approvals SET result_json')) {
       const [result_json_str, ts, id] = params as readonly unknown[];
       const r = rows.get(String(id));
-      if (r) {
+      // SEC-018: CAS — nur schreiben wenn result_emitted_at IS NULL.
+      if (r && r.result_emitted_at === null) {
         r.result_json = JSON.parse(String(result_json_str)) as Record<string, unknown>;
         r.result_emitted_at = Number(ts);
       }
@@ -523,6 +524,27 @@ describe('ApprovalService', () => {
     const fetched = await svc.get({ id: a.id, userId: USER_A });
     expect(fetched?.resultJson).toEqual({ ok: true, doc_id: 'd-1' });
     expect(fetched?.resultEmittedAt).toBeGreaterThan(0);
+  });
+
+  // SEC-018: setResult ist single-write — ein zweiter Aufruf darf das erste
+  // Result NICHT ueberschreiben.
+  it('setResult is single-write (CAS on result_emitted_at IS NULL)', async () => {
+    const db = makeMemoryDb();
+    const svc = createApprovalService({ db });
+    const a = await svc.create({
+      userId: USER_A,
+      toolName: 'docs.put',
+      toolInput: {},
+      sensitivity: 'write',
+    });
+    await svc.setResult({ id: a.id, result: { ok: true, doc_id: 'first' } });
+    const first = await svc.get({ id: a.id, userId: USER_A });
+    const firstEmittedAt = first?.resultEmittedAt;
+    // Re-set: muss no-op sein.
+    await svc.setResult({ id: a.id, result: { ok: false, doc_id: 'second' } });
+    const after = await svc.get({ id: a.id, userId: USER_A });
+    expect(after?.resultJson).toEqual({ ok: true, doc_id: 'first' });
+    expect(after?.resultEmittedAt).toBe(firstEmittedAt);
   });
 
   it('rejects ttlSec out-of-range', async () => {
