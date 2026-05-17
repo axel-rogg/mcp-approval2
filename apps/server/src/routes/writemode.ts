@@ -28,9 +28,23 @@
 import { Hono } from 'hono';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
-import type { AppBindings } from '../lib/context.js';
+import type { AppBindings, ServerContext } from '../lib/context.js';
+import { HttpError } from '../lib/errors.js';
+import { auth } from '../middleware/auth.js';
+import { resolveOrigin, resolveRpId } from '../lib/config.js';
+import type {
+  WritemodeService,
+  WritemodeDuration,
+} from '../services/writemode.js';
+import { VALID_DURATIONS } from '../services/writemode.js';
+import type { VerifyWritemodeActivationArgs } from '../auth/webauthn/writemode-activation-verify.js';
+import { emitAudit } from '../services/audit.js';
 
 const MAX_WINDOW_MS = 15 * 60 * 1000; // 15 min
+// Activation-Challenge: das Body-Field `ts` darf max so weit driften vom
+// Server-Now. Wider als Round-Trip, schmaler damit ein stolener Assertion
+// nicht Stunden spaeter re-aktiviert werden kann (analog v1).
+const ACTIVATE_TS_SKEW_MS = 5 * 60 * 1000;
 
 const StartBodySchema = z
   .object({
@@ -97,6 +111,222 @@ function verifyHmac(key: string, message: string, hexSig: string): boolean {
   if (presented.byteLength !== expected.byteLength) return false;
   return timingSafeEqual(presented, expected);
 }
+
+// ============================================================================
+// User-facing Routes — /v1/writemode/{status,activate,deactivate}
+// ============================================================================
+// Diese Routes sind Bearer-gated (Session-JWT) und persistieren ueber die
+// `write_mode`-Tabelle (Migration 0013). Sie sind unabhaengig vom HMAC-Smoke-
+// Pfad — beide leben nebeneinander.
+//
+// Plan-Ref: docs/plans/active/PLAN-writemode.md (Slice 4/6).
+// ============================================================================
+
+const ActivateBodySchema = z
+  .object({
+    duration: z.union([z.literal(15), z.literal(60), z.literal(240)]),
+    ts: z.number().int().positive(),
+    credentialIdB64: z.string().min(1).max(512),
+    authenticatorDataB64: z.string().min(1).max(4096),
+    clientDataJsonB64: z.string().min(1).max(4096),
+    signatureB64: z.string().min(1).max(4096),
+    userHandleB64: z.string().max(512).optional(),
+  })
+  .strict();
+
+export interface WritemodeUserRouteDeps {
+  readonly server: ServerContext;
+  readonly writemode: WritemodeService;
+  /**
+   * Verifier-callback. In Production via
+   * `createWritemodeActivationVerifier({ db })` aus app-factory.ts. In Tests
+   * kann ein No-op injiziert werden.
+   */
+  readonly verifyActivation: (args: VerifyWritemodeActivationArgs) => Promise<void>;
+  /** Test-Helper: deterministische Uhrzeit. */
+  readonly now?: () => number;
+}
+
+/**
+ * Kanonikalisiert einen JSON-Wert nach RFC-8785-Style (sorted-keys, no-
+ * whitespace, strict JSON-strings). Byte-identisch zur v1-PWA-Implementierung
+ * in `assets/app/app.js:canonicalizeForSign` — wichtig damit Browser-Client +
+ * Server denselben challenge sehen.
+ */
+function canonicalize(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return '[' + value.map(canonicalize).join(',') + ']';
+  }
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  return (
+    '{' +
+    keys.map((k) => JSON.stringify(k) + ':' + canonicalize(obj[k])).join(',') +
+    '}'
+  );
+}
+
+function utf8ToBase64Url(s: string): string {
+  return Buffer.from(s, 'utf-8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+export function writemodeUserRoutes(
+  deps: WritemodeUserRouteDeps,
+): Hono<AppBindings> {
+  const app = new Hono<AppBindings>();
+  const guard = auth(deps.server);
+  const now = deps.now ?? (() => Date.now());
+
+  // GET /v1/writemode/status — eigene Sessions des angemeldeten Users.
+  app.get('/v1/writemode/status', guard, async (c) => {
+    const principal = c.get('user');
+    if (!principal) throw HttpError.unauthorized();
+    const sessions = await deps.writemode.listActive({
+      userId: principal.userId,
+      now: now(),
+    });
+    return c.json({
+      active: sessions.length > 0,
+      sessions: sessions.map((s) => ({
+        id: s.id,
+        activated_at: s.activatedAt,
+        expires_at: s.expiresAt,
+      })),
+    });
+  });
+
+  // POST /v1/writemode/activate — Body wie oben; verlangt WebAuthn-Signature.
+  app.post('/v1/writemode/activate', guard, async (c) => {
+    const principal = c.get('user');
+    if (!principal) throw HttpError.unauthorized();
+
+    let body: z.infer<typeof ActivateBodySchema>;
+    try {
+      const raw = await c.req.json();
+      body = ActivateBodySchema.parse(raw);
+    } catch (err) {
+      throw HttpError.badRequest('invalid_request', 'invalid body', {
+        cause: err instanceof Error ? err.message : 'parse error',
+      });
+    }
+
+    const nowMs = now();
+    if (Math.abs(nowMs - body.ts) > ACTIVATE_TS_SKEW_MS) {
+      throw HttpError.badRequest('invalid_request', 'stale_timestamp', {
+        reason: 'stale_timestamp',
+        skew_ms: Math.abs(nowMs - body.ts),
+        max_skew_ms: ACTIVATE_TS_SKEW_MS,
+      });
+    }
+
+    const duration = body.duration as WritemodeDuration;
+    if (!VALID_DURATIONS.includes(duration)) {
+      throw HttpError.badRequest('invalid_request', 'invalid_duration', {
+        reason: 'invalid_duration',
+        allowed: VALID_DURATIONS,
+      });
+    }
+
+    // Challenge byte-identisch zur Client-Seite bauen
+    // ({action, duration, ts} → sorted-keys-canonical → utf8 → b64url).
+    const challengePayload = {
+      action: 'writemode.activate',
+      duration: body.duration,
+      ts: body.ts,
+    };
+    const expectedChallenge = utf8ToBase64Url(canonicalize(challengePayload));
+    const origin = resolveOrigin(c.req.raw, deps.server.config);
+    const rpId = resolveRpId(origin);
+
+    try {
+      await deps.verifyActivation({
+        userId: principal.userId,
+        expectedChallenge,
+        expectedOrigin: origin,
+        expectedRpId: rpId,
+        assertion: {
+          credentialIdB64: body.credentialIdB64,
+          authenticatorDataB64: body.authenticatorDataB64,
+          clientDataJsonB64: body.clientDataJsonB64,
+          signatureB64: body.signatureB64,
+          ...(body.userHandleB64 ? { userHandleB64: body.userHandleB64 } : {}),
+        },
+      });
+    } catch (err) {
+      await emitAudit(deps.server.db, {
+        action: 'writemode.activate',
+        actorUserId: principal.userId,
+        result: 'failure',
+        ...(c.get('requestId') ? { requestId: c.get('requestId')! } : {}),
+        details: {
+          reason: err instanceof Error ? err.message : 'unknown',
+          duration: body.duration,
+        },
+      }).catch(() => {
+        /* audit failure is non-fatal */
+      });
+      throw err;
+    }
+
+    const session = await deps.writemode.activate({
+      userId: principal.userId,
+      durationMin: duration,
+      credentialId: body.credentialIdB64,
+      method: 'webauthn',
+      now: nowMs,
+    });
+
+    await emitAudit(deps.server.db, {
+      action: 'writemode.activate',
+      actorUserId: principal.userId,
+      result: 'success',
+      ...(c.get('requestId') ? { requestId: c.get('requestId')! } : {}),
+      details: {
+        session_id: session.id,
+        duration: body.duration,
+        expires_at: session.expiresAt,
+      },
+    }).catch(() => {});
+
+    return c.json({
+      ok: true,
+      session: {
+        id: session.id,
+        activated_at: session.activatedAt,
+        expires_at: session.expiresAt,
+      },
+    });
+  });
+
+  // POST /v1/writemode/deactivate — Bearer-only, kein WebAuthn (safe action).
+  app.post('/v1/writemode/deactivate', guard, async (c) => {
+    const principal = c.get('user');
+    if (!principal) throw HttpError.unauthorized();
+    const ended = await deps.writemode.deactivate({
+      userId: principal.userId,
+      now: now(),
+    });
+    await emitAudit(deps.server.db, {
+      action: 'writemode.deactivate',
+      actorUserId: principal.userId,
+      result: 'success',
+      ...(c.get('requestId') ? { requestId: c.get('requestId')! } : {}),
+      details: { ended_count: ended },
+    }).catch(() => {});
+    return c.json({ ok: true, ended });
+  });
+
+  return app;
+}
+
+// ============================================================================
+// HMAC-Smoke-Routes — unchanged below
+// ============================================================================
 
 export function writemodeRoutes(deps: WritemodeRouteDeps = {}): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
