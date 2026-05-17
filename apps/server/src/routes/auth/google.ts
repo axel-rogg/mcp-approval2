@@ -15,7 +15,7 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { AppBindings, ServerContext } from '../../lib/context.js';
 import { HttpError } from '../../lib/errors.js';
 import { authCookieOpts, deleteCookieOpts } from '../../lib/cookie.js';
-import { withRequestId } from '../../lib/logger.js';
+import { baseLogger as logger, withRequestId } from '../../lib/logger.js';
 import { resolveOrigin } from '../../lib/config.js';
 import { GoogleOAuthProvider } from '../../auth/idp/google.js';
 import { acceptInvite } from '../../auth/invite/accept.js';
@@ -251,14 +251,41 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
     // Skip-Bedingung: kcSyncNeeded=false (re-login eines schon synchronen
     // Users). Skip-Bedingung 2: server.userSync ist undefined (lokaler dev-
     // Modus ohne KC2-Anbindung).
-    if (kcSyncNeeded && server.userSync) {
-      await server.userSync.push({
+    //
+    // DEBUG-LOG (2026-05-17, fix-verify): wir loggen explizit ob der Pfad
+    // getroffen wird damit wir Production-State (kcSyncNeeded-Wert +
+    // userSync-Verfuegbarkeit) im Notfall sehen. Sobald confirmed dass es
+    // klappt, kann das Log wieder raus.
+    logger.info(
+      {
+        event: 'auth.usersync.dispatch',
         userId,
-        email: profile.email,
-        displayName: profile.displayName,
-        status: 'active',
-        externalId: userId, // approval2 user-id = KC2 external_id
-      });
+        kcSyncNeeded,
+        hasUserSync: !!server.userSync,
+      },
+      'usersync dispatch decision',
+    );
+    if (kcSyncNeeded && server.userSync) {
+      try {
+        const pushed = await server.userSync.push({
+          userId,
+          email: profile.email,
+          displayName: profile.displayName,
+          status: 'active',
+          externalId: userId, // approval2 user-id = KC2 external_id
+        });
+        logger.info(
+          { event: 'auth.usersync.result', userId, pushed },
+          'usersync result',
+        );
+      } catch (err) {
+        // push() sollte nicht throwen (audit-on-failure-Pattern), aber
+        // Defense-in-Depth: nicht den Login-Flow kaputt machen.
+        logger.error(
+          { event: 'auth.usersync.error', userId, err: (err as Error).message },
+          'usersync threw',
+        );
+      }
     }
 
     // Sitzung erstellen
