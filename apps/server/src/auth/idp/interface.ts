@@ -22,6 +22,12 @@ export interface IdpStartParams {
   readonly nonce: string;
   /** Optional Invite-Token zur Carry-Through (cookie-frei). */
   readonly inviteToken?: string;
+  /**
+   * Optional Override fuer redirect_uri (Multi-Origin-Support, Coop-Bypass).
+   * Wenn nicht gesetzt, faellt der Provider auf den Static-Config-Wert
+   * (`GOOGLE_REDIRECT_URI`) zurueck.
+   */
+  readonly redirectUri?: string;
 }
 
 export interface IdpStartResult {
@@ -34,6 +40,12 @@ export interface IdpCompleteParams {
   readonly state: string;
   readonly expectedState: string;
   readonly nonce: string;
+  /**
+   * Optional Override fuer redirect_uri — MUSS exakt mit dem Wert
+   * uebereinstimmen der in start() an Google geschickt wurde, sonst
+   * `redirect_uri_mismatch` bei der Code-Exchange.
+   */
+  readonly redirectUri?: string;
 }
 
 export interface IdentityProvider {

@@ -16,6 +16,7 @@ import type { AppBindings, ServerContext } from '../../lib/context.js';
 import { HttpError } from '../../lib/errors.js';
 import { authCookieOpts, deleteCookieOpts } from '../../lib/cookie.js';
 import { withRequestId } from '../../lib/logger.js';
+import { resolveOrigin } from '../../lib/config.js';
 import { GoogleOAuthProvider } from '../../auth/idp/google.js';
 import { acceptInvite } from '../../auth/invite/accept.js';
 import { bootstrapIfNeeded } from '../../auth/bootstrap.js';
@@ -39,6 +40,14 @@ interface StateCookiePayload {
    * Nur same-origin URLs werden akzeptiert (Open-Redirect-Schutz im Callback).
    */
   readonly returnTo?: string;
+  /**
+   * Multi-Origin/Coop-Bypass: redirect_uri den /start an Google geschickt
+   * hat — MUSS bei der Code-Exchange in /callback identisch sein, sonst
+   * `redirect_uri_mismatch`. Wir persistieren den Wert hier statt im
+   * Callback erneut aus c.req.url abzuleiten, weil Google's Redirect
+   * 1:1 die start-URL einnimmt aber X-Forwarded-* anders aussehen kann.
+   */
+  readonly redirectUri?: string;
 }
 
 export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
@@ -66,14 +75,22 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
         // ignore — kein returnTo
       }
     }
+    // Multi-Origin/Coop-Bypass: derive redirect_uri per Request-Origin.
+    // resolveOrigin validiert gegen ALLOWED_ORIGINS (Anti-Host-Spoofing),
+    // fallback auf config.RP_ORIGIN bei unknown Origin.
+    const requestOrigin = resolveOrigin(c.req.raw, server.config);
+    const redirectUri = `${requestOrigin.replace(/\/$/, '')}/auth/google/callback`;
     const payload: StateCookiePayload = {
       state,
       nonce,
+      redirectUri,
       ...(inviteToken ? { inviteToken } : {}),
       ...(returnTo ? { returnTo } : {}),
     };
     setCookie(c, STATE_COOKIE, JSON.stringify(payload), authCookieOpts(server.config, { maxAge: 10 * 60 }));
-    const startArgs = inviteToken ? { state, nonce, inviteToken } : { state, nonce };
+    const startArgs = inviteToken
+      ? { state, nonce, inviteToken, redirectUri }
+      : { state, nonce, redirectUri };
     const { authorizationUrl } = await idp.start(startArgs);
     withRequestId(c.get('requestId')).info(
       {
@@ -122,6 +139,10 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
       state: stateQ,
       expectedState: stateCookie.state,
       nonce: stateCookie.nonce,
+      // Multi-Origin: gleicher redirect_uri wie in /start (sonst
+      // `redirect_uri_mismatch`). Fallback nur fuer alte State-Cookies
+      // ohne redirectUri-Feld (Migration-Period).
+      ...(stateCookie.redirectUri ? { redirectUri: stateCookie.redirectUri } : {}),
     });
 
     // Auflosung: existierender User? Invite? Bootstrap?

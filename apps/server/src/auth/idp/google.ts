@@ -146,7 +146,7 @@ export class GoogleOAuthProvider implements IdentityProvider {
   async start(p: IdpStartParams): Promise<IdpStartResult> {
     const params = new URLSearchParams({
       client_id: this.config.GOOGLE_CLIENT_ID,
-      redirect_uri: this.config.GOOGLE_REDIRECT_URI,
+      redirect_uri: p.redirectUri ?? this.config.GOOGLE_REDIRECT_URI,
       response_type: 'code',
       scope: SCOPES.join(' '),
       access_type: 'online',
@@ -168,7 +168,9 @@ export class GoogleOAuthProvider implements IdentityProvider {
       code: p.code,
       client_id: this.config.GOOGLE_CLIENT_ID,
       client_secret: this.config.GOOGLE_CLIENT_SECRET,
-      redirect_uri: this.config.GOOGLE_REDIRECT_URI,
+      // MUSS identisch sein zum redirect_uri aus start(), sonst
+      // `redirect_uri_mismatch` von Google.
+      redirect_uri: p.redirectUri ?? this.config.GOOGLE_REDIRECT_URI,
     });
 
     const res = await fetch(TOKEN_URL, {
