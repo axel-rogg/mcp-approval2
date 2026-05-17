@@ -36,6 +36,18 @@ export interface AdminService {
   getUser(args: { id: string }): Promise<AdminUserSummary | null>;
   suspendUser(args: { id: string; reason?: string; actorUserId: string }): Promise<void>;
   unsuspendUser(args: { id: string; actorUserId: string }): Promise<void>;
+  /**
+   * Change role member↔admin. Self-demote ist erlaubt aber wenn das der
+   * letzte admin ist, weisst die one_active_admin partial-unique-index-Constraint
+   * (SEC-008) das ab — wir mappen dann auf ConflictError.
+   */
+  changeRole(args: { id: string; newRole: 'admin' | 'member'; actorUserId: string }): Promise<void>;
+  /**
+   * Admin-triggered soft-delete: status='deleted', sessions revoked. Daten
+   * bleiben (GDPR-Erase ist ein separater Flow via /v1/gdpr/erase).
+   * Self-delete ist VERBOTEN — Operator muss erst zweiten Admin anlegen.
+   */
+  softDeleteUser(args: { id: string; actorUserId: string }): Promise<void>;
   listAuditForUser(args: { userId: string; limit?: number; offset?: number }): Promise<AdminAuditEntry[]>;
   listSystemAudit(args?: { limit?: number; offset?: number; action?: string }): Promise<AdminAuditEntry[]>;
 }
@@ -161,6 +173,63 @@ export function createAdminService(opts: AdminServiceOptions): AdminService {
           });
         }
       }
+    },
+
+    async changeRole({ id, newRole, actorUserId }) {
+      const scoped = db.unsafe('admin.changeRole');
+      // SEC-008: das one_active_admin partial-unique-index blockt einen
+      // zweiten promote-to-admin via constraint-violation (23505). Wir
+      // mappen das auf ConflictError damit das UI sauber rendert.
+      try {
+        await scoped.query(
+          `UPDATE users SET role = $1 WHERE id = $2 AND status = 'active'`,
+          [newRole, id],
+        );
+      } catch (err) {
+        const code = (err as { code?: string } | undefined)?.code;
+        if (code === '23505') {
+          throw new Error(
+            'role change rejected: would violate one_active_admin constraint (multi-admin not allowed via single endpoint)',
+          );
+        }
+        throw err;
+      }
+      await audit.emit({
+        action: 'admin.user.role_changed',
+        actorUserId,
+        targetUserId: id,
+        result: 'success',
+        details: { new_role: newRole },
+      });
+    },
+
+    async softDeleteUser({ id, actorUserId }) {
+      if (id === actorUserId) {
+        throw new Error('admin self-delete forbidden — promote another admin first');
+      }
+      const scoped = db.unsafe('admin.softDeleteUser');
+      await scoped.query(
+        `UPDATE users SET status = 'deleted' WHERE id = $1`,
+        [id],
+      );
+      await scoped.query(
+        `UPDATE sessions SET revoked_at = $1 WHERE user_id = $2 AND revoked_at IS NULL`,
+        [Date.now(), id],
+      );
+      await scoped.query(
+        `UPDATE refresh_tokens SET revoked_at = $1, revoke_reason = 'admin_delete'
+          WHERE user_id = $2 AND revoked_at IS NULL`,
+        [Date.now(), id],
+      );
+      await audit.emit({
+        action: 'admin.user.soft_deleted',
+        actorUserId,
+        targetUserId: id,
+        result: 'success',
+      });
+      // Note: Crypto-Shred + R2-Object-Cleanup laufen ueber den separaten
+      // GDPR-Erase-Flow (services/gdpr.ts hardEraseUser via Cron). Dieser
+      // soft-delete-Pfad ist nur fuer Admin-Triggered "User raus"-Aktion.
     },
 
     async listAuditForUser({ userId, limit = 100, offset = 0 }) {

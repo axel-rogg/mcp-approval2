@@ -79,6 +79,7 @@ import { internalCronRoutes } from './routes/internal/cron.js';
 import { internalAppsImportRoutes } from './routes/internal/apps-import.js';
 import { createDekService } from './services/dek.js';
 import { createAdminService } from './services/admin.js';
+import { createEmailOutboxService } from './services/email-outbox.js';
 import { createGdprService } from './services/gdpr.js';
 import { createAppsService, type AppsService } from './apps/api.js';
 import { createPrefsService, type PrefsService } from './services/prefs.js';
