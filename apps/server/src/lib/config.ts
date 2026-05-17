@@ -164,6 +164,23 @@ const ConfigSchema = z.object({
   // Attacks zwischen Deploy-T+0 und erstem Operator-Login.
   // STRONGLY RECOMMENDED in Production zu setzen.
   BOOTSTRAP_ADMIN_EMAIL: z.string().email().optional(),
+
+  // Multi-User Tier 1 (2026-05-17): Email-Versand fuer Invite + Recovery.
+  //
+  //   EMAIL_PROVIDER=console  — default, loggt nur (kein Versand).
+  //                              Admin-PWA zeigt den Link manuell.
+  //   EMAIL_PROVIDER=resend   — Resend.com REST-API. Braucht RESEND_API_KEY
+  //                              + verifizierte DNS-Records auf der EMAIL_FROM-
+  //                              Domain (DKIM/SPF/DMARC).
+  //
+  // EMAIL_FROM: From-Header (z.B. "mcp-approval2 <noreply@ai-toolhub.org>").
+  //             Domain MUSS bei Resend verifiziert sein, sonst 422.
+  //
+  // EMAIL_REPLY_TO: optional, z.B. operator@firma.de fuer User-Replies.
+  EMAIL_PROVIDER: z.enum(['console', 'resend']).default('console'),
+  RESEND_API_KEY: z.string().min(8).optional(),
+  EMAIL_FROM: z.string().default('mcp-approval2 <noreply@ai-toolhub.org>'),
+  EMAIL_REPLY_TO: z.string().email().optional(),
 });
 
 export type AppConfig = z.infer<typeof ConfigSchema>;

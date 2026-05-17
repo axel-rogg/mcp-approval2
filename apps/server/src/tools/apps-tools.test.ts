@@ -219,9 +219,9 @@ describe('Block Catalog — registration', () => {
     bootBlockCatalog();
   });
 
-  it('registers 13 blocks', () => {
+  it('registers 15 blocks', () => {
     const blocks = listBlocks();
-    expect(blocks.length).toBe(13);
+    expect(blocks.length).toBe(15);
   });
 
   it('contains the documented set', () => {
@@ -229,9 +229,11 @@ describe('Block Catalog — registration', () => {
     expect(types).toEqual(
       [
         'action_button',
+        'calendar_grid',
         'chart',
         'counter',
         'form',
+        'header',
         'list',
         'places',
         'progress_ring',

@@ -224,6 +224,9 @@ function buildConfigFromEnv(env: CfEnv): AppConfig {
     // SEC-005: DCR fail-closed; CF-Path setzt keine eigene Knobs.
     DCR_OPEN: false,
     DCR_ALLOWED_REDIRECT_HOSTS: [],
+    // Multi-User Tier 1: Email-Versand. CF-Path nutzt console-fallback.
+    EMAIL_PROVIDER: 'console' as const,
+    EMAIL_FROM: 'mcp-approval2 <noreply@ai-toolhub.org>',
   };
 
   // Optional RS256 keys — only attach if present, to honor

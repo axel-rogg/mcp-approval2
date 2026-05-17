@@ -35,4 +35,10 @@ export interface AppBindings {
 export interface ServerContext {
   readonly config: AppConfig;
   readonly db: DbAdapter;
+  /**
+   * Optionaler EmailAdapter — wenn ungesetzt, fallen Invite/Recovery-Flows
+   * auf "return token in API response" (Dev-Mode) zurueck. Production: muss
+   * gesetzt sein (Console- oder Resend-Adapter, je nach Config).
+   */
+  readonly email?: import('@mcp-approval2/adapters').EmailAdapter;
 }

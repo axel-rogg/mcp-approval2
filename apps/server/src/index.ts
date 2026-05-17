@@ -17,8 +17,10 @@ import { serve } from '@hono/node-server';
 import {
   AppRoleAuth,
   CloudKmsKekProvider,
+  ConsoleEmailAdapter,
   LocalKekProvider,
   OpenBaoKekProvider,
+  ResendEmailAdapter,
   StaticTokenAuth,
 } from '@mcp-approval2/adapters';
 import { loadConfig, type AppConfig } from './lib/config.js';
@@ -80,7 +82,32 @@ function translateBootEnv(
 export async function createServerContext(env: NodeJS.ProcessEnv): Promise<ServerContext> {
   const config: AppConfig = loadConfig(translateBootEnv(env));
   const db = await createDbAdapter(config);
-  return { config, db };
+  const email = buildEmailAdapter(config);
+  return { config, db, ...(email ? { email } : {}) };
+}
+
+/**
+ * EmailAdapter-Factory. EMAIL_PROVIDER=console → ConsoleAdapter (logs only).
+ * EMAIL_PROVIDER=resend → ResendAdapter; verlangt RESEND_API_KEY + EMAIL_FROM.
+ * Bei Mis-Config (resend ohne API-Key) wird console-Adapter als Fallback
+ * geliefert + console.warn ausgegeben.
+ */
+function buildEmailAdapter(config: AppConfig): import('@mcp-approval2/adapters').EmailAdapter | undefined {
+  if (config.EMAIL_PROVIDER === 'resend') {
+    if (!config.RESEND_API_KEY) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[email] EMAIL_PROVIDER=resend but RESEND_API_KEY unset — falling back to console adapter',
+      );
+      return new ConsoleEmailAdapter();
+    }
+    return new ResendEmailAdapter({
+      apiKey: config.RESEND_API_KEY,
+      from: config.EMAIL_FROM,
+    });
+  }
+  // Default 'console' — auch wenn der Provider explizit so gesetzt ist.
+  return new ConsoleEmailAdapter();
 }
 
 // ───────────────────────────────────────────────────────────────────────────

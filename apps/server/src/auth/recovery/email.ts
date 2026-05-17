@@ -29,6 +29,11 @@ export interface RecoveryRequestResult {
   readonly rawToken: string;
   readonly verifyUrl: string;
   readonly expiresAt: number;
+  /** true wenn die Email-Adresse einem aktiven User entspricht. Caller
+   *  nutzt das um Email-Versand zu gaten (no enumeration leak via outbox). */
+  readonly userFound: boolean;
+  /** Nur gesetzt wenn userFound=true. */
+  readonly userId?: string;
 }
 
 export async function requestRecovery(
@@ -76,6 +81,8 @@ export async function requestRecovery(
     rawToken,
     verifyUrl: `${config.ORIGIN}/auth/recovery/verify?token=${encodeURIComponent(rawToken)}`,
     expiresAt,
+    userFound: !!user,
+    ...(user ? { userId: user.id } : {}),
   };
 }
 
