@@ -251,6 +251,14 @@ export const SkillsDetachResourceInput = z
   .strict();
 export type SkillsDetachResourceInput = z.infer<typeof SkillsDetachResourceInput>;
 
+export const SkillsGetBundleInput = z
+  .object({
+    id: z.string().min(1).max(128),
+    refs_limit: z.number().int().min(0).max(50).optional(),
+  })
+  .strict();
+export type SkillsGetBundleInput = z.infer<typeof SkillsGetBundleInput>;
+
 // =============================================================================
 // Memorize-Tools  (kind='memo', subtype=scope)
 // =============================================================================

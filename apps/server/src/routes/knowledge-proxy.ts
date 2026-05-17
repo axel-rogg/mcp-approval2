@@ -160,6 +160,12 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
       }
       refsLimit = n;
     }
+    // PLAN-doc-linking §9 P9: optional eager-embed of ref bodies (CSV of roles).
+    const includeBodiesRaw = c.req.query('include_bodies');
+    const includeRefBodies: readonly string[] =
+      includeBodiesRaw && includeBodiesRaw.length > 0
+        ? includeBodiesRaw.split(',').map((s) => s.trim()).filter(Boolean)
+        : [];
     const obj = await runProxy(() =>
       deps.knowledge.getObject({
         id,
@@ -167,6 +173,7 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
         userEmail: user.userEmail,
         expandBody,
         ...(refsLimit !== undefined ? { refsLimit } : {}),
+        ...(includeRefBodies.length > 0 ? { includeRefBodies } : {}),
       }),
     );
     // KC2 antwortet mit `body_b64`. PWA erwartet `body` + `bodyEncoding`.

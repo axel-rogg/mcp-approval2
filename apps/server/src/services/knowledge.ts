@@ -141,6 +141,10 @@ export class KnowledgeService {
     userEmail?: string;
     approvalId?: string;
     expandBody?: boolean;
+    /** PLAN-doc-linking §10.5 D1: cap auf refs-Block (0..50, default KC2=5). */
+    refsLimit?: number;
+    /** PLAN-doc-linking §9 P9: roles deren outgoing-refs eager-embedded werden. */
+    includeRefBodies?: ReadonlyArray<string>;
   }): Promise<KnowledgeObject> {
     return this.audited(
       'knowledge.object.read',

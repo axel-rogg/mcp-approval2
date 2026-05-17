@@ -516,6 +516,91 @@ describe('HttpKnowledgeAdapter — getObject (D-11)', () => {
     const obj = await adapter.getObject({ id: 'o1', userId: USER_ID });
     expect(obj.isSubdoc).toBe(true);
   });
+
+  // ─── PLAN-document-linking §9 P9: includeRefBodies eager-embed ────────
+  it('sends ?include_bodies=resource as CSV when includeRefBodies provided', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, defaultObjectView()),
+    );
+    const adapter = makeAdapter({ fetchImpl: fetchMock });
+    await adapter.getObject({
+      id: 'o1',
+      userId: USER_ID,
+      includeRefBodies: ['resource'],
+    });
+    const [url] = fetchMock.mock.calls[0] ?? [];
+    const u = new URL(String(url));
+    expect(u.searchParams.get('include_bodies')).toBe('resource');
+  });
+
+  it('sends ?include_bodies=resource,depends_on (multi-role CSV)', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, defaultObjectView()),
+    );
+    const adapter = makeAdapter({ fetchImpl: fetchMock });
+    await adapter.getObject({
+      id: 'o1',
+      userId: USER_ID,
+      includeRefBodies: ['resource', 'depends_on'],
+    });
+    const [url] = fetchMock.mock.calls[0] ?? [];
+    const u = new URL(String(url));
+    expect(u.searchParams.get('include_bodies')).toBe('resource,depends_on');
+  });
+
+  it('omits include_bodies param when array is empty', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, defaultObjectView()),
+    );
+    const adapter = makeAdapter({ fetchImpl: fetchMock });
+    await adapter.getObject({ id: 'o1', userId: USER_ID, includeRefBodies: [] });
+    const [url] = fetchMock.mock.calls[0] ?? [];
+    const u = new URL(String(url));
+    expect(u.searchParams.get('include_bodies')).toBeNull();
+  });
+
+  it('passes through expanded ref bodies (Wire-Format-Snapshot)', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(
+      makeJsonResponse(200, {
+        ...defaultObjectView(),
+        refs: {
+          outgoing: [
+            {
+              role: 'resource',
+              id: '01J11111-1111-1111-1111-111111111111',
+              subtype: 'doc',
+              title: 'API-Ref',
+              summary: 'API reference',
+              uri: 'kc://object/01J11111-1111-1111-1111-111111111111',
+              body: 'aGVsbG8gd29ybGQ=', // base64 'hello world'
+              bodyEncoding: 'base64',
+            },
+            {
+              role: 'resource',
+              id: '01J22222-2222-2222-2222-222222222222',
+              subtype: 'doc',
+              title: 'Big',
+              summary: '...',
+              uri: 'kc://object/01J22222-2222-2222-2222-222222222222',
+              truncatedReason: 'oversized',
+            },
+          ],
+          incoming: [],
+          truncated: { outgoing: false, incoming: false },
+        },
+      }),
+    );
+    const adapter = makeAdapter({ fetchImpl: fetchMock });
+    const obj = await adapter.getObject({
+      id: 'o1',
+      userId: USER_ID,
+      includeRefBodies: ['resource'],
+    });
+    expect(obj.refs?.outgoing[0]?.body).toBe('aGVsbG8gd29ybGQ=');
+    expect(obj.refs?.outgoing[0]?.bodyEncoding).toBe('base64');
+    expect(obj.refs?.outgoing[1]?.truncatedReason).toBe('oversized');
+    expect(obj.refs?.outgoing[1]?.body).toBeUndefined();
+  });
 });
 
 describe('HttpKnowledgeAdapter — listObjects (D-4 + D-5)', () => {

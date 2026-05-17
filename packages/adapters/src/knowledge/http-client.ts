@@ -423,6 +423,9 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
     const query: Record<string, string | number | undefined> = {};
     if (args.expandBody) query['expand'] = 'body';
     if (args.refsLimit !== undefined) query['refs_limit'] = args.refsLimit;
+    if (args.includeRefBodies !== undefined && args.includeRefBodies.length > 0) {
+      query['include_bodies'] = args.includeRefBodies.join(',');
+    }
     const raw = await this.authedFetch<KnowledgeObject & { body_b64?: string | null }>({
       method: 'GET',
       path: `/v1/objects/${encodeURIComponent(args.id)}`,

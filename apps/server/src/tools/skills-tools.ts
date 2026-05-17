@@ -29,6 +29,7 @@ import {
   SkillsAttachResourceInput,
   SkillsDeleteInput,
   SkillsDetachResourceInput,
+  SkillsGetBundleInput,
   SkillsGetInput,
   SkillsListInput,
   SkillsPutInput,
@@ -37,6 +38,7 @@ import {
   type SkillsAttachResourceInput as SkillsAttachResourceInputT,
   type SkillsDeleteInput as SkillsDeleteInputT,
   type SkillsDetachResourceInput as SkillsDetachResourceInputT,
+  type SkillsGetBundleInput as SkillsGetBundleInputT,
   type SkillsGetInput as SkillsGetInputT,
   type SkillsListInput as SkillsListInputT,
   type SkillsPutInput as SkillsPutInputT,
@@ -238,6 +240,44 @@ export function makeSkillsReadResourceTool(
         userId: ctx.userId,
         skillId: input.skill_id,
         resourceId: input.resource_id,
+      });
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// skills.get_bundle — read (PLAN-document-linking §10.5 R15, §9 P9)
+//
+// Symmetrische Surface zu skills.put(+attach): liefert Skill-Manifest UND
+// alle attached Resource-Bodies in EINEM Call. Implementiert als thin
+// wrapper auf knowledge.getObject mit includeRefBodies=['resource'].
+//
+// Token-Budget: KC2-Seite cap'd auf 200 KB total + 1 MB per-ref. Bei
+// Überschreitung: truncatedReason='oversized'/'budget' pro Ref.
+// ---------------------------------------------------------------------------
+
+export function makeSkillsGetBundleTool(
+  deps: SkillsToolsDeps,
+): Tool<SkillsGetBundleInputT, KnowledgeObject> {
+  return {
+    name: 'skills.get_bundle',
+    description:
+      'Read a skill manifest + ALL its attached resource bodies in one call. ' +
+      'Useful for executing a skill (you need both the manifest and the resources). ' +
+      'Returns manifest object with refs.outgoing[] where each role="resource" ' +
+      'entry has its body inlined as base64. Subject to 200 KB total + 1 MB per-ref ' +
+      'budget — oversized/over-budget refs come back without body and a truncatedReason. ' +
+      'For pure manifest read use skills.get (no body fetch overhead).',
+    sensitivity: 'read',
+    inputSchema: SkillsGetBundleInput,
+    async execute(ctx: ToolContext, input): Promise<KnowledgeObject> {
+      return deps.knowledge.getObject({
+        userId: ctx.userId,
+        userEmail: ctx.email,
+        id: input.id,
+        expandBody: true,
+        refsLimit: input.refs_limit ?? 20,
+        includeRefBodies: ['resource'],
       });
     },
   };

@@ -92,6 +92,19 @@ export interface RefView {
   readonly title: string | null;
   readonly summary: string | null;
   readonly uri: string;
+  /**
+   * PLAN-document-linking §9 P9: when `getObject({includeRefBodies})` is set
+   * for matching roles, the target body is base64-encoded inline here.
+   * `bodyEncoding` is always 'base64' when body is present.
+   */
+  readonly body?: string;
+  readonly bodyEncoding?: 'base64';
+  /**
+   * Set when eager-embed budget kicked in and this ref was skipped.
+   *   'oversized' — ref body > 1 MB per-ref cap
+   *   'budget'    — cumulative > 200 KB total budget
+   */
+  readonly truncatedReason?: 'oversized' | 'budget';
 }
 
 export interface KnowledgeObjectRefs {

@@ -66,6 +66,13 @@ export interface GetObjectArgs extends OnBehalfOfFields {
    *   1..50     → cap auf N pro Direction (outgoing + incoming)
    */
   readonly refsLimit?: number;
+  /**
+   * PLAN-document-linking §9 P9: eager-embed bodies for outgoing refs whose
+   * role is in this list. Greedy 200 KB total budget + 1 MB per-ref cap.
+   * Useful for skill-bundle reads (`['resource']` fetches manifest + all
+   * resources in one call). Skip when undefined or empty.
+   */
+  readonly includeRefBodies?: ReadonlyArray<string>;
 }
 
 export interface ListObjectsArgs extends OnBehalfOfFields {
