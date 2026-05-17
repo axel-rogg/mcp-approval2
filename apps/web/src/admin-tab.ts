@@ -385,7 +385,7 @@ async function renderOutboxSubtab(root: HTMLElement, api: AdminApi): Promise<voi
   const table = document.createElement('table');
   table.className = 'admin-table';
   table.innerHTML = `<thead><tr>
-    <th>Wann</th><th>To</th><th>Subject</th><th>Status</th><th>Aktion</th>
+    <th>Wann</th><th>To</th><th>Aktion</th>
   </tr></thead>`;
   const tbody = document.createElement('tbody');
   for (const r of rows) {
@@ -404,14 +404,13 @@ function renderOutboxRow(
   reload: () => Promise<void>,
 ): HTMLTableRowElement {
   const tr = document.createElement('tr');
-  const dispatchedSuffix = r.manuallyDispatchedAt
-    ? ` <span class="muted small">📤 ${fmtDate(r.manuallyDispatchedAt)}</span>`
-    : '';
+  // status != 'sent' bleibt sichtbar als kleiner Pill direkt am Empfaenger — fail/logged braucht der Admin auf einen Blick. 'sent' ist Default und braucht keine Markierung. manually_dispatched_at wird durch Abwesenheit des "Mark dispatched"-Buttons impliziert.
+  const statusPill = r.status === 'sent'
+    ? ''
+    : ` <span class="pill pill-${r.status}">${r.status}</span>`;
   tr.innerHTML = `
     <td class="small muted">${fmtDate(r.createdAt)}</td>
-    <td><code>${escapeHtml(r.toEmail)}</code></td>
-    <td>${escapeHtml(r.subject)}</td>
-    <td><span class="pill pill-${r.status}">${r.status}</span>${dispatchedSuffix}</td>
+    <td><code>${escapeHtml(r.toEmail)}</code>${statusPill}</td>
   `;
   const actionsTd = document.createElement('td');
   actionsTd.className = 'row';
