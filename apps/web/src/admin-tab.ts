@@ -65,25 +65,27 @@ export async function renderAdminTab(
   h1.textContent = 'Admin';
   main.appendChild(h1);
 
-  // Sub-Tab-Navigation
-  const subnav = document.createElement('div');
-  subnav.className = 'subnav row';
+  // Sub-Tab-Navigation — Tools-Tab-Pattern (anchor-basiert + settings-subnav
+  // CSS-Classes, statt selbst-gebauter button-pills).
   const subtabs: ReadonlyArray<{ id: SubTab; label: string }> = [
     { id: 'users', label: 'Users' },
     { id: 'invites', label: 'Invites' },
     { id: 'outbox', label: 'Outbox' },
     { id: 'audit', label: 'Audit' },
   ];
+  const subnav = document.createElement('nav');
+  subnav.className = 'settings-subnav admin-subnav';
+  subnav.setAttribute('aria-label', 'Admin sections');
   const contentEl = document.createElement('div');
   contentEl.className = 'admin-content';
 
   function setActive(active: SubTab): void {
     for (const child of Array.from(subnav.children)) {
-      const btn = child as HTMLButtonElement;
-      if (btn.dataset['subtab'] === active) {
-        btn.setAttribute('aria-current', 'page');
+      const a = child as HTMLAnchorElement;
+      if (a.dataset['subtab'] === active) {
+        a.setAttribute('aria-current', 'page');
       } else {
-        btn.removeAttribute('aria-current');
+        a.removeAttribute('aria-current');
       }
     }
   }
@@ -103,13 +105,20 @@ export async function renderAdminTab(
   }
 
   for (const st of subtabs) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'btn btn-secondary btn-small';
-    btn.textContent = st.label;
-    btn.dataset['subtab'] = st.id;
-    btn.addEventListener('click', () => void loadAndRender(st.id));
-    subnav.appendChild(btn);
+    const a = document.createElement('a');
+    a.href = `#/admin?tab=${st.id}`;
+    a.textContent = st.label;
+    a.className = 'settings-subnav-item';
+    a.dataset['subtab'] = st.id;
+    a.addEventListener('click', (e) => {
+      // Verhindere harten hashchange-Reload — wir rendern in-place.
+      // Browser-URL wird trotzdem upgedatet via history.replaceState damit
+      // refresh / shareable-link den passenden Tab behaelt.
+      e.preventDefault();
+      history.replaceState(null, '', `#/admin?tab=${st.id}`);
+      void loadAndRender(st.id);
+    });
+    subnav.appendChild(a);
   }
 
   main.appendChild(subnav);

@@ -2086,15 +2086,11 @@ code {
   padding: 0.3rem 0.5rem;
 }
 
-/* Sub-Tab-Nav am Admin-Tab oben — Buttons als "Tab-Pills" */
-.subnav.row {
-  gap: 0.35rem;
-  margin-bottom: 0.8rem;
-}
-
-.subnav .btn[aria-current="page"] {
-  background: var(--fg);
-  color: var(--bg);
+/* Admin-Tab Sub-Nav teilt sich settings-subnav-Style mit Tools-Tab — kein
+ * eigenes CSS noetig. Nur leichte Margin-Variation falls gewollt:
+ */
+.admin-subnav {
+  margin-top: 0.5rem;
 }
 
 /* Outbox-Body-Code-Snippets im Admin-Tab kompakt halten */
