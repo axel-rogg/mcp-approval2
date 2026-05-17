@@ -62,6 +62,9 @@ export async function getOwnProfile(db: DbAdapter, userId: string): Promise<User
 }
 
 export async function touchLastLogin(db: DbAdapter, userId: string): Promise<void> {
-  const scoped = await db.scoped(userId);
-  await scoped.query(`UPDATE users SET last_login_at = $1 WHERE id = $2`, [Date.now(), userId]);
+  // db.transaction() statt db.scoped() — letzteres oeffnet BEGIN aber
+  // niemand ruft release() → COMMIT fehlt → UPDATE verloren.
+  await db.transaction<void>(userId, async (scoped) => {
+    await scoped.query(`UPDATE users SET last_login_at = $1 WHERE id = $2`, [Date.now(), userId]);
+  });
 }

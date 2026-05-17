@@ -54,14 +54,20 @@ export async function issueInitialRefresh(
   const tokenHash = hashToken(raw);
   const createdAt = Date.now();
   const expiresAt = createdAt + config.REFRESH_TTL_SEC * 1000;
-  const scoped = await db.scoped(args.userId);
-  const rows = await scoped.query<{ id: string }>(
-    `INSERT INTO refresh_tokens (session_id, user_id, token_hash, parent_id, created_at, expires_at)
-     VALUES ($1, $2, $3, NULL, $4, $5) RETURNING id`,
-    [args.sessionId, args.userId, tokenHash, createdAt, expiresAt],
-  );
-  const id = rows[0]?.id;
-  if (!id) throw new Error('failed to insert refresh_tokens row');
+  // WICHTIG: db.transaction() statt db.scoped() — letzteres oeffnet BEGIN
+  // aber niemand ruft release() → COMMIT fehlt → INSERT verloren →
+  // anschliessender Lookup wirft refresh_token_unknown. transaction()
+  // committed automatisch wenn die callback resolved.
+  const id = await db.transaction<string>(args.userId, async (scoped) => {
+    const rows = await scoped.query<{ id: string }>(
+      `INSERT INTO refresh_tokens (session_id, user_id, token_hash, parent_id, created_at, expires_at)
+       VALUES ($1, $2, $3, NULL, $4, $5) RETURNING id`,
+      [args.sessionId, args.userId, tokenHash, createdAt, expiresAt],
+    );
+    const insertedId = rows[0]?.id;
+    if (!insertedId) throw new Error('failed to insert refresh_tokens row');
+    return insertedId;
+  });
   return { rawToken: raw, id, tokenHash, expiresAt };
 }
 
@@ -123,19 +129,22 @@ export async function rotateRefresh(
   const now = Date.now();
   const newExpires = now + config.REFRESH_TTL_SEC * 1000;
 
-  const scoped = await db.scoped(row.userId);
-  const inserted = await scoped.query<{ id: string }>(
-    `INSERT INTO refresh_tokens (session_id, user_id, token_hash, parent_id, created_at, expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-    [row.sessionId, row.userId, newHash, row.id, now, newExpires],
-  );
-  const newId = inserted[0]?.id;
-  if (!newId) throw new Error('failed to insert rotated refresh_tokens row');
-
-  await scoped.query(
-    `UPDATE refresh_tokens SET revoked_at = $1, replaced_by = $2 WHERE id = $3`,
-    [now, newId, row.id],
-  );
+  // db.transaction() statt db.scoped() — siehe issueInitialRefresh.
+  // scoped() ohne release() committed nicht, INSERT geht verloren.
+  const newId = await db.transaction<string>(row.userId, async (scoped) => {
+    const inserted = await scoped.query<{ id: string }>(
+      `INSERT INTO refresh_tokens (session_id, user_id, token_hash, parent_id, created_at, expires_at)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [row.sessionId, row.userId, newHash, row.id, now, newExpires],
+    );
+    const insertedId = inserted[0]?.id;
+    if (!insertedId) throw new Error('failed to insert rotated refresh_tokens row');
+    await scoped.query(
+      `UPDATE refresh_tokens SET revoked_at = $1, replaced_by = $2 WHERE id = $3`,
+      [now, insertedId, row.id],
+    );
+    return insertedId;
+  });
 
   await emitAudit(db, {
     action: 'session.refresh',

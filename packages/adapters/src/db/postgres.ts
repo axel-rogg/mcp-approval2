@@ -72,10 +72,16 @@ export class PostgresDbAdapter implements DbAdapter {
 
   public async scoped(userId: string): Promise<ScopedDb> {
     assertUuid(userId);
-    // Standalone scoped()-call: caller is responsible for commit/rollback.
-    // We open a tagged session via reserved connection so that SET LOCAL
-    // stays scoped. The returned ScopedDb keeps the reserved connection
-    // until released — call sites SHOULD prefer transaction() instead.
+    // ⚠️ ACHTUNG (Login-Bug 2026-05-17): scoped() oeffnet BEGIN.
+    // Wenn der Caller `(handle as any).release()` NICHT in finally{} aufruft,
+    // wird die Transaktion NIE committed — INSERT/UPDATE/DELETE gehen verloren.
+    // Lookup nach dem vermeintlich geschriebenen Wert wirft "not found".
+    //
+    // **PREFERRED:** db.transaction(userId, async (scoped) => {...}) verwenden
+    // — committed automatisch wenn die Callback resolved.
+    //
+    // SELECTs ohne Writes funktionieren in scoped() (eigene Tx sieht eigene
+    // Daten), leaken aber Connection-Pool-Slots bis idle-Timeout.
     const reserved = await this.sql.reserve();
     await reserved`BEGIN`;
     await reserved`SELECT set_config('app.current_user', ${userId}, true)`;
