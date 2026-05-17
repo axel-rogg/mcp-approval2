@@ -2,109 +2,134 @@
 # Resend DNS-Records fuer ai-toolhub.org — Multi-User Tier 1
 # ============================================================================
 #
-# Resend braucht 3-4 DNS-Records auf der sending-Domain damit der Email-
-# Versand DKIM/SPF/DMARC-validiert wird:
+# Workflow (Vollautomatisch ab Bootstrap-Token, 1 manueller Schritt):
 #
-#   1. DKIM (Pflicht): `resend._domainkey.ai-toolhub.org` TXT mit Public-Key
-#      — Resend generiert den Wert bei `Add Domain` und zeigt ihn im Dashboard.
-#   2. SPF (Pflicht): MX + SPF auf `send.ai-toolhub.org` (Resend nutzt eine
-#      Subdomain damit der Root-SPF unbeeintraechtigt bleibt).
-#   3. DMARC (Empfohlen): `_dmarc.ai-toolhub.org` TXT — Reporting + Policy.
+#   1. Resend.com signup, Bootstrap-API-Key ("Full access") erzeugen.
+#   2. export RESEND_BOOTSTRAP_TOKEN=re_xxx
+#      export DOPPLER_TOKEN=$(grep ^DOPPLER_TOKEN= .dev.vars | cut -d= -f2-)
+#   3. bash scripts/resend-bootstrap.sh
+#      → Script ruft Resend-API: POST /domains + POST /api-keys
+#      → Schreibt DNS-Werte in resend.auto.tfvars (von TF automatisch geladen)
+#      → Setzt RESEND_API_KEY + EMAIL_PROVIDER=resend in Doppler
+#   4. bash scripts/doppler-run-terraform.sh apply -target=cloudflare_dns_record.resend_*
+#      → Records sind in CF in < 1 min weltweit
+#   5. Resend-Dashboard: "Verify Records" klicken → grün
+#   6. fly secrets set (sync Doppler → Fly) + redeploy → Versand aktiv
 #
-# Operator-Setup-Sequenz:
-#   1. resend.com signup, Free-Plan reicht (3000 mails/month).
-#   2. Im Resend-Dashboard `Domains` → `Add Domain` → `ai-toolhub.org`.
-#   3. Resend zeigt die 3 DNS-Records. Werte hier in die var.resend_*-
-#      Variables uebertragen (oder direkt in den Resource-Block patchen).
-#   4. `bash scripts/doppler-run-terraform.sh apply -target=...`
-#   5. Im Resend-Dashboard "Verify Records" klicken — sollte direkt durch
-#      sein (CF DNS-Propagation ist <1 min weltweit).
-#   6. Resend API-Key generieren → `doppler secrets set RESEND_API_KEY=rs_...
-#      --project mcp-approval2 --config fly` + `fly secrets set ...` + redeploy.
-#   7. `EMAIL_PROVIDER` von "console" auf "resend" flippen (analog).
-#
-# Stand 2026-05-17: ALLE 4 var.resend_*-Variables sind Placeholder. enable_resend_dns
-# ist false bis der User die echten Werte einpflegt — dann auf true setzen +
-# apply.
+# Resend liefert verschiedene Record-Types je nach Verify-Mode:
+#   - DKIM: typisch CNAME `<token>._domainkey.<domain>` → `<token>.dkim.amazonses.com`
+#           (kann auch TXT mit raw public-key sein wenn Resend so konfiguriert)
+#   - SPF:  TXT auf `send.<domain>` (subdomain-pattern, Root-SPF bleibt intakt)
+#   - MX:   MX auf `send.<domain>` → feedback-smtp.<region>.amazonses.com
+# ============================================================================
 
 variable "enable_resend_dns" {
   type        = bool
   default     = false
-  description = "true wenn Resend signup + domain-add durch ist und die echten DKIM/SPF-Werte unten gesetzt sind. apply mit -target= um nur dieses File zu touchen."
+  description = "true wenn Resend-Bootstrap-Script die Werte gesetzt hat. Wird automatisch von resend.auto.tfvars ueberschrieben."
 }
 
-variable "resend_dkim_public_key" {
+variable "resend_dkim_record_name" {
   type        = string
-  default     = "PLACEHOLDER_p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQ..."
-  description = "DKIM-Public-Key aus Resend-Dashboard. Format: 'p=<base64>;' oder 'v=DKIM1; k=rsa; p=<base64>;'. Resend zeigt den exakten String."
-  sensitive   = false
+  default     = ""
+  description = "DKIM-Record name (z.B. 'abc123._domainkey'). Vom Bootstrap-Script gesetzt."
 }
 
-variable "resend_spf_record" {
+variable "resend_dkim_record_value" {
+  type        = string
+  default     = ""
+  description = "DKIM-Record value (CNAME-Target oder TXT-Inhalt). Vom Bootstrap-Script gesetzt."
+}
+
+variable "resend_dkim_record_type" {
+  type        = string
+  default     = "CNAME"
+  description = "DKIM-Record type (CNAME oder TXT je nach Resend-Setup)."
+}
+
+variable "resend_spf_record_name" {
+  type        = string
+  default     = "send.ai-toolhub.org"
+  description = "SPF-Record name."
+}
+
+variable "resend_spf_record_value" {
   type        = string
   default     = "v=spf1 include:amazonses.com ~all"
-  description = "SPF-TXT-Wert. Resend nutzt aktuell AWS SES intern — der include-host kann sich aendern; Dashboard checkt."
+  description = "SPF-Record TXT-content."
 }
 
-variable "resend_mx_host" {
+variable "resend_mx_record_name" {
   type        = string
-  default     = "feedback-smtp.us-east-1.amazonses.com"
-  description = "MX-Target fuer send.ai-toolhub.org. Resend-Dashboard zeigt den region-spezifischen Host."
+  default     = "send.ai-toolhub.org"
+  description = "MX-Record name."
+}
+
+variable "resend_mx_record_value" {
+  type        = string
+  default     = "feedback-smtp.eu-west-1.amazonses.com"
+  description = "MX-Record target (region-spezifisch)."
+}
+
+variable "resend_mx_record_priority" {
+  type        = number
+  default     = 10
+  description = "MX-Record priority."
 }
 
 variable "resend_dmarc_policy" {
   type        = string
   default     = "v=DMARC1; p=none; rua=mailto:dmarc@ai-toolhub.org"
-  description = "DMARC-Policy. p=none = monitoring only (keine reject/quarantine). Wird empfohlen aber nicht zwingend von Resend."
+  description = "DMARC-Policy (optional aber empfohlen). p=none = monitoring-only."
 }
 
 # ----------------------------------------------------------------------------
-# 1. DKIM — Pflicht
+# 1. DKIM
 # ----------------------------------------------------------------------------
 
 resource "cloudflare_dns_record" "resend_dkim" {
   count = var.enable_resend_dns ? 1 : 0
 
   zone_id = data.cloudflare_zone.ai_toolhub.id
-  name    = "resend._domainkey.ai-toolhub.org"
-  type    = "TXT"
-  content = var.resend_dkim_public_key
+  name    = var.resend_dkim_record_name
+  type    = var.resend_dkim_record_type
+  content = var.resend_dkim_record_value
   proxied = false
   ttl     = 3600
-  comment = "managed-by:terraform — Resend DKIM (Email-Tier-1)"
+  comment = "managed-by:terraform — Resend DKIM (auto-bootstrap)"
 }
 
 # ----------------------------------------------------------------------------
-# 2. SPF auf send-Subdomain (Resend-Convention damit Root-SPF unangetastet bleibt)
+# 2. SPF + MX auf send-Subdomain
 # ----------------------------------------------------------------------------
 
 resource "cloudflare_dns_record" "resend_send_mx" {
   count = var.enable_resend_dns ? 1 : 0
 
   zone_id  = data.cloudflare_zone.ai_toolhub.id
-  name     = "send.ai-toolhub.org"
+  name     = var.resend_mx_record_name
   type     = "MX"
-  content  = var.resend_mx_host
-  priority = 10
+  content  = var.resend_mx_record_value
+  priority = var.resend_mx_record_priority
   proxied  = false
   ttl      = 3600
-  comment  = "managed-by:terraform — Resend send-subdomain MX"
+  comment  = "managed-by:terraform — Resend MX (auto-bootstrap)"
 }
 
 resource "cloudflare_dns_record" "resend_send_spf" {
   count = var.enable_resend_dns ? 1 : 0
 
   zone_id = data.cloudflare_zone.ai_toolhub.id
-  name    = "send.ai-toolhub.org"
+  name    = var.resend_spf_record_name
   type    = "TXT"
-  content = var.resend_spf_record
+  content = var.resend_spf_record_value
   proxied = false
   ttl     = 3600
-  comment = "managed-by:terraform — Resend SPF on send-subdomain"
+  comment = "managed-by:terraform — Resend SPF (auto-bootstrap)"
 }
 
 # ----------------------------------------------------------------------------
-# 3. DMARC (Empfohlen, nicht zwingend)
+# 3. DMARC (Empfohlen, vom Bootstrap-Script NICHT ueberschrieben)
 # ----------------------------------------------------------------------------
 
 resource "cloudflare_dns_record" "resend_dmarc" {
@@ -120,16 +145,19 @@ resource "cloudflare_dns_record" "resend_dmarc" {
 }
 
 # ----------------------------------------------------------------------------
-# Outputs — Operator-Verification
+# Output
 # ----------------------------------------------------------------------------
 
 output "resend_dns_status" {
-  description = "Checke alle Records: dig +short TXT resend._domainkey.ai-toolhub.org @1.1.1.1 ; dig +short TXT send.ai-toolhub.org ; dig +short MX send.ai-toolhub.org ; dig +short TXT _dmarc.ai-toolhub.org"
+  description = "Verifikation nach apply: 'dig +short TXT <name>' fuer jeden Record. Resend-Dashboard → Verify Records."
   value = var.enable_resend_dns ? {
-    dkim_set  = "resend._domainkey.ai-toolhub.org"
-    spf_send  = "send.ai-toolhub.org (TXT + MX)"
-    dmarc_set = "_dmarc.ai-toolhub.org"
+    enabled = true
+    dkim    = "${var.resend_dkim_record_type} ${var.resend_dkim_record_name}"
+    spf     = "TXT ${var.resend_spf_record_name}"
+    mx      = "MX ${var.resend_mx_record_name} → ${var.resend_mx_record_value}"
+    dmarc   = "TXT _dmarc.ai-toolhub.org"
   } : {
-    status = "DISABLED — set enable_resend_dns=true + fill var.resend_dkim_public_key after signup"
+    enabled = false
+    hint    = "bash scripts/resend-bootstrap.sh (siehe File-Header)"
   }
 }
