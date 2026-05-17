@@ -67,6 +67,7 @@ import { createUserSubscriptionsService } from './services/user-subscriptions.js
 import { createUserServerConfigService } from './services/user-server-config.js';
 import { createUserServerOAuthService } from './services/user-server-oauth.js';
 import { createUserServerToolDefaultsService } from './services/user-server-tool-defaults.js';
+import { createSubMcpAuthEnricher } from './services/sub-mcp-auth-enricher.js';
 import { gdprRoutes } from './routes/gdpr.js';
 import { approvalsRoutes } from './routes/approvals.js';
 import { createApprovalAssertionVerifier } from './auth/webauthn/approval-verify.js';
@@ -461,6 +462,19 @@ export async function createApp(
     deps.subMcpRegistry ?? createSubMcpRegistry({ db: server.db });
   const subMcpForwarder = new SubMcpForwarder({ registry: subMcpReg });
 
+  // Per-User-Server-Config + Auth-Enricher fruh instanziieren damit der
+  // SubMcpAuthEnricher beim Boot-Build der Wrapper-Tools verfuegbar ist
+  // (siehe buildSubMcpWrapperTools-call weiter unten).
+  const userServerConfigService = deps.kekProvider
+    ? createUserServerConfigService({
+        db: server.db,
+        kekProvider: deps.kekProvider,
+      })
+    : undefined;
+  const subMcpAuthEnricher = userServerConfigService
+    ? createSubMcpAuthEnricher({ config: userServerConfigService })
+    : undefined;
+
   // ─────────────────────────────────────────────────────────────────────
   // Burst-7: Optional Services (Apps / Prefs / Push / OutputRefs / Search).
   // Capability-Search needs the live tool-registry, so we build services
@@ -586,10 +600,13 @@ export async function createApp(
 
       // Wrapper-Tools registrieren + Cache befuellen (per-server Tool-Namen
       // damit applyGatewayDiscovery spaeter de-/re-registern kann).
+      // SubMcpAuthEnricher (oben instanziiert) injiziert per-User-Auth-Header
+      // (Google-Access-Token, GCP-SA-JSON). Nur verkabelt wenn KMS-Provider live.
       const wrappers = await buildSubMcpWrapperTools({
         registry: subMcpReg,
         forwarder: subMcpForwarder,
         config: server.config,
+        ...(subMcpAuthEnricher ? { authEnricher: subMcpAuthEnricher } : {}),
       });
       let registered = 0;
       const perServerToolNames = new Map<string, string[]>();
@@ -744,14 +761,8 @@ export async function createApp(
   const userSubscriptionsService = createUserSubscriptionsService({
     db: server.db,
   });
-  // Phase 2: KMS-encrypted per-User-Server-Config. Nur verkabelt wenn ein
-  // kekProvider verfuegbar ist (analog credentials.ts).
-  const userServerConfigService = deps.kekProvider
-    ? createUserServerConfigService({
-        db: server.db,
-        kekProvider: deps.kekProvider,
-      })
-    : undefined;
+  // userServerConfigService wurde bereits oben (vor Sub-MCP-Boot) instanziiert
+  // damit der SubMcpAuthEnricher beim buildSubMcpWrapperTools verfuegbar ist.
   // Phase 3: OAuth-Authorize-Flow. Braucht configSvc + Sub-MCP-Registry.
   const userServerOAuthService = userServerConfigService
     ? createUserServerOAuthService({

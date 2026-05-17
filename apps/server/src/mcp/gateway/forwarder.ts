@@ -66,6 +66,20 @@ export class SubMcpForwarder {
     if (cfg.serviceToken) {
       headers['authorization'] = `Bearer ${cfg.serviceToken}`;
     }
+    // Auth-Enricher kann zusaetzliche per-User-Header injizieren
+    // (z.B. x-google-access-token fuer gws, x-gcp-sa-json fuer gcloud).
+    // Siehe services/sub-mcp-auth-enricher.ts. Header-Namen sind lowercase.
+    if (args.extraHeaders) {
+      for (const [k, v] of Object.entries(args.extraHeaders)) {
+        // case-insensitive replace: HTTP-Header sind case-insensitive,
+        // wir overwriten nicht das Standard-Set (authorization/content-type/etc).
+        const lower = k.toLowerCase();
+        if (lower === 'authorization' || lower === 'content-type' || lower === 'accept' || lower === 'x-user-jwt') {
+          continue;
+        }
+        headers[lower] = v;
+      }
+    }
 
     const rpcId = args.requestId ?? randomUUID();
     const payload = {

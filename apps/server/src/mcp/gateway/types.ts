@@ -91,6 +91,13 @@ export interface ForwardToolCallArgs {
   readonly requestId?: string;
   /** Optional: AbortSignal — wird auf MCP `notifications/cancelled` getriggert. */
   readonly signal?: AbortSignal;
+  /**
+   * Optional: zusaetzliche Headers (z.B. x-google-access-token, x-gcp-sa-json)
+   * vom SubMcpAuthEnricher. Werden nach dem Standard-Header-Set gemerged.
+   * Reservierte Namen (authorization, content-type, accept, x-user-jwt) werden
+   * NICHT ueberschrieben.
+   */
+  readonly extraHeaders?: Record<string, string>;
 }
 
 /**

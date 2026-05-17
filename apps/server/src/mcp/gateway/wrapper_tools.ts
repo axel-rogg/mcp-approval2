@@ -29,6 +29,7 @@ import {
 import { signSubMcpUserJwt } from './user_jwt.js';
 import type { ToolSensitivity } from '../protocol/tool.js';
 import type { ToolAnnotations } from '../protocol/types.js';
+import type { SubMcpAuthEnricher } from '../../services/sub-mcp-auth-enricher.js';
 
 const SENSITIVITY_VALUES: ReadonlyArray<ToolSensitivity> = ['read', 'write', 'danger'];
 
@@ -61,6 +62,12 @@ export interface MakeForwardingToolArgs {
   readonly def: ForwardedToolDef;
   readonly forwarder: SubMcpForwarder;
   readonly config: Pick<AppConfig, 'JWT_SECRET' | 'JWT_ISSUER'>;
+  /**
+   * Optional Auth-Enricher — injiziert per-User-Auth-Header (z.B.
+   * x-google-access-token fuer gws, x-gcp-sa-json fuer gcloud).
+   * Wenn fehlend: nur Standard-Header (Schicht-1 + X-User-JWT).
+   */
+  readonly authEnricher?: SubMcpAuthEnricher;
 }
 
 /**
@@ -69,7 +76,7 @@ export interface MakeForwardingToolArgs {
  * `<subMcpName>.<remoteToolName>` (e.g. `gws.calendar.list`, `utils.diagram.info`).
  */
 export function makeForwardingTool(args: MakeForwardingToolArgs): Tool<unknown, unknown> {
-  const { def, forwarder, config } = args;
+  const { def, forwarder, config, authEnricher } = args;
   const sensitivity = resolveSubMcpSensitivity(def.annotations);
 
   const tool: Tool<unknown, unknown> = {
@@ -84,6 +91,29 @@ export function makeForwardingTool(args: MakeForwardingToolArgs): Tool<unknown, 
         subMcpName: def.subMcpName,
         config,
       });
+      // Auth-Enricher liefert ggf. extra Headers (Google-Access-Token,
+      // SA-JSON, etc.). Wenn der Enricher leer-Map liefert (z.B. weil User
+      // noch nichts konfiguriert hat), faellt der Worker auf seinen Legacy-
+      // Pfad zurueck. Wenn der Enricher ueberhaupt nicht verkabelt ist,
+      // bleibt das alte Pre-Multiuser-Verhalten.
+      let extraHeaders: Record<string, string> | undefined;
+      if (authEnricher) {
+        try {
+          const headers = await authEnricher.enrich({
+            userId: ctx.userId,
+            subMcpName: def.subMcpName,
+          });
+          if (Object.keys(headers).length > 0) extraHeaders = headers;
+        } catch (err) {
+          // Enricher-Fehler ist nicht fatal — Worker-Legacy-Pfad uebernimmt.
+          // Wir loggen aber damit User-Feedback ankommt.
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[wrapper_tools] auth-enricher failed for sub-mcp '${def.subMcpName}', ` +
+              `falling back to legacy auth on worker: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
       return forwarder.forwardToolCall({
         subMcpName: def.subMcpName,
         toolName: def.remoteName,
@@ -91,6 +121,7 @@ export function makeForwardingTool(args: MakeForwardingToolArgs): Tool<unknown, 
         userJwt,
         ...(ctx.requestId ? { requestId: ctx.requestId } : {}),
         ...(ctx.signal ? { signal: ctx.signal } : {}),
+        ...(extraHeaders ? { extraHeaders } : {}),
       });
     },
   };
@@ -101,6 +132,8 @@ export interface BuildSubMcpWrapperToolsArgs {
   readonly registry: SubMcpRegistry;
   readonly forwarder: SubMcpForwarder;
   readonly config: Pick<AppConfig, 'JWT_SECRET' | 'JWT_ISSUER'>;
+  /** Optional Auth-Enricher fuer per-User-Header. */
+  readonly authEnricher?: SubMcpAuthEnricher;
 }
 
 export interface BuildSubMcpWrapperToolsResult {
@@ -124,7 +157,14 @@ export async function buildSubMcpWrapperTools(
   const skipped: string[] = [];
   const perSubMcp = new Map<string, number>();
   for (const cfg of enabled) {
-    const count = appendToolsForServer(cfg, args.forwarder, args.config, tools, skipped);
+    const count = appendToolsForServer(
+      cfg,
+      args.forwarder,
+      args.config,
+      tools,
+      skipped,
+      args.authEnricher,
+    );
     perSubMcp.set(cfg.name, count);
   }
   return { tools, skipped, perSubMcp };
@@ -136,12 +176,20 @@ function appendToolsForServer(
   config: Pick<AppConfig, 'JWT_SECRET' | 'JWT_ISSUER'>,
   out: Tool<unknown, unknown>[],
   skipped: string[],
+  authEnricher?: SubMcpAuthEnricher,
 ): number {
   if (!cfg.toolsCache || cfg.toolsCache.length === 0) return 0;
   const { defs, skipped: defSkipped } = buildForwardedToolDefs(cfg);
   skipped.push(...defSkipped);
   for (const def of defs) {
-    out.push(makeForwardingTool({ def, forwarder, config }));
+    out.push(
+      makeForwardingTool({
+        def,
+        forwarder,
+        config,
+        ...(authEnricher ? { authEnricher } : {}),
+      }),
+    );
   }
   return defs.length;
 }
