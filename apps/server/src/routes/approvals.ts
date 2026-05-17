@@ -80,8 +80,31 @@ const rejectSchema = z.object({
 
 const listQuerySchema = z.object({
   status: z.enum(['pending', 'approved', 'rejected', 'expired']).optional(),
+  /**
+   * Comma-separated Liste fuer Multi-Status-Filter (Archive-View):
+   * `?statusIn=approved,rejected,expired`. Hat Vorrang vor `status`.
+   */
+  statusIn: z.string().optional(),
+  /**
+   * Min created_at (Unix-ms). `?sinceMs=…` z.B. 24h-Window fuer Archive.
+   */
+  sinceMs: z.coerce.number().int().nonnegative().optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
 });
+
+const ALLOWED_STATUSES = ['pending', 'approved', 'rejected', 'expired'] as const;
+type AllowedStatus = (typeof ALLOWED_STATUSES)[number];
+
+function parseStatusIn(raw: string | undefined): AllowedStatus[] | undefined {
+  if (!raw) return undefined;
+  const out: AllowedStatus[] = [];
+  for (const s of raw.split(',').map((p) => p.trim()).filter(Boolean)) {
+    if ((ALLOWED_STATUSES as readonly string[]).includes(s)) {
+      out.push(s as AllowedStatus);
+    }
+  }
+  return out.length > 0 ? out : undefined;
+}
 
 // ---------------------------------------------------------------------------
 // b64 helpers
@@ -204,11 +227,18 @@ export function approvalsRoutes(deps: ApprovalsRouteDeps): Hono<AppBindings> {
   const guard = auth(server);
 
   // GET /v1/approvals
+  // Query-Params:
+  //   ?status=pending|approved|rejected|expired
+  //   ?statusIn=approved,rejected,expired   (Multi-Filter, Vorrang)
+  //   ?sinceMs=<unix-ms>                    (Archive: 24h-Window)
+  //   ?limit=<n>
   app.get('/v1/approvals', guard, async (c) => {
     const principal = c.get('user');
     if (!principal) throw HttpError.unauthorized();
     const q = listQuerySchema.safeParse({
       status: c.req.query('status'),
+      statusIn: c.req.query('statusIn'),
+      sinceMs: c.req.query('sinceMs'),
       limit: c.req.query('limit'),
     });
     if (!q.success) {
@@ -216,12 +246,17 @@ export function approvalsRoutes(deps: ApprovalsRouteDeps): Hono<AppBindings> {
         issues: q.error.issues,
       });
     }
+    const statusIn = parseStatusIn(q.data.statusIn);
     const listArgs: {
       userId: string;
       status?: ApprovalStatus;
+      statusIn?: ReadonlyArray<ApprovalStatus>;
+      sinceMs?: number;
       limit?: number;
     } = { userId: principal.userId };
-    if (q.data.status) listArgs.status = q.data.status;
+    if (statusIn) listArgs.statusIn = statusIn;
+    else if (q.data.status) listArgs.status = q.data.status;
+    if (q.data.sinceMs !== undefined) listArgs.sinceMs = q.data.sinceMs;
     if (q.data.limit !== undefined) listArgs.limit = q.data.limit;
     const list = await approvals.list(listArgs);
     return c.json({ approvals: list.map((a) => approvalToJson(a)) });

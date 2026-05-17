@@ -26,12 +26,18 @@ export interface PendingApproval {
   readonly toolName: string;
   readonly sensitivity: 'write' | 'danger';
   readonly displayTemplate?: string;
+  readonly displayRendered?: string | null;
   readonly input: Record<string, unknown>;
   readonly requestedAt: number;
   readonly status: 'pending' | 'approved' | 'rejected' | 'executing' | 'completed' | 'expired';
   readonly requiresPrf?: boolean;
   readonly allowCredentialIdsB64?: ReadonlyArray<string>;
   readonly challengeB64?: string;
+  readonly approvedAt?: number | null;
+  readonly rejectedAt?: number | null;
+  readonly expiredAt?: number | null;
+  /** Original-Ablauf-Zeit (vor Lazy-Flip); UI nutzt es als Fallback. */
+  readonly expiresAt?: number | null;
 }
 
 export interface CredentialMeta {
@@ -150,7 +156,14 @@ export interface ApiClient {
   logout(): Promise<void>;
 
   // Approvals
-  listApprovals(args?: { status?: 'pending' | 'approved' | 'rejected' }): Promise<PendingApproval[]>;
+  listApprovals(args?: {
+    status?: 'pending' | 'approved' | 'rejected' | 'expired';
+    /** Multi-Filter (Archive-View) — Server akzeptiert CSV. */
+    statusIn?: ReadonlyArray<'pending' | 'approved' | 'rejected' | 'expired'>;
+    /** Archive-Zeitfenster: `Date.now() - 24*3600*1000`. */
+    sinceMs?: number;
+    limit?: number;
+  }): Promise<PendingApproval[]>;
   getApproval(id: string): Promise<PendingApproval>;
   approveApproval(args: {
     id: string;
@@ -377,8 +390,16 @@ export function createApiClient(baseUrl?: string): ApiClient {
       // Server-route ist /v1/approvals (list) mit query-filter — NICHT
       // /v1/approvals/pending. Letzteres trifft auf /v1/approvals/:id und
       // Postgres wirft "invalid input syntax for type uuid: pending".
+      const query: Record<string, string | undefined> = {};
+      if (args?.statusIn && args.statusIn.length > 0) {
+        query['statusIn'] = args.statusIn.join(',');
+      } else if (args?.status) {
+        query['status'] = args.status;
+      }
+      if (args?.sinceMs !== undefined) query['sinceMs'] = String(args.sinceMs);
+      if (args?.limit !== undefined) query['limit'] = String(args.limit);
       const out = await request<{ approvals: PendingApproval[] }>('/v1/approvals', {
-        ...(args?.status ? { query: { status: args.status } } : {}),
+        query,
       });
       return out.approvals;
     },

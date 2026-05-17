@@ -60,6 +60,16 @@ export interface GetApprovalArgs {
 export interface ListApprovalsArgs {
   readonly userId: string;
   readonly status?: ApprovalStatus;
+  /**
+   * Mehrfach-Status-Filter (z.B. ['approved','rejected','expired'] fuer
+   * Archive-View). Wenn gesetzt, hat Vorrang vor `status` (single).
+   */
+  readonly statusIn?: ReadonlyArray<ApprovalStatus>;
+  /**
+   * Nur Approvals deren `created_at >= sinceMs`. Default 0 (alles).
+   * Archive-View ueblicherweise mit `Date.now() - 24*3600*1000`.
+   */
+  readonly sinceMs?: number;
   /** 1..200, default 50. */
   readonly limit?: number;
 }
@@ -430,6 +440,35 @@ export function createApprovalService(opts: ApprovalServiceOptions): ApprovalSer
         // nicht mehr als pending zurueckkommen, egal welcher Status-Filter
         // gerade aktiv ist.
         await lazyExpireUser(q, args.userId, ts);
+
+        // Archive-Pfad: statusIn (multi) + sinceMs (Zeit-Fenster) erlauben
+        // Filterung wie "alles aus den letzten 24h mit Status approved|
+        // rejected|expired". Hat Vorrang vor `status` (single).
+        if (args.statusIn && args.statusIn.length > 0) {
+          const params: unknown[] = [args.userId];
+          const statusPlaceholders: string[] = [];
+          for (const s of args.statusIn) {
+            params.push(s);
+            statusPlaceholders.push(`$${params.length}`);
+          }
+          let sinceClause = '';
+          if (typeof args.sinceMs === 'number') {
+            params.push(args.sinceMs);
+            sinceClause = ` AND created_at >= $${params.length}`;
+          }
+          params.push(limit);
+          const limitPh = `$${params.length}`;
+          return q.query<ApprovalRowRaw>(
+            `SELECT ${SELECT_COLS} FROM pending_approvals
+              WHERE user_id = $1
+                AND status IN (${statusPlaceholders.join(',')})
+                ${sinceClause}
+              ORDER BY COALESCE(approved_at, rejected_at, expired_at, created_at) DESC
+              LIMIT ${limitPh}`,
+            params,
+          );
+        }
+
         if (args.status) {
           return q.query<ApprovalRowRaw>(
             `SELECT ${SELECT_COLS} FROM pending_approvals
