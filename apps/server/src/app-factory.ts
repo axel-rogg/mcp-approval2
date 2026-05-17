@@ -70,6 +70,7 @@ import { writemodeRoutes, type WritemodeState } from './routes/writemode.js';
 import { internalCredentialsRoutes } from './routes/internal/credentials.js';
 import { internalDekRoutes } from './routes/internal/dek.js';
 import { internalCronRoutes } from './routes/internal/cron.js';
+import { internalAppsImportRoutes } from './routes/internal/apps-import.js';
 import { createDekService } from './services/dek.js';
 import { createAdminService } from './services/admin.js';
 import { createGdprService } from './services/gdpr.js';
@@ -377,7 +378,16 @@ export async function createApp(
     app.route('/', kcProxyRoutes(server, deps.kcProxy));
   }
 
-  // Admin-Routes (role='admin' check intern in adminOnly-middleware)
+  // Admin-Routes (role='admin' check intern in adminOnly-middleware).
+  //
+  // SEC-NEW-106-Fix (2026-05-17): `adminRoutes` hat ein `app.use('*',
+  // adminOnly())` das `c.get('user')` checkt. Ohne vorgelagertes
+  // authMiddleware ist `user` undefined → adminOnly throws 401 fuer
+  // JEDEN Pfad unter /v1/admin/* (auch nicht-existente). Wir mounten
+  // hier `authMiddleware(required: true)` vor dem Subtree damit:
+  //   - bekannte admin-Paths: 200 fuer admins, 403 fuer members, 401 ohne Token
+  //   - unbekannte admin-Paths: 404 (nach auth-pass) statt 401
+  app.use('/v1/admin/*', authMiddleware(server, { required: true }));
   if (server.db) {
     const adminService = createAdminService({
       db: server.db,
@@ -670,12 +680,27 @@ export async function createApp(
 
   // PWA-Tools-View: GET /v1/inventory — authenticated, read-only Liste der
   // registrierten Tools + Sub-MCP-Gateways (mit cached tools/list).
+  //
+  // knowledge2-Snapshot wird per-Request aus dem module-scoped
+  // `kcWrappersCache` gelesen — kc-manifest-refresh updated den Cache, der
+  // Inventory-Endpoint sieht das ohne Re-Mount.
   app.route(
     '/',
     inventoryRoutes({
       server,
       registry,
-      ...(deps.subMcpRegistry ? { subMcpRegistry: deps.subMcpRegistry } : {}),
+      subMcpRegistry: subMcpReg,
+      kcSnapshot: () => {
+        const cached = kcWrappersCache.get(server);
+        if (!cached) {
+          return { toolNames: new Set<string>(), refreshedAt: null };
+        }
+        return {
+          toolNames: new Set(cached.tools.map((t) => t.name)),
+          refreshedAt: cached.manifest.fetchedAt ?? null,
+          displayName: 'Knowledge Core (mcp-knowledge2)',
+        };
+      },
     }),
   );
 
@@ -775,6 +800,18 @@ export async function createApp(
         cronDeps,
       }),
     );
+
+    // POST /internal/v1/apps/import — One-Shot v1→v2 App-Migration
+    if (optionalServices.apps) {
+      app.use('/internal/v1/apps/*', serviceTokenGuard);
+      app.route(
+        '/',
+        internalAppsImportRoutes({
+          server,
+          apps: optionalServices.apps,
+        }),
+      );
+    }
   } else {
     // eslint-disable-next-line no-console
     console.warn(

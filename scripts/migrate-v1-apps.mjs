@@ -3,16 +3,18 @@
  * One-shot Migration: v1-Apps (mcp-approval CF) → v2 (mcp-approval2 Fly+PG).
  *
  * Liest 4 hardgecodete LayoutDocs (aus kc:apps.read exportiert am 2026-05-17)
- * und POSTet sie als /v1/apps zu v2 mit dem PWA-Bearer-Token des Users.
+ * und POSTet sie an /internal/v1/apps/import via SERVICE_TOKEN (Doppler).
  *
- * Usage:
- *   MCP_BEARER=<token>  node scripts/migrate-v1-apps.mjs [--dry-run] [--target URL]
+ * Server-Endpoint: POST /internal/v1/apps/import
+ *   - X-Service-Token-Header (= MCP_APPROVAL_INTERNAL_TOKEN)
+ *   - Body: {userEmail, apps: [...]}
+ *   - Server resolved userId per Email-Lookup + createApp() pro App.
  *
- * Token herauskriegen:
- *   1. PWA https://app2.ai-toolhub.org öffnen + einloggen
- *   2. DevTools → Network → einen API-Request anschauen (z.B. /v1/inventory)
- *   3. Request-Headers → "authorization: Bearer eyJ..." kopieren (ohne "Bearer ")
+ * Usage (via Doppler):
+ *   doppler run --project mcp-approval2 --config privat -- \
+ *     node scripts/migrate-v1-apps.mjs [--dry-run] [--target URL]
  *
+ * Erwartet `MCP_APPROVAL_INTERNAL_TOKEN` in der env (kommt aus Doppler).
  * --dry-run: zeigt was gesendet würde, ohne POST.
  * --target:  Server-Origin (default https://mcp2.ai-toolhub.org).
  */
@@ -22,10 +24,11 @@ const TARGET = process.argv.includes('--target')
   : 'https://mcp2.ai-toolhub.org';
 
 const DRY_RUN = process.argv.includes('--dry-run');
-const TOKEN = process.env.MCP_BEARER;
+const SERVICE_TOKEN = process.env.MCP_APPROVAL_INTERNAL_TOKEN;
+const USER_EMAIL = process.env.MIGRATE_USER_EMAIL || 'axelrogg@gmail.com';
 
-if (!DRY_RUN && !TOKEN) {
-  console.error('FEHLER: setze MCP_BEARER (siehe Header-Kommentar wie man den Token holt).');
+if (!DRY_RUN && !SERVICE_TOKEN) {
+  console.error('FEHLER: MCP_APPROVAL_INTERNAL_TOKEN nicht gesetzt. Nutze: doppler run --project mcp-approval2 --config privat -- node scripts/migrate-v1-apps.mjs');
   process.exit(1);
 }
 
@@ -306,16 +309,20 @@ const APPS = [
 // Main
 // ───────────────────────────────────────────────────────────────────────
 
-async function createApp(payload) {
-  const res = await fetch(`${TARGET}/v1/apps`, {
+async function importAllApps() {
+  // Batched single POST — Server importiert alle Apps in einem Call.
+  const body = {
+    userEmail: USER_EMAIL,
+    apps: APPS.map(({ payload, pinned }) => ({ ...payload, pinned })),
+  };
+  const res = await fetch(`${TARGET}/internal/v1/apps/import`, {
     method: 'POST',
-    credentials: 'include',
     headers: {
-      'authorization': `Bearer ${TOKEN}`,
+      'X-Service-Token': SERVICE_TOKEN,
       'content-type': 'application/json',
       'accept': 'application/json',
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(body),
   });
   const text = await res.text();
   if (!res.ok) {
@@ -324,49 +331,39 @@ async function createApp(payload) {
   return JSON.parse(text);
 }
 
-async function pinApp(id) {
-  // Pin ist eine separate Action — siehe routes/apps.ts. Default-Endpoint:
-  // PATCH /v1/apps/:id/pin? Schauen wir nach. Falls nicht da: skip + manuell.
-  // (Aktuell impl unklar, machen wir best-effort.)
-  const res = await fetch(`${TARGET}/v1/apps/${encodeURIComponent(id)}/pin`, {
-    method: 'PATCH',
-    credentials: 'include',
-    headers: {
-      'authorization': `Bearer ${TOKEN}`,
-      'accept': 'application/json',
-    },
-  });
-  if (!res.ok) {
-    console.warn(`  ⚠️  pin failed (HTTP ${res.status}) — manuell in PWA pinnen`);
-  }
-}
-
 async function main() {
   console.log(`Target: ${TARGET}`);
+  console.log(`User: ${USER_EMAIL}`);
   console.log(`Dry-run: ${DRY_RUN}`);
   console.log(`Apps to migrate: ${APPS.length}\n`);
 
-  for (const { key, payload, pinned } of APPS) {
-    console.log(`→ ${key} (${payload.title})`);
-    if (DRY_RUN) {
-      const sample = JSON.stringify(payload).slice(0, 200);
-      console.log(`  dry-run: would POST ${sample}...\n`);
-      continue;
-    }
-    try {
-      const res = await createApp(payload);
-      const id = res.app?.id ?? res.id ?? '?';
-      console.log(`  ✓ created id=${id}`);
-      if (pinned && id !== '?') {
-        await pinApp(id);
-        console.log(`  ✓ pinned`);
-      }
-    } catch (err) {
-      console.error(`  ✗ FAILED: ${err.message}`);
-    }
-    console.log();
+  for (const { key, payload } of APPS) {
+    console.log(`  · ${key}: ${payload.title}`);
   }
-  console.log('done.');
+  console.log();
+
+  if (DRY_RUN) {
+    console.log('dry-run — kein POST. Setze MCP_APPROVAL_INTERNAL_TOKEN via Doppler zum Ausfuehren.');
+    return;
+  }
+
+  try {
+    const res = await importAllApps();
+    console.log(`→ ${res.imported.length} apps imported:`);
+    for (const a of res.imported) {
+      console.log(`  ✓ ${a.id}  ${a.title}${a.pinned ? '  (📌 pinned-flag → bitte manuell in PWA setzen)' : ''}`);
+    }
+    if (res.errors.length > 0) {
+      console.log(`\n${res.errors.length} errors:`);
+      for (const e of res.errors) {
+        console.log(`  ✗ ${e.title}: ${e.message}`);
+      }
+    }
+  } catch (err) {
+    console.error(`fatal: ${err.message}`);
+    process.exit(1);
+  }
+  console.log('\ndone.');
 }
 
 main().catch((err) => {
