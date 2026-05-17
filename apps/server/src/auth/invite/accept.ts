@@ -75,15 +75,91 @@ export async function acceptInvite(
   );
 
   // Insert or upsert user row.
-  const existing = await raw.query<{ id: string; role: 'admin' | 'member'; status: string }>(
-    `SELECT id, role, status FROM users WHERE email = $1 LIMIT 1`,
+  // SEC-010: 3 zusaetzliche Sperren auf existing-User-Pfad:
+  //   1. status='suspended' → refuse. Admin muss erst explizit
+  //      unsuspenden, sonst kann ein Invite einen vorher suspendierten
+  //      Admin still wieder-aktivieren ohne Re-Vetting.
+  //   2. external_id-Drift: wenn die existing-Row schon eine external_id
+  //      hat die NICHT mit der einlogenden uebereinstimmt, refuse. Damit
+  //      kann ein Angreifer der Bobs Email-Account uebernommen hat
+  //      (Domain-Takeover) NICHT seinen eigenen Google-sub auf Bobs
+  //      existing-Row mappen. Admin muss explizit re-linken
+  //      (separater Flow).
+  //   3. role=admin → optional doppelt-bestaetigt. Phase A: log warn
+  //      und audit, weil ein zweiter Admin-Workflow noch nicht existiert.
+  const existing = await raw.query<{
+    id: string;
+    role: 'admin' | 'member';
+    status: string;
+    externalId: string | null;
+  }>(
+    `SELECT id, role, status, external_id AS "externalId" FROM users WHERE email = $1 LIMIT 1`,
     [input.email.toLowerCase()],
   );
   let userId: string;
   let role: 'admin' | 'member';
   if (existing[0]) {
-    userId = existing[0].id;
-    role = existing[0].role;
+    const e = existing[0];
+    if (e.status === 'suspended') {
+      await emitAudit(db, {
+        action: 'invite.accept.rejected',
+        actorUserId: null,
+        result: 'failure',
+        details: {
+          inviteId: invite.id,
+          reason: 'user_suspended_use_admin_unsuspend',
+          existingUserId: e.id,
+          email: input.email.toLowerCase(),
+        },
+      }).catch(() => {
+        /* audit failure non-fatal */
+      });
+      throw HttpError.forbidden(
+        'forbidden',
+        'invite rejected: matching user is suspended; ask an admin to unsuspend',
+      );
+    }
+    if (e.externalId !== null && e.externalId !== input.externalId) {
+      await emitAudit(db, {
+        action: 'invite.accept.rejected',
+        actorUserId: null,
+        result: 'failure',
+        details: {
+          inviteId: invite.id,
+          reason: 'external_id_mismatch',
+          existingUserId: e.id,
+          email: input.email.toLowerCase(),
+        },
+      }).catch(() => {
+        /* audit failure non-fatal */
+      });
+      throw HttpError.forbidden(
+        'forbidden',
+        'invite rejected: matching user has a different IdP linkage; ask an admin to relink',
+      );
+    }
+    if (e.role === 'admin') {
+      // Phase A: log + audit, kein hard-reject — second-admin-confirm
+      // flow ist Phase B+.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[invite.accept] resurrecting admin-role user ${e.id} via invite ${invite.id} — no second-admin-confirm flow yet (SEC-010 follow-up)`,
+      );
+      await emitAudit(db, {
+        action: 'invite.accept.admin_resurrected',
+        actorUserId: null,
+        result: 'noop',
+        details: {
+          inviteId: invite.id,
+          existingUserId: e.id,
+          email: input.email.toLowerCase(),
+        },
+      }).catch(() => {
+        /* audit failure non-fatal */
+      });
+    }
+    userId = e.id;
+    role = e.role;
     await raw.query(
       `UPDATE users SET status = 'active', external_id = $1, display_name = $2, last_login_at = $3
        WHERE id = $4`,

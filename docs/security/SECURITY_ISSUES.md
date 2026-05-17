@@ -195,6 +195,11 @@ Findings sind innerhalb der Severity nach **Schweregrad/Wahrscheinlichkeit** sor
   - Wenn `existing.status === 'suspended'`: 403 mit `user_suspended_use_admin_unsuspend`.
   - Wenn `existing.external_id !== NULL && existing.external_id !== input.externalId`: 403 `external_id_mismatch`, admin muss explizit re-link.
   - Wenn `existing.role === 'admin'`: zweiter Admin muss Invite gegen-signieren ODER separater `/admin/users/:id/relink`-Flow.
+- **Status:** ✅ FIXED 2026-05-17 (Phase B) — 2 hard-blocks + 1 warn:
+  1. `existing.status==='suspended'` → 403 `forbidden` + `invite.accept.rejected` audit (reason `user_suspended_use_admin_unsuspend`).
+  2. `existing.external_id !== null && existing.external_id !== input.externalId` → 403 + audit (reason `external_id_mismatch`). external_id MUSS unveraendert bleiben.
+  3. `existing.role === 'admin'` → Phase A noch kein hard-reject (kein second-admin-confirm-Flow), aber `console.warn` + `invite.accept.admin_resurrected` audit-event. Followup fuer Phase B+: separate `/admin/users/:id/relink` Surface mit zweitem Admin der gegen-signiert.
+  5 neue Regression-Tests in [accept.test.ts](../../apps/server/src/auth/invite/accept.test.ts).
 
 ### SEC-011 — `kc-proxy` `/admin/` in `ALLOWED_PATH_PREFIXES` + Cookie-Auth → CSRF auf KC2-Admin
 
