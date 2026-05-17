@@ -76,9 +76,10 @@ function renderSubNav(active: ToolsSubTab): HTMLElement {
 // SVG-Icons (orange-rost via .btn-refresh)
 // ─────────────────────────────────────────────────────────────────────────
 
-function makeRefreshIcon(): SVGElement {
-  const NS = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(NS, 'svg');
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function makeSvgIcon(pathData: string): SVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');
   svg.setAttribute('fill', 'none');
   svg.setAttribute('stroke', 'currentColor');
@@ -86,13 +87,74 @@ function makeRefreshIcon(): SVGElement {
   svg.setAttribute('stroke-linecap', 'round');
   svg.setAttribute('stroke-linejoin', 'round');
   svg.setAttribute('aria-hidden', 'true');
-  const p = document.createElementNS(NS, 'path');
-  p.setAttribute(
-    'd',
-    'M21 12a9 9 0 0 1-15.5 6.4M3 12a9 9 0 0 1 15.5-6.4M21 4v5h-5M3 20v-5h5',
-  );
+  const p = document.createElementNS(SVG_NS, 'path');
+  p.setAttribute('d', pathData);
   svg.appendChild(p);
   return svg;
+}
+
+function makeRefreshIcon(): SVGElement {
+  return makeSvgIcon('M21 12a9 9 0 0 1-15.5 6.4M3 12a9 9 0 0 1 15.5-6.4M21 4v5h-5M3 20v-5h5');
+}
+
+/**
+ * Konfigurieren-Icon: Feather/Lucide "settings" (Zahnrad). Optisch
+ * "Schraubenschluessel-aehnlich" und allgemein als Settings/Konfig erkannt.
+ */
+function makeWrenchIcon(): SVGElement {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+  // Settings/cog: zwei Pfade — Aussenring + Mittelpunkt
+  const outer = document.createElementNS(SVG_NS, 'path');
+  outer.setAttribute(
+    'd',
+    'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z',
+  );
+  svg.appendChild(outer);
+  return svg;
+}
+
+function makeTrashIcon(): SVGElement {
+  return makeSvgIcon('M3 6h18 M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2 M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6 M10 11v6 M14 11v6');
+}
+
+/**
+ * Subscription-Toggle als CSS-Switch (label umschliesst hidden checkbox +
+ * .toggle-slider). Click-Event auf das wrap fired toggle-callback.
+ */
+function makeSubscriptionToggle(
+  enabled: boolean,
+  serverName: string,
+  onToggle: (enabled: boolean) => void,
+): HTMLElement {
+  const wrap = document.createElement('label');
+  wrap.className = `toggle-switch ${enabled ? 'is-on' : 'is-off'}`;
+  wrap.setAttribute('aria-label', enabled ? `${serverName} deaktivieren` : `${serverName} aktivieren`);
+  wrap.title = enabled ? 'Server ist aktiv — klicken zum Deaktivieren' : 'Server ist aus — klicken zum Aktivieren';
+  const input = document.createElement('input');
+  input.type = 'checkbox';
+  input.checked = enabled;
+  input.className = 'toggle-switch-input';
+  const slider = document.createElement('span');
+  slider.className = 'toggle-switch-slider';
+  slider.setAttribute('aria-hidden', 'true');
+  wrap.appendChild(input);
+  wrap.appendChild(slider);
+  // click auf label triggert input.change — wir hooken auf change statt click
+  // damit Tastatur-Bedienung (Space) auch funktioniert.
+  input.addEventListener('change', (ev) => {
+    ev.stopPropagation();
+    onToggle(input.checked);
+  });
+  // Stop propagation: details-summary wuerde sonst die Card aufklappen.
+  wrap.addEventListener('click', (ev) => ev.stopPropagation());
+  return wrap;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -230,21 +292,38 @@ function renderServerCard(
   const titleRow = document.createElement('div');
   titleRow.className = 'server-card-title-row';
 
-  const title = document.createElement('span');
-  title.className = 'server-card-title';
-  title.textContent = s.displayName;
-  titleRow.appendChild(title);
+  // ─── Actions LINKS ───
+  // Reihenfolge: [Toggle] [⚙ Konfig] [↻ Refresh] [🗑 Delete-wenn-userOwned]
+  // Native + knowledge2: nur Konfig (Tool-Defaults), kein Toggle/Delete.
+  const actions = document.createElement('div');
+  actions.className = 'server-card-actions';
 
-  const count = document.createElement('span');
-  count.className = 'pill';
-  count.textContent = `${s.tools.length} tools`;
-  titleRow.appendChild(count);
+  if (s.isGateway && s.name !== 'knowledge2' && cb.onToggleSubscription) {
+    const toggle = makeSubscriptionToggle(s.enabled, s.displayName, (next) => {
+      if (!next && !window.confirm(`${s.displayName} deaktivieren? Tools verschwinden aus deiner Liste.`)) {
+        // User abgebrochen — togglen wir das checkbox-state zurueck:
+        const input = toggle.querySelector<HTMLInputElement>('.toggle-switch-input');
+        if (input) input.checked = true;
+        toggle.classList.remove('is-off');
+        toggle.classList.add('is-on');
+        return;
+      }
+      void cb.onToggleSubscription?.(s.name, next);
+    });
+    actions.appendChild(toggle);
+  }
 
-  if (!s.enabled) {
-    const disabled = document.createElement('span');
-    disabled.className = 'pill pill-danger';
-    disabled.textContent = 'disabled';
-    titleRow.appendChild(disabled);
+  if (s.isGateway) {
+    const configLink = document.createElement('a');
+    configLink.href = `#/tools/servers/${encodeURIComponent(s.name)}/config`;
+    configLink.className = 'btn btn-icon btn-config server-card-config';
+    configLink.setAttribute('aria-label', `${s.displayName} konfigurieren`);
+    configLink.title = 'Konfigurieren (Tokens, OAuth, Tool-Defaults, Diagnose)';
+    configLink.appendChild(makeWrenchIcon());
+    configLink.addEventListener('click', (ev) => {
+      ev.stopPropagation(); // <details>-Toggle nicht triggern
+    });
+    actions.appendChild(configLink);
   }
 
   if (s.isGateway && cb.onRefresh) {
@@ -252,57 +331,24 @@ function renderServerCard(
     refreshBtn.type = 'button';
     refreshBtn.className = 'btn btn-icon btn-refresh server-card-refresh';
     refreshBtn.setAttribute('aria-label', `Tools von ${s.displayName} neu entdecken`);
-    refreshBtn.title = `Tools von ${s.displayName} neu entdecken`;
+    refreshBtn.title = `Tools neu entdecken`;
     refreshBtn.appendChild(makeRefreshIcon());
     refreshBtn.addEventListener('click', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
       void cb.onRefresh?.(s.name);
     });
-    titleRow.appendChild(refreshBtn);
-  }
-
-  // Konfigurieren-Knopf — leadet zur Per-Server-Config-Page (Phase 2).
-  // Verfuegbar fuer alle Gateways inkl. knowledge2 (KC2 hat zwar keine
-  // config_schema, aber dort kann der User die Subscription noch sehen).
-  if (s.isGateway) {
-    const configLink = document.createElement('a');
-    configLink.href = `#/tools/servers/${encodeURIComponent(s.name)}/config`;
-    configLink.className = 'btn btn-secondary btn-small server-card-config';
-    configLink.textContent = 'Konfigurieren';
-    configLink.addEventListener('click', (ev) => {
-      ev.stopPropagation(); // <details>-Toggle nicht triggern
-    });
-    titleRow.appendChild(configLink);
-  }
-
-  // Deaktivieren-Toggle. Nur fuer Sub-MCP-Gateways die KEIN 'knowledge2'
-  // sind (KC2 ist embedded, immer aktiv). Sub-route + jeder User darf
-  // seine eigene Subscription togglen.
-  if (s.isGateway && s.name !== 'knowledge2' && cb.onToggleSubscription) {
-    const disableBtn = document.createElement('button');
-    disableBtn.type = 'button';
-    disableBtn.className = 'btn btn-secondary btn-small server-card-disable';
-    disableBtn.textContent = 'Deaktivieren';
-    disableBtn.title = `${s.displayName} fuer deinen Account deaktivieren`;
-    disableBtn.addEventListener('click', (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      if (!window.confirm(`${s.displayName} deaktivieren? Tools verschwinden aus deiner Liste.`)) {
-        return;
-      }
-      void cb.onToggleSubscription?.(s.name, false);
-    });
-    titleRow.appendChild(disableBtn);
+    actions.appendChild(refreshBtn);
   }
 
   // Phase 4: User-owned Server endgueltig loeschen. Nur sichtbar wenn isUserOwned.
   if (s.isGateway && s.isUserOwned && cb.onDelete) {
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
-    deleteBtn.className = 'btn btn-secondary btn-small btn-danger server-card-delete';
-    deleteBtn.textContent = 'Loeschen';
+    deleteBtn.className = 'btn btn-icon btn-danger server-card-delete';
+    deleteBtn.setAttribute('aria-label', `${s.displayName} loeschen`);
     deleteBtn.title = `${s.displayName} aus deiner Hub-Instance entfernen (irreversibel)`;
+    deleteBtn.appendChild(makeTrashIcon());
     deleteBtn.addEventListener('click', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
@@ -314,7 +360,26 @@ function renderServerCard(
       if (!ok) return;
       void cb.onDelete?.(s.name);
     });
-    titleRow.appendChild(deleteBtn);
+    actions.appendChild(deleteBtn);
+  }
+
+  titleRow.appendChild(actions);
+
+  const title = document.createElement('span');
+  title.className = 'server-card-title';
+  title.textContent = s.displayName;
+  titleRow.appendChild(title);
+
+  const count = document.createElement('span');
+  count.className = 'pill';
+  count.textContent = `${s.tools.length} tools`;
+  titleRow.appendChild(count);
+
+  if (!s.enabled && s.isGateway && s.name !== 'knowledge2') {
+    const disabled = document.createElement('span');
+    disabled.className = 'pill pill-muted';
+    disabled.textContent = 'aus';
+    titleRow.appendChild(disabled);
   }
 
   summary.appendChild(titleRow);

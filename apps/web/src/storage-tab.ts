@@ -37,7 +37,8 @@ const APP_FILTER = 'app:*';
 
 const SUBTYPE_LABEL: Record<string, string> = {
   '': 'All',
-  file: 'Docs',
+  doc: 'Docs',
+  file: 'Docs', // Legacy-Alias (pre-ADR-0004 renaming)
   skill_manifest: 'Skills',
   memo: 'Memos',
   list: 'Lists',
@@ -45,11 +46,17 @@ const SUBTYPE_LABEL: Record<string, string> = {
   [APP_FILTER]: 'Apps',
 };
 
+// Icon-Konvention: farbig + visuell unterscheidbar. Bevorzugung von
+// Emoji-Glyphen die in den meisten OS-Renderern (Apple/Twemoji/Noto)
+// Farbe haben. Vorher waren `file: '📄'` (graue Seite) und `list: '☑'`
+// (schwarzer Haken) — beide farblos. Plus key-mismatch: FILTER_CHIPS
+// verwendet `doc`, der Icon-Map hatte aber nur `file` → Default-Fallback.
 const SUBTYPE_ICON: Record<string, string> = {
-  file: '📄',
+  doc: '📘',          // blaues Buch
+  file: '📘',         // Legacy-Alias
   skill_manifest: '🧠',
   memo: '💭',
-  list: '☑',
+  list: '📋',         // Klemmbrett (mit Liste drauf)
   note: '📝',
 };
 
