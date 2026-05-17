@@ -17,6 +17,7 @@
  * `ApiPrefsError` mit Status 404 — die UI zeigt das im Fehlerstatus.
  */
 import { ApiError } from './api.js';
+import { authedFetch } from './auth-token.js';
 
 export type PrefScope = 'user' | 'tenant' | 'session';
 
@@ -103,14 +104,15 @@ export function createApiPrefsClient(baseUrl?: string): ApiPrefsClient {
   ): Promise<T> {
     const init: RequestInit = {
       method: opts.method ?? 'GET',
-      credentials: 'include',
       headers: { accept: 'application/json' },
     };
     if (opts.body !== undefined) {
       init.headers = { ...init.headers, 'content-type': 'application/json' };
       init.body = JSON.stringify(opts.body);
     }
-    const res = await fetch(buildUrl(base, path, opts.query), init);
+    // authedFetch setzt Authorization: Bearer aus dem Access-Token-Store +
+    // managed credentials/refresh selber (siehe auth-token.ts).
+    const res = await authedFetch(buildUrl(base, path, opts.query), init, base);
     return parseJson<T>(res);
   }
 

@@ -116,6 +116,8 @@ function buildUrl(
   return u.toString();
 }
 
+import { authedFetch } from './auth-token.js';
+
 export function createApiStorageClient(baseUrl?: string): ApiStorageClient {
   const base =
     baseUrl ?? (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:8787');
@@ -130,14 +132,17 @@ export function createApiStorageClient(baseUrl?: string): ApiStorageClient {
   ): Promise<T> {
     const init: RequestInit = {
       method: opts.method ?? 'GET',
-      credentials: 'include',
+      // credentials: 'include' wird von authedFetch durchgereicht — nicht doppelt setzen
       headers: { accept: 'application/json' },
     };
     if (opts.body !== undefined) {
       init.headers = { ...init.headers, 'content-type': 'application/json' };
       init.body = JSON.stringify(opts.body);
     }
-    const res = await fetch(buildUrl(base, path, opts.query), init);
+    // Vorher: plain fetch → 'missing bearer token' weil approval2's auth-
+    // middleware Authorization-Bearer-Header verlangt (Cookie reicht nicht
+    // fuer /v1/*). Siehe Doku in auth-token.ts.
+    const res = await authedFetch(buildUrl(base, path, opts.query), init, base);
     return parseJson<T>(res);
   }
 

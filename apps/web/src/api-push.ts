@@ -3,9 +3,12 @@
  *
  * Plan-Ref: PLAN-architecture-v1.md §7 (Notification-Surface) + Burst 7 (PWA).
  *
- * Same-origin: identisch zu api.ts — credentials: 'include' fuer die
- * Session-Cookie, base auf `window.location.origin`.
+ * Same-origin: identisch zu api.ts — Authorization-Bearer via authedFetch
+ * (auth-token.ts). approval2's auth-middleware verlangt Bearer-Header,
+ * Cookie alleine reicht NICHT fuer /v1/*.
  */
+
+import { authedFetch } from './auth-token.js';
 
 export interface VapidPublicKey {
   readonly publicKey: string;
@@ -87,11 +90,10 @@ export function createApiPushClient(baseUrl?: string): ApiPushClient {
       accept: 'application/json',
       ...((init.headers as Record<string, string> | undefined) ?? {}),
     };
-    const res = await fetch(buildUrl(base, path), {
+    const res = await authedFetch(buildUrl(base, path), {
       ...init,
-      credentials: 'include',
       headers,
-    });
+    }, base);
     return parseJson<T>(res);
   }
 
