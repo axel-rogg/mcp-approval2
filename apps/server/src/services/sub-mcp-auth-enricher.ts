@@ -8,12 +8,16 @@
  * werden muessen.
  *
  *   - gws  (Google Workspace) → X-Google-Access-Token Header
- *       Quelle: per-User _oauth_client_id + _oauth_client_secret + _oauth_refresh_token
+ *       Quelle: per-User _oauth_client_id + _oauth_client_secret +
+ *               _oauth_refresh_token
  *       Flow: refresh Google access-token via token-endpoint, cache 50 min
  *
- *   - gcloud → X-GCP-SA-JSON Header
- *       Quelle: per-User _service_account_json (1.6 KB JSON)
- *       Flow: dekrypten, direkt als Header senden (kein Refresh noetig — SA-JSON ist long-lived)
+ *   - gcloud → X-Google-Access-Token + X-GCP-Project-Id Header
+ *       Quelle: per-User _service_account_json (1.6 KB JSON, encrypted at-rest)
+ *       Flow: lokales JWT-Bearer-Grant via services/google/sa-jwt-bearer.ts,
+ *             access_token cached 50 min. Private-Key verlaesst approval2
+ *             NICHT mehr im Klartext (Sprint 2026-05-18 — vorher
+ *             "x-gcp-sa-json" mit dem rohen JSON-Header, jetzt nur access_token).
  *
  * Worker-Side liest die Header und nutzt sie statt eigener ALLOWED_EMAILS-
  * Lookup. Fallback (V1-Compat): wenn Header fehlt, Worker nutzt Legacy-Pfad.
@@ -21,6 +25,10 @@
  * Pool-Hygiene: dieser Service nutzt nur user_sub_mcp_config.getAllValues()
  * (das selbst db.transaction nutzt). Kein direkter db.scoped().
  */
+import {
+  parseServiceAccountKey,
+  requestSaAccessToken,
+} from './google/sa-jwt-bearer.js';
 import type { UserServerConfigService } from './user-server-config.js';
 
 /** In-memory cache pro (userId, subMcpName) — Google-Access-Token-TTL. */
@@ -79,6 +87,16 @@ const OAUTH_BEARER_TOKEN_ENDPOINTS: ReadonlyMap<string, string> = new Map([
  *  User-to-Server-Token-TTL (8h) minus Buffer. Andere Provider haben
  *  ggf. kuerzere TTL — der refresh-response-`expires_in` cappt das. */
 const OAUTH_BEARER_CACHE_MS = 50 * 60 * 1000;
+
+/**
+ * Hilfsfunktion: `_gcp_scopes` aus user-config (space- oder comma-separated)
+ * in Array konvertieren. Leer/undefined → undefined (Provider nutzt Defaults).
+ */
+function parseScopes(raw: string | undefined): ReadonlyArray<string> | undefined {
+  if (!raw) return undefined;
+  const items = raw.split(/[\s,]+/).map((s) => s.trim()).filter((s) => s.length > 0);
+  return items.length > 0 ? items : undefined;
+}
 
 export function createSubMcpAuthEnricher(opts: SubMcpAuthEnricherOpts): SubMcpAuthEnricher {
   const { config } = opts;
@@ -169,7 +187,68 @@ export function createSubMcpAuthEnricher(opts: SubMcpAuthEnricherOpts): SubMcpAu
       if (strat === 'gcp-service-account') {
         const saJson = cfgMap.get('_service_account_json');
         if (!saJson) return {}; // Worker-Legacy-Fallback (eigene SA aus env)
-        return { 'x-gcp-sa-json': saJson };
+
+        // Cache-Check (gleiche key-Struktur wie google-oauth, anderer Lebens-
+        // zyklus — JWT-Bearer-Grant gibt 3600s zurueck, wir cachen 50 min).
+        const key = cacheKey(userId, subMcpName);
+        const cached = tokenCache.get(key);
+        const ts = now();
+        if (cached && cached.expiresAt > ts + 60_000) {
+          const projectId = cfgMap.get('_gcp_project_id');
+          const headers: Record<string, string> = {
+            'x-google-access-token': cached.token,
+          };
+          if (projectId) headers['x-gcp-project-id'] = projectId;
+          return headers;
+        }
+
+        // Parse + lokales JWT-Bearer-Grant. Wirft mit klarer Operator-Anleitung
+        // wenn SA-JSON kaputt ist.
+        let sa: ReturnType<typeof parseServiceAccountKey>;
+        try {
+          sa = parseServiceAccountKey(saJson);
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.warn('[enricher] gcp-sa parse failed', {
+            subMcpName,
+            userId,
+            err: err instanceof Error ? err.message : String(err),
+          });
+          return {}; // Worker faellt auf Legacy-Pfad zurueck.
+        }
+        // Default-Scope cloud-platform ist breit genug fuer alle gcloud-
+        // Worker-Tools (LLM, Storage, Compute). User kann pro-Server
+        // _gcp_scopes setzen wenn er enger limitieren will.
+        const userScopes = parseScopes(cfgMap.get('_gcp_scopes'));
+        let exchanged;
+        try {
+          exchanged = await requestSaAccessToken({
+            sa,
+            fetchImpl,
+            now,
+            ...(userScopes ? { scopes: userScopes } : {}),
+          });
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.warn('[enricher] gcp-sa token-exchange failed', {
+            subMcpName,
+            userId,
+            err: err instanceof Error ? err.message : String(err),
+          });
+          return {};
+        }
+        const expiresAt = ts + Math.min(exchanged.expiresInSec * 1000, GOOGLE_TOKEN_CACHE_MS);
+        tokenCache.set(key, { token: exchanged.accessToken, expiresAt });
+
+        // project_id Resolution: User kann _gcp_project_id pro-Server
+        // ueberschreiben (z.B. wenn die SA Zugriff auf mehrere Projekte hat).
+        // Sonst project_id aus dem SA-JSON.
+        const projectId = cfgMap.get('_gcp_project_id') ?? exchanged.projectId;
+        const headers: Record<string, string> = {
+          'x-google-access-token': exchanged.accessToken,
+        };
+        if (projectId) headers['x-gcp-project-id'] = projectId;
+        return headers;
       }
 
       if (strat === 'oauth-bearer') {
