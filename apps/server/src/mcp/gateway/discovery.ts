@@ -417,11 +417,16 @@ export function buildForwardedToolDefs(
         ? (tool.inputSchema as JsonSchema)
         : ({ type: 'object', properties: {}, additionalProperties: true } as JsonSchema);
     const ann = (tool.annotations as ToolAnnotations | undefined) ?? undefined;
+    // Externe MCPs (z.B. GitHub) liefern teils descriptions > 1024 chars.
+    // Unsere Tool-Registry-Validierung capped bei 1024 — truncate damit
+    // ein Outlier nicht den ganzen Server-Import scheitern laesst.
+    const rawDesc = tool.description ?? `Forwarded ${cfg.name} tool: ${tool.name}`;
+    const description = rawDesc.length > 1024 ? `${rawDesc.slice(0, 1021)}...` : rawDesc;
     const def: ForwardedToolDef = {
       name: fullName,
       remoteName: tool.name,
       subMcpName: cfg.name,
-      description: tool.description ?? `Forwarded ${cfg.name} tool: ${tool.name}`,
+      description,
       inputSchema,
       ...(ann ? { annotations: ann } : {}),
     };
