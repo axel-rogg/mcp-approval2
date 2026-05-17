@@ -140,6 +140,7 @@ Was muss in Doppler `mcp-approval2 / privat` aktiv sein, damit der Fly-Deploy l�
 - `SELF_OAUTH_ISSUER=https://mcp2.ai-toolhub.org`
 - `ALLOWED_EMAILS=axelrogg@gmail.com,manuelrogg1@gmail.com`
 - `ALLOWED_ORIGINS=https://mcp2.ai-toolhub.org,https://app2.ai-toolhub.org`
+- **`COOKIE_DOMAIN=.ai-toolhub.org`** (mit führendem Punkt!) — pflicht für Multi-Origin-Setup, sonst scheitert OAuth mit „missing oauth state cookie" weil PWA-Origin (app2) und OAuth-Callback-Origin (mcp2) das Cookie nicht teilen. Helper: [apps/server/src/lib/cookie.ts](../apps/server/src/lib/cookie.ts). Bei localhost-Dev leer lassen (Browser akzeptiert keine `domain`-Attribute für localhost).
 
 **Cross-Service mit knowledge2:**
 - `MCP_KNOWLEDGE_URL=https://knowledge2.ai-toolhub.org` (oder `https://mcp-knowledge2.fly.dev` bis Custom-Domain aktiv)
