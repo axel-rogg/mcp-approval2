@@ -8,7 +8,7 @@ describe('renderMarkdown', () => {
   it('renders headings + lists into HTML', () => {
     const el = renderMarkdown('# Hello\n\n- one\n- two');
     expect(el.tagName).toBe('DIV');
-    expect(el.className).toBe('markdown-rendered');
+    expect(el.className).toContain('markdown-rendered');
     expect(el.querySelector('h1')?.textContent).toBe('Hello');
     expect(el.querySelectorAll('li')).toHaveLength(2);
   });
@@ -34,7 +34,7 @@ describe('renderMarkdown', () => {
 
   it('handles empty input', () => {
     const el = renderMarkdown('');
-    expect(el.className).toBe('markdown-rendered');
+    expect(el.className).toContain('markdown-rendered');
     expect(el.innerHTML.trim()).toBe('');
   });
 

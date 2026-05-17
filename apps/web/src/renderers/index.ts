@@ -1,14 +1,25 @@
 /**
  * Subtype-Renderer-Dispatch — Eingangspunkt für storage-detail.
  *
+ * PLAN-doc-linking 2026-05-17 (post-deploy User-Feedback "einheitliche
+ * Body-Darstellung"): Dispatch ist jetzt 2-stufig — Subtype-Discriminator
+ * für nicht-doc-Subtypes (list/note/memo/skill_manifest/app:*), und für
+ * `doc` läuft `detectContentKind` (mimeType → filename-extension → plain)
+ * gegen einen einheitlichen markdown/code/image/binary/plain-Output.
+ *
+ * Alle Renderer produzieren ein `<div class="body-content ...">` als
+ * Outer-Wrapper — kein nested Border/Background, der Body-Card (storage-
+ * detail.ts) ist der einzige sichtbare Rahmen. CSS in styles.css ←
+ * single source of truth für padding/scroll.
+ *
  * Konvention (PLAN-wrapper-conventions.md):
- *   - `doc` → Markdown (text/markdown), Image-Embed (image/*), Plain-Code sonst
+ *   - `doc` → detectContentKind dispatched
  *   - `note` → Markdown
  *   - `list` → Checkbox-UI
  *   - `memo` → Plain-Text-Karte mit scope-Tag
  *   - `skill_manifest` → YAML-Frontmatter + Markdown-Body
  *   - `app:*` → App-Link (Navigate-Button)
- *   - sonst → Fallback `<pre>`
+ *   - sonst → Fallback (code-rendered, autodetect)
  */
 import type { KnowledgeObject } from '../api-storage.js';
 import { renderAppLink } from './app-link.js';
@@ -18,13 +29,10 @@ import { renderList } from './list.js';
 import { renderMarkdown } from './markdown.js';
 import { renderMemo } from './memo.js';
 import { renderSkillManifest } from './skill-manifest.js';
-import { decodeBody } from './utils.js';
+import { decodeBody, detectContentKind } from './utils.js';
 
-function readCodeLanguage(obj: KnowledgeObject): string | undefined {
-  const meta = obj.metaJson;
-  if (!meta || typeof meta !== 'object') return undefined;
-  const lang = (meta as Record<string, unknown>)['language'];
-  return typeof lang === 'string' ? lang : undefined;
+function readMeta(obj: KnowledgeObject): Record<string, unknown> {
+  return (obj.meta ?? obj.metaJson ?? {}) as Record<string, unknown>;
 }
 
 export function dispatchRenderer(obj: KnowledgeObject): HTMLElement {
@@ -35,18 +43,6 @@ export function dispatchRenderer(obj: KnowledgeObject): HTMLElement {
   }
 
   switch (subtype) {
-    case 'doc': {
-      const mime = obj.contentType ?? 'text/plain';
-      if (mime.startsWith('text/markdown')) return renderMarkdown(decodeBody(obj));
-      if (mime.startsWith('image/')) return renderBinary(obj);
-      if (mime.startsWith('application/octet-stream')) return renderBinary(obj);
-      const lang = readCodeLanguage(obj);
-      if (lang) return renderCode(decodeBody(obj), lang);
-      if (mime.startsWith('application/json') || mime === 'text/x-yaml' || mime.startsWith('application/x-')) {
-        return renderCode(decodeBody(obj));
-      }
-      return renderPlainText(decodeBody(obj));
-    }
     case 'list':
       return renderList(decodeBody(obj));
     case 'note':
@@ -55,21 +51,32 @@ export function dispatchRenderer(obj: KnowledgeObject): HTMLElement {
       return renderMemo(obj);
     case 'skill_manifest':
       return renderSkillManifest(decodeBody(obj));
-    default:
-      return renderFallback(decodeBody(obj));
+    case 'doc':
+    default: {
+      // Unified body detect — mimeType OR filename-extension OR plain.
+      // contentType is a legacy alias readable from the same field.
+      const mime = obj.mimeType ?? obj.contentType ?? null;
+      const filename =
+        obj.filename ??
+        ((readMeta(obj)['filename'] as string | undefined) ?? null);
+      const detected = detectContentKind({ mimeType: mime, filename });
+
+      switch (detected.kind) {
+        case 'markdown':
+          return renderMarkdown(decodeBody(obj));
+        case 'image':
+          return renderBinary(obj);
+        case 'binary':
+          return renderBinary(obj);
+        case 'code':
+          return renderCode(decodeBody(obj), detected.lang);
+        case 'plain':
+        default:
+          // Plain text auch durch renderCode (hljs autodetect tut nichts
+          // schlimm bei reinem Text — bleibt monospace, vereinheitlicht
+          // visuell die Card-Darstellung).
+          return renderCode(decodeBody(obj));
+      }
+    }
   }
-}
-
-function renderPlainText(text: string): HTMLElement {
-  const pre = document.createElement('pre');
-  pre.className = 'storage-body-pre plain-text';
-  pre.textContent = text || '(empty)';
-  return pre;
-}
-
-function renderFallback(text: string): HTMLElement {
-  const pre = document.createElement('pre');
-  pre.className = 'storage-body-pre fallback';
-  pre.textContent = text || '(empty)';
-  return pre;
 }

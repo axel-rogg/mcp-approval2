@@ -63,3 +63,103 @@ function hexPreview(bytes: Uint8Array): string {
   }
   return `<binary, ${bytes.length} bytes>\n${hex}${bytes.length > cap ? '…' : ''}`;
 }
+
+/**
+ * Detect content-kind for renderer dispatch.
+ *
+ * PLAN-doc-linking 2026-05-17 (post-deploy User-Feedback): unified body
+ * rendering. Pipeline:
+ *   1. `obj.mimeType` (or legacy alias `obj.contentType`)
+ *   2. Filename-Extension fallback (`.md` → markdown, `.py` → python, ...)
+ *   3. Default `text/plain` → code-renderer with autodetect
+ *
+ * `kind` is the visual category:
+ *   - 'markdown' → marked + highlight.js for fenced code
+ *   - 'code'     → highlight.js single-language pre block
+ *   - 'image'    → renderBinary inline-image
+ *   - 'binary'   → renderBinary hex-dump
+ *   - 'plain'    → renderCode w/o language (still goes through hljs autodetect)
+ *
+ * `lang` carries the hljs-friendly language id for code-kind.
+ */
+export interface ContentKind {
+  readonly kind: 'markdown' | 'code' | 'image' | 'binary' | 'plain';
+  readonly lang?: string;
+}
+
+const EXT_TO_LANG: Record<string, { kind: ContentKind['kind']; lang?: string }> = {
+  md: { kind: 'markdown' },
+  markdown: { kind: 'markdown' },
+  json: { kind: 'code', lang: 'json' },
+  yaml: { kind: 'code', lang: 'yaml' },
+  yml: { kind: 'code', lang: 'yaml' },
+  toml: { kind: 'code', lang: 'toml' },
+  xml: { kind: 'code', lang: 'xml' },
+  html: { kind: 'code', lang: 'xml' },
+  htm: { kind: 'code', lang: 'xml' },
+  css: { kind: 'code', lang: 'css' },
+  scss: { kind: 'code', lang: 'scss' },
+  py: { kind: 'code', lang: 'python' },
+  python: { kind: 'code', lang: 'python' },
+  js: { kind: 'code', lang: 'javascript' },
+  mjs: { kind: 'code', lang: 'javascript' },
+  cjs: { kind: 'code', lang: 'javascript' },
+  ts: { kind: 'code', lang: 'typescript' },
+  tsx: { kind: 'code', lang: 'typescript' },
+  jsx: { kind: 'code', lang: 'javascript' },
+  sql: { kind: 'code', lang: 'sql' },
+  sh: { kind: 'code', lang: 'bash' },
+  bash: { kind: 'code', lang: 'bash' },
+  zsh: { kind: 'code', lang: 'bash' },
+  go: { kind: 'code', lang: 'go' },
+  rs: { kind: 'code', lang: 'rust' },
+  rb: { kind: 'code', lang: 'ruby' },
+  java: { kind: 'code', lang: 'java' },
+  c: { kind: 'code', lang: 'c' },
+  cpp: { kind: 'code', lang: 'cpp' },
+  cs: { kind: 'code', lang: 'csharp' },
+  txt: { kind: 'plain' },
+  log: { kind: 'plain' },
+};
+
+const MIME_TO_LANG: Array<[RegExp, { kind: ContentKind['kind']; lang?: string }]> = [
+  [/^text\/markdown/i, { kind: 'markdown' }],
+  [/^application\/json/i, { kind: 'code', lang: 'json' }],
+  [/^text\/x-yaml|application\/.*yaml/i, { kind: 'code', lang: 'yaml' }],
+  [/^text\/html/i, { kind: 'code', lang: 'xml' }],
+  [/^text\/css/i, { kind: 'code', lang: 'css' }],
+  [/^text\/javascript|application\/javascript/i, { kind: 'code', lang: 'javascript' }],
+  [/^application\/typescript/i, { kind: 'code', lang: 'typescript' }],
+  [/^application\/x-sql|text\/x-sql/i, { kind: 'code', lang: 'sql' }],
+  [/^application\/x-python|text\/x-python/i, { kind: 'code', lang: 'python' }],
+  [/^application\/x-sh|text\/x-shellscript/i, { kind: 'code', lang: 'bash' }],
+  [/^image\//i, { kind: 'image' }],
+  [/^application\/octet-stream/i, { kind: 'binary' }],
+];
+
+export function detectContentKind(args: {
+  mimeType?: string | null;
+  filename?: string | null;
+}): ContentKind {
+  // 1. MimeType wins.
+  const m = (args.mimeType ?? '').trim();
+  if (m) {
+    for (const [re, hit] of MIME_TO_LANG) {
+      if (re.test(m)) return { kind: hit.kind, ...(hit.lang ? { lang: hit.lang } : {}) };
+    }
+    // text/* with unknown subtype → code with autodetect
+    if (/^text\//i.test(m)) return { kind: 'code' };
+    if (/^application\/x-/i.test(m)) return { kind: 'code' };
+  }
+  // 2. Filename extension fallback.
+  const fn = (args.filename ?? '').trim();
+  if (fn) {
+    const ext = fn.slice(fn.lastIndexOf('.') + 1).toLowerCase();
+    if (ext && ext !== fn) {
+      const hit = EXT_TO_LANG[ext];
+      if (hit) return { kind: hit.kind, ...(hit.lang ? { lang: hit.lang } : {}) };
+    }
+  }
+  // 3. Default plain.
+  return { kind: 'plain' };
+}

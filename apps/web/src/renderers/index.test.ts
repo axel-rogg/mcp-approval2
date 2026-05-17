@@ -24,7 +24,7 @@ describe('dispatchRenderer', () => {
         bodyEncoding: 'utf8',
       }),
     );
-    expect(el.className).toBe('markdown-rendered');
+    expect(el.className).toContain('markdown-rendered');
     expect(el.querySelector('h1')?.textContent).toBe('Hi');
   });
 
@@ -36,7 +36,7 @@ describe('dispatchRenderer', () => {
         bodyEncoding: 'utf8',
       }),
     );
-    expect(el.className).toBe('markdown-rendered');
+    expect(el.className).toContain('markdown-rendered');
     expect(el.querySelector('h2')?.textContent).toBe('Section');
   });
 
@@ -102,11 +102,13 @@ describe('dispatchRenderer', () => {
     expect(el.querySelector('img')).not.toBeNull();
   });
 
-  it('falls back to <pre> for unknown subtypes', () => {
+  it('falls back to code-renderer for unknown subtypes (2026-05-17 unified)', () => {
     const el = dispatchRenderer(
       makeObj({ subtype: 'weird-thing', body: 'raw', bodyEncoding: 'utf8' }),
     );
-    expect(el.tagName).toBe('PRE');
-    expect(el.textContent).toBe('raw');
+    // After unified-body refactor, unknown subtypes route to renderCode
+    // (hljs autodetect) wrapped in <div class="body-content code-rendered">.
+    expect(el.className).toContain('code-rendered');
+    expect(el.querySelector('pre code')?.textContent).toContain('raw');
   });
 });

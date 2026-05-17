@@ -53,6 +53,12 @@ export interface KnowledgeObject {
   readonly bodySize?: number;
   readonly body?: string | null;            // base64 or text, populated when expandBody=true
   readonly bodyEncoding?: 'utf8' | 'base64' | string;
+  /**
+   * Server-side MIME-Type. Alias `contentType` für backward-compat — manche
+   * older code-paths greifen auf contentType zu. Renderer-Dispatch nutzt
+   * den ersten nicht-null Wert (siehe detectContentKind).
+   */
+  readonly mimeType?: string | null;
   readonly contentType?: string | null;
   readonly refcount?: number;
   readonly isSubdoc?: boolean;

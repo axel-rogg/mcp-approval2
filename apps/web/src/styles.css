@@ -808,17 +808,103 @@ code {
 }
 
 .storage-body-pre {
-  max-height: 480px;
-  overflow: auto;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.75rem;
+  /* Legacy fallback (used when dispatchRenderer returned empty). Inherit
+     unified body-content look — no inner border/background, single scroll
+     handled by .body-content/parent. */
   margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.85rem;
+  font-size: 0.875rem;
+  line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+/* ─── Unified body-content (post-deploy 2026-05-17 User-Feedback) ───────
+   Eine visuelle Sprache für alle Body-Renderer (markdown/code/plain).
+   Outer-Card (.storage-body) ist der einzige sichtbare Rahmen. body-content
+   füllt ihn, scrollt allein (single-scroll), keine nested Borders/Backgrounds. */
+
+.body-content {
+  max-height: 70vh;
+  overflow: auto;
+  margin: 0;
+  /* keine eigene background/border — Card-Style inherited */
+}
+
+/* Code blocks (gemeinsam für markdown-fenced + standalone code-rendered) */
+.body-content pre,
+.body-content .code-block {
+  margin: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  /* `pre` ist der Scroll-Container im standalone-code-Pfad — single scroll */
+  white-space: pre;
+  overflow-wrap: normal;
+}
+
+.body-content code,
+.body-content .hljs {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: transparent;
+  padding: 0;
+  border: 0;
+}
+
+/* ─── highlight.js minimal earthy-palette theme ─────────────────────────
+   Genug Token-Classes für md/json/yaml/sql/python/js/ts/html/css/bash.
+   Farben angelehnt an den earthy-palette (--accent #e2570c rust, --ok
+   #1a7f37 waldgrün, --warn-ish #8b5e2b braun). Light-mode focused. */
+
+.hljs-comment,
+.hljs-quote { color: #6a737d; font-style: italic; }
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-meta-keyword,
+.hljs-doctag,
+.hljs-name { color: #1a7f37; }      /* waldgrün */
+
+.hljs-string,
+.hljs-attr,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition { color: #cf222e; }   /* rost-rot */
+
+.hljs-number,
+.hljs-meta,
+.hljs-link { color: #8b5e2b; }       /* erdbraun */
+
+.hljs-type,
+.hljs-class .hljs-title,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-title { color: #e2570c; }      /* orange-rust — accent */
+
+.hljs-variable,
+.hljs-template-variable,
+.hljs-selector-attr,
+.hljs-selector-pseudo { color: #6f42c1; }
+
+.hljs-section { color: #1a7f37; font-weight: 600; }
+
+.hljs-tag { color: #6a737d; }
+.hljs-tag .hljs-attr { color: #e2570c; }
+
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 700; }
+
+.hljs-deletion { color: #cf222e; }
+
+/* hljs-Inline-Highlight in markdown braucht zusätzlich background — sieht
+   sonst nackt aus innerhalb von Prose. */
+.body-content.markdown-rendered pre code.hljs {
+  display: block;
 }
 
 .storage-actions {
@@ -2024,7 +2110,10 @@ code {
   margin-bottom: 0.4rem;
 }
 
-/* Markdown-Renderer */
+/* Markdown-Renderer — Prose-Styles. Container ist `.body-content.markdown-rendered`.
+   Code-Blocks innerhalb (fenced ```...```) bekommen leichten Background damit
+   sie aus dem Prose-Fluss optisch herausstechen — aber KEIN harter Border
+   (Single-Card-Prinzip). */
 .markdown-rendered {
   font-size: 0.95rem;
   line-height: 1.55;
@@ -2067,28 +2156,24 @@ code {
   margin: 0.15rem 0;
 }
 
-.markdown-rendered code {
+/* Inline code (single-backticks) in Markdown-Prose. */
+.markdown-rendered :not(pre) > code {
   background: var(--bg);
-  border: 1px solid var(--border);
   border-radius: 0.3rem;
   padding: 0.05rem 0.3rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.85em;
 }
 
+/* Fenced code blocks — leichter Background-Hint, KEIN harter Border. */
 .markdown-rendered pre {
   background: var(--bg);
-  border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 0.6rem 0.75rem;
-  overflow: auto;
+  margin: 0 0 0.6rem;
+  overflow-x: auto; /* horizontal scroll für überlange Zeilen — vertikal über .body-content */
   font-size: 0.85rem;
-}
-
-.markdown-rendered pre code {
-  background: transparent;
-  border: 0;
-  padding: 0;
+  white-space: pre;
 }
 
 .markdown-rendered blockquote {

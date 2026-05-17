@@ -16,6 +16,7 @@
  */
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
+import hljs from 'highlight.js/lib/common';
 
 const ALLOWED_TAGS = [
   'p',
@@ -79,15 +80,45 @@ function resolveKcLinks(root: HTMLElement): void {
   });
 }
 
+/**
+ * Custom marked-renderer for fenced code blocks: pipes through highlight.js
+ * before marked serializes to HTML, then DOMPurify keeps `class="hljs ..."`.
+ * Plain inline `<code>` (single backticks) is untouched.
+ */
+const codeRenderer = new marked.Renderer();
+codeRenderer.code = (token): string => {
+  const code = token.text;
+  const lang = token.lang;
+  const language = lang && hljs.getLanguage(lang) ? lang : '';
+  try {
+    const result = language
+      ? hljs.highlight(code, { language, ignoreIllegals: true })
+      : hljs.highlightAuto(code);
+    const cls = `hljs language-${language || result.language || 'plaintext'}`;
+    return `<pre><code class="${cls}">${result.value}</code></pre>`;
+  } catch {
+    const escaped = code
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    return `<pre><code class="hljs language-plaintext">${escaped}</code></pre>`;
+  }
+};
+
 export function renderMarkdown(text: string): HTMLElement {
-  const html = marked.parse(text ?? '', { gfm: true, breaks: false, async: false }) as string;
+  const html = marked.parse(text ?? '', {
+    gfm: true,
+    breaks: false,
+    async: false,
+    renderer: codeRenderer,
+  }) as string;
   const clean = DOMPurify.sanitize(html, {
     ALLOWED_TAGS: [...ALLOWED_TAGS],
     ALLOWED_ATTR: [...ALLOWED_ATTR],
     ALLOWED_URI_REGEXP,
   });
   const wrapper = document.createElement('div');
-  wrapper.className = 'markdown-rendered';
+  wrapper.className = 'body-content markdown-rendered';
   wrapper.innerHTML = clean;
   // Post-Purify Rewrite — DOMPurify hat bereits den schema-whitelist-check
   // gemacht; wir rewriten nur kc://-Form auf hash-route.
