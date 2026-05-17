@@ -51,13 +51,14 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
     // AS-3 (§1.1): nimm `?return=<path>` mit ins State-Cookie. NUR same-
     // origin Pfade — kein Open-Redirect erlauben (auch keine externen
     // Hostnames wenn der Caller das durchgeschmuggelt hat).
-    const returnRaw = c.req.query('return');
+    // Akzeptiert ?return= (Server-canonical) ODER ?next= (PWA-Convention).
+    const returnRaw = c.req.query('return') ?? c.req.query('next');
     let returnTo: string | undefined;
     if (returnRaw) {
       try {
         // Decode wenn vom Authorize-Endpoint encoded uebergeben.
         const decoded = decodeURIComponent(returnRaw);
-        if (isSafeReturnPath(decoded, server.config.ORIGIN)) {
+        if (isSafeReturnPath(decoded, returnAllowOrigins(server.config))) {
           returnTo = decoded;
         }
       } catch {
@@ -181,7 +182,7 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
     // hat (z.B. /oauth/authorize-Browser-Flow), redirect dorthin nach
     // Session-Bake. Wir setzen ein same-origin-Session-Cookie (`session_jwt`)
     // damit der nachgelagerte Authorize-Endpoint den User wiedererkennt.
-    if (stateCookie.returnTo && isSafeReturnPath(stateCookie.returnTo, server.config.ORIGIN)) {
+    if (stateCookie.returnTo && isSafeReturnPath(stateCookie.returnTo, returnAllowOrigins(server.config))) {
       setCookie(c, 'session_jwt', accessToken, authCookieOpts(server.config, { maxAge: server.config.SESSION_TTL_SEC }));
       return c.redirect(stateCookie.returnTo, 302);
     }
@@ -201,23 +202,37 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
  * Sicherheits-Check fuer `?return=<path>`-Carry-Throughs (AS-3).
  *
  * Wir akzeptieren NUR:
- *   - Absolute URLs deren Origin == config.ORIGIN (same-origin)
+ *   - Absolute URLs deren Origin in der allow-Liste ist (ORIGIN + ALLOWED_ORIGINS).
+ *     Cross-Subdomain ist erlaubt sofern explizit in ALLOWED_ORIGINS — Multi-
+ *     Origin-Setup (PWA app2.ai-toolhub.org, OAuth-Callback mcp2.ai-toolhub.org).
  *   - Pfade die mit `/` beginnen und KEIN Backslash- oder Whitespace-Trick enthalten
  *
- * Alles andere (externe Hosts, `javascript:`-URLs, Whitespace-Smuggling) wird
- * verworfen — kein Open-Redirect.
+ * Alles andere (nicht whitelisted Hosts, `javascript:`-URLs, Whitespace-
+ * Smuggling) wird verworfen — kein Open-Redirect.
  */
-function isSafeReturnPath(candidate: string, origin: string): boolean {
+function isSafeReturnPath(candidate: string, allowedOrigins: ReadonlyArray<string>): boolean {
   if (!candidate || candidate.length > 2048) return false;
-  // Reject Control-Chars + Whitespace-Smuggling.
   if (/[\s\x00-\x1f\x7f]/.test(candidate)) return false;
-  // Same-origin absolute URL?
   try {
     const url = new URL(candidate);
-    const allow = new URL(origin);
-    return url.origin === allow.origin;
+    return allowedOrigins.some((o) => {
+      try {
+        return url.origin === new URL(o).origin;
+      } catch {
+        return false;
+      }
+    });
   } catch {
-    // Relative path: muss mit '/' starten, darf nicht protocol-relative sein.
     return candidate.startsWith('/') && !candidate.startsWith('//');
   }
+}
+
+/**
+ * Sammelt zugelassene Return-Origins: ORIGIN + ALLOWED_ORIGINS (deduped).
+ */
+function returnAllowOrigins(config: {
+  ORIGIN: string;
+  ALLOWED_ORIGINS: ReadonlyArray<string>;
+}): ReadonlyArray<string> {
+  return Array.from(new Set([config.ORIGIN, ...config.ALLOWED_ORIGINS]));
 }

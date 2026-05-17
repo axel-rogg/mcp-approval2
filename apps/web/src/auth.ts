@@ -79,8 +79,12 @@ export function renderLogin(root: HTMLElement, opts?: { redirectTo?: string; err
 
   const btn = document.createElement('a');
   btn.className = 'btn';
-  const next = opts?.redirectTo ? `?next=${encodeURIComponent(opts.redirectTo)}` : '';
-  btn.href = `/auth/google/start${next}`;
+  // Default: redirect zurueck zur PWA selbst (selbe Origin) damit der User
+  // nach dem OAuth-Callback nicht auf der JSON-Response von mcp2 stehen
+  // bleibt. Server akzeptiert ?return=<absolute URL>, validiert gegen
+  // ALLOWED_ORIGINS, redirected via 302 zurueck.
+  const returnTo = opts?.redirectTo ?? `${window.location.origin}/`;
+  btn.href = `/auth/google/start?return=${encodeURIComponent(returnTo)}`;
   btn.textContent = 'Sign in with Google';
   card.appendChild(btn);
 
