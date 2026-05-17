@@ -91,14 +91,30 @@ resource "doppler_secret" "knowledge2_service_token_ops_privat" {
   value   = random_password.multiuser_service_token_ops.result
 }
 
-# REQUIRE_ERASE_RECEIPT — start "false" (Migrations-Window). Im Cutover-Window
-# T+40min flippen auf "true" (entweder hier in TF + apply, oder direkt im
-# Doppler-UI).
+# REQUIRE_ERASE_RECEIPT — Variable damit Operator im Cutover-Window
+# mit einem Liner-Apply zwischen "false" (Migrations-Window) und "true"
+# (enforced) wechseln kann, ohne den .tf-Code zu editieren.
+#
+# Default ist "false" (sicher waehrend Deploy + Migration). Flip:
+#   bash scripts/cutover-enforce-erase-receipt.sh
+# oder direkt:
+#   terraform apply -var=require_erase_receipt=true \
+#     -target=doppler_secret.knowledge2_require_erase_receipt_privat
+variable "require_erase_receipt" {
+  type        = string
+  description = "REQUIRE_ERASE_RECEIPT flag fuer KC2. 'false' = legacy (confirmation_token-length-Check). 'true' = JWS-Receipt-Pflicht (SEC-K-016 enforced). Flip im Cutover-Window."
+  default     = "false"
+  validation {
+    condition     = contains(["false", "true"], var.require_erase_receipt)
+    error_message = "require_erase_receipt muss 'false' oder 'true' sein (String, nicht boolean — Doppler-Env-Konvention)."
+  }
+}
+
 resource "doppler_secret" "knowledge2_require_erase_receipt_privat" {
   project = doppler_project.knowledge2.name
   config  = doppler_environment.knowledge2_privat.slug
   name    = "REQUIRE_ERASE_RECEIPT"
-  value   = "false"
+  value   = var.require_erase_receipt
 }
 
 # ----------------------------------------------------------------------------
