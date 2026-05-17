@@ -292,9 +292,20 @@ async function renderCredentialsSafe(root: HTMLElement, c: ApiClient, s: Session
 }
 
 window.addEventListener('hashchange', () => void boot());
-window.addEventListener('DOMContentLoaded', () => void boot());
 
-// In case the script is loaded after DOMContentLoaded already fired
-if (document.readyState === 'complete' || document.readyState === 'interactive') {
+// Single-Boot-Pattern: DOMContentLoaded UND der inline readyState-Check
+// koennen beide feuern wenn das Script zwischen 'loading' und 'interactive'
+// geladen wird. Das verursacht zwei parallele boot()-Aufrufe → zwei
+// parallele /auth/refresh-Requests → Server-side refresh-token rotation
+// markiert den ersten als "verbraucht", der zweite triggert dann
+// refresh_replay_detected (401). Dedup via booted-flag.
+let booted = false;
+function bootOnce(): void {
+  if (booted) return;
+  booted = true;
   void boot();
+}
+window.addEventListener('DOMContentLoaded', bootOnce);
+if (document.readyState === 'complete' || document.readyState === 'interactive') {
+  bootOnce();
 }

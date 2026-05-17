@@ -24,21 +24,39 @@ import {
 
 let cachedSession: Session | null = null;
 let sessionFetched = false;
+let inflightProbe: Promise<Session | null> | null = null;
 
 /**
  * Loads the current session, cached per page-load. `refresh=true` forces a
  * re-probe (e.g. after login redirect).
+ *
+ * In-flight-dedup: parallele Aufrufer (z.B. boot() doppelt-getriggert,
+ * hashchange-Race, render-Pfad ruft getSession() waehrend boot() schon laeuft)
+ * warten auf DASSELBE Promise → genau EIN POST /auth/refresh. Server-side
+ * refresh-token-rotation invalidiert das erste Token sobald es eingeloest
+ * wird; ein zweiter paralleler Refresh wuerde sonst refresh_replay_detected
+ * (401) triggern und die Session als kompromittiert markieren.
  */
 export async function loadSession(api: ApiClient, refresh = false): Promise<Session | null> {
   if (!refresh && sessionFetched) return cachedSession;
-  cachedSession = await api.getSession();
-  sessionFetched = true;
-  return cachedSession;
+  if (inflightProbe) return inflightProbe;
+  inflightProbe = (async () => {
+    try {
+      const result = await api.getSession();
+      cachedSession = result;
+      sessionFetched = true;
+      return result;
+    } finally {
+      inflightProbe = null;
+    }
+  })();
+  return inflightProbe;
 }
 
 export function clearSessionCache(): void {
   cachedSession = null;
   sessionFetched = false;
+  inflightProbe = null;
 }
 
 /**

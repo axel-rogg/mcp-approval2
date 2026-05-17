@@ -149,8 +149,16 @@ export function createApiClient(baseUrl?: string): ApiClient {
     return parseJson<T>(res);
   }
 
+  // Belt-and-suspenders in-flight dedup: auch wenn der API-Client direkt
+  // (ohne loadSession-Wrapper) mehrmals parallel aufgerufen wird, geht nur
+  // EIN POST /auth/refresh raus. Refresh-token-rotation am Server invalidiert
+  // den alten Token bei der ersten Antwort — paralleler 2. Call wuerde
+  // refresh_replay_detected (401) triggern.
+  let refreshInflight: Promise<Session | null> | null = null;
   return {
     async getSession() {
+      if (refreshInflight) return refreshInflight;
+      refreshInflight = (async () => {
       try {
         // Backend has no canonical /auth/me yet — use refresh to introspect.
         // If refresh fails (no cookie / invalid), session is null.
@@ -189,6 +197,10 @@ export function createApiClient(baseUrl?: string): ApiClient {
       } catch {
         return null;
       }
+      })().finally(() => {
+        refreshInflight = null;
+      });
+      return refreshInflight;
     },
 
     async logout() {
