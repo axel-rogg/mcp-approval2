@@ -294,28 +294,37 @@ export async function renderStorageDetail(
     infoBtn.classList.toggle('active', !metaSection.hidden);
   });
 
-  // ─── Summary — Label weggelassen (User-Wunsch Platz-Spar).
-  // Karten sind durch Card-Border + Spacing visuell getrennt — "Summary"/
-  // "Body"-Titel sind redundant. Edit-Pencil floated top-right.
-  if (obj.description !== undefined && obj.description !== null && obj.description !== '') {
+  // ─── Summary — alle Subtypes außer app:* editierbar (User-Wunsch
+  // 2026-05-17: "wieso kann ich nur bestimmte summary bearbeiten und
+  // nicht alle"). Apps haben eigene State-Mgmt, daher excluded.
+  const isApp = (obj.subtype ?? '').startsWith('app:');
+  const hasDescription =
+    obj.description !== undefined && obj.description !== null && obj.description !== '';
+  if (!isApp && (hasDescription || true)) {
+    // Auch bei leerem description rendern damit User auf ✏️ klicken kann.
     const summarySection = document.createElement('section');
     summarySection.className = 'storage-summary card';
-    if (obj.subtype === 'doc') {
-      const pencil = document.createElement('button');
-      pencil.type = 'button';
-      pencil.className = 'edit-pencil';
-      pencil.textContent = '✏️';
-      pencil.title = 'Summary bearbeiten';
-      pencil.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        openSummaryModal(api, obj);
-      });
-      summarySection.appendChild(pencil);
-    }
+
+    const pencil = document.createElement('button');
+    pencil.type = 'button';
+    pencil.className = 'edit-pencil';
+    pencil.textContent = '✏️';
+    pencil.title = 'Zusammenfassung bearbeiten';
+    pencil.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openSummaryModal(api, obj);
+    });
+    summarySection.appendChild(pencil);
+
     const p = document.createElement('p');
     p.className = 'storage-summary-text';
-    p.textContent = stripIpiWrappers(obj.description);
+    if (hasDescription) {
+      p.textContent = stripIpiWrappers(obj.description!);
+    } else {
+      p.classList.add('muted', 'placeholder');
+      p.textContent = 'Noch keine Zusammenfassung — Klick ✏️ zum Hinzufügen';
+    }
     summarySection.appendChild(p);
     main.appendChild(summarySection);
   }

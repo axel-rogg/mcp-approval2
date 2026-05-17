@@ -239,9 +239,12 @@ export function createApiStorageClient(baseUrl?: string): ApiStorageClient {
     },
 
     async updateSummary(id, summary) {
+      // Server-Schema heißt das Feld `description` (kc2-Spalte). `summary`
+      // ist nur die UI-Sprache. Vorher silently broken (400 invalid_request)
+      // weil zod-validator das Feld nicht kannte.
       const raw = await request<{ approvalId?: string; approval_id?: string }>(
         `/v1/knowledge/objects/${encodeURIComponent(id)}`,
-        { method: 'PATCH', body: { summary } },
+        { method: 'PATCH', body: { description: summary } },
       );
       const approvalId = raw.approvalId ?? raw.approval_id ?? '';
       return { approvalId };
