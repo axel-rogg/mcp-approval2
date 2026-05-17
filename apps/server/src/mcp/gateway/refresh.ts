@@ -89,6 +89,16 @@ export interface ApplyGatewayDiscoveryArgs {
   readonly authEnricher?: import('../../services/sub-mcp-auth-enricher.js').SubMcpAuthEnricher;
   /** User-ID dessen OAuth-Tokens fuer Discovery verwendet werden. */
   readonly operatorUserId?: string;
+  /**
+   * Wenn vorhanden + operatorUserId vorhanden: schreibe zusaetzlich pro
+   * oauth-Server in den user_sub_mcp_tool_cache. Globale tools_cache wird
+   * trotzdem aktualisiert (fuer wrapper-tools-build).
+   *
+   * In Family-Mode (single tool-set pro Server, alle User aequivalent): der
+   * globale cache reicht. Per-User-cache ist Vorbereitung fuer Multi-User-
+   * Filter (Stueck 7+ im Sprint).
+   */
+  readonly userToolCache?: import('../../services/user-sub-mcp-tool-cache.js').UserSubMcpToolCacheService;
 }
 
 export interface ApplyGatewayDiscoveryResult {
@@ -177,6 +187,45 @@ export async function applyGatewayDiscovery(
     }
     args.cache.setForServer(cfg.name, toolNames);
     perSubMcp.set(cfg.name, toolNames.length);
+
+    // Schritt 4 (Sprint 2026-05-18): Wenn der refresh user-spezifisch lief
+    // (operatorUserId gesetzt + userToolCache vorhanden + OAuth-Server),
+    // schreibe das Tool-Set zusaetzlich in den per-User-Cache. Damit hat
+    // ein spaeterer Multi-User-Filter (siehe transport.ts:tools/list)
+    // die Datengrundlage um pro-User zu filtern. Im aktuellen Solo/Family-
+    // Mode ist es noch eine Doppel-Schreibung; im Multi-Tenant wird es
+    // zur Source-of-Truth.
+    if (args.operatorUserId && args.userToolCache) {
+      const isOAuthServer =
+        cfg.authMode === 'oauth' ||
+        !!(cfg.configSchema as { oauth?: unknown } | null)?.oauth;
+      if (isOAuthServer && cfg.toolsCache && cfg.toolsCache.length > 0) {
+        try {
+          await args.userToolCache.write({
+            userId: args.operatorUserId,
+            subMcpId: cfg.id,
+            subMcpName: cfg.name,
+            tools: cfg.toolsCache.map((t) => {
+              const entry: {
+                name: string;
+                description?: string;
+                inputSchema?: Record<string, unknown>;
+                annotations?: Record<string, unknown>;
+              } = { name: t.name };
+              if (t.description !== undefined) entry.description = t.description;
+              if (t.inputSchema !== undefined)
+                entry.inputSchema = t.inputSchema as Record<string, unknown>;
+              if (t.annotations !== undefined)
+                entry.annotations = t.annotations as Record<string, unknown>;
+              return entry;
+            }),
+          });
+        } catch {
+          // Best-effort — der globale cache + wrapper-tools sind schon
+          // committed, ein user-cache-Fehler darf den refresh nicht killen.
+        }
+      }
+    }
   }
 
   return { results, registered, deregistered, perSubMcp, skipped, failed };

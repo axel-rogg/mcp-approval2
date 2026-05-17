@@ -129,7 +129,7 @@ import {
   refreshSubMcpToolCache,
   seedSatelliteWorkers,
   seedOAuthCatalogServers,
-  refreshUserSubMcpToolCache,
+  applyGatewayDiscovery,
   subMcpDiscoverRoutes,
   SubMcpForwarder,
   SubMcpWrappersCache,
@@ -853,25 +853,31 @@ export async function createApp(
       ...(userServerConfigService ? { config: userServerConfigService } : {}),
       ...(userServerOAuthService ? { oauth: userServerOAuthService } : {}),
       toolDefaults: userServerToolDefaultsService,
-      // Post-OAuth-Hook: nach erfolgreichem callback per-User-Discovery
-      // triggern. Nur verdrahtet wenn enricher verfuegbar ist.
+      // Post-OAuth-Hook: nach erfolgreichem callback applyGatewayDiscovery
+      // triggern. Das macht in einem Schritt:
+      //   1. tools/list-Roundtrip mit User-Token (operatorUserId)
+      //   2. globaler tools_cache wird aktualisiert
+      //   3. wrapper-tools werden live de-/re-registered (kein Server-Restart noetig)
+      //   4. user_sub_mcp_tool_cache wird zusaetzlich befuellt (Multi-User-Vorbereitung)
+      // refreshUserSubMcpToolCache (nur user-cache, kein wrapper-rebuild) ist
+      // als Service erhalten geblieben fuer Cron/Bulk-Refresh ohne wrapper-Build.
       ...(subMcpAuthEnricher
         ? {
-            refreshUserToolCache: (a) => {
-              const baseArgs: {
-                userId: string;
-                registry: typeof subMcpReg;
-                authEnricher: typeof subMcpAuthEnricher;
-                toolCache: typeof userSubMcpToolCacheService;
-                only?: ReadonlyArray<string>;
-              } = {
-                userId: a.userId,
+            refreshUserToolCache: async (a) => {
+              await applyGatewayDiscovery({
                 registry: subMcpReg,
+                toolRegistry: registry,
+                forwarder: subMcpForwarder,
+                config: {
+                  JWT_SECRET: server.config.JWT_SECRET,
+                  JWT_ISSUER: server.config.JWT_ISSUER,
+                },
+                cache: subMcpWrappersCache,
                 authEnricher: subMcpAuthEnricher,
-                toolCache: userSubMcpToolCacheService,
-              };
-              if (a.only) baseArgs.only = a.only;
-              return refreshUserSubMcpToolCache(baseArgs);
+                operatorUserId: a.userId,
+                userToolCache: userSubMcpToolCacheService,
+                ...(a.only ? { only: a.only } : {}),
+              });
             },
           }
         : {}),
