@@ -138,18 +138,20 @@ async function main() {
     try {
       const result = await v1ToolsRun('kc:objects.usages', { id: v1SkillId });
       const data = extractData(result);
-      const outgoing = data.outgoing ?? [];
+      // v1 shape: { object, refcount, used_by: [], references: [...] }
+      // `references` = outgoing-refs (this skill → target docs).
+      // Per-ref keys: { kind, id (= target/to_id), role, title, ... }
+      const outgoing = data.references ?? data.outgoing ?? [];
       if (outgoing.length === 0) {
         console.log('no outgoing refs');
         continue;
       }
       for (const ref of outgoing) {
-        // v1 ref shape: { from_id, to_id, role, ... }
         // Mapping v1 'skill_resource' → v2 'resource'
         const v2Role = ref.role === 'skill_resource' ? 'resource' : ref.role;
         refs.push({
-          fromV1Id: ref.from_id ?? v1SkillId,
-          toV1Id: ref.to_id,
+          fromV1Id: v1SkillId,
+          toV1Id: ref.id ?? ref.to_id,
           role: v2Role,
           meta: { v1_role: ref.role },
         });
