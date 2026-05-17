@@ -60,6 +60,33 @@ resource "cloudflare_dns_record" "knowledge2_fly_cname" {
 }
 
 # ---------------------------------------------------------------------------
+# _fly-ownership TXT-Record — Pflicht wenn CF-Proxy aktiv ist (orange cloud)
+# ---------------------------------------------------------------------------
+#
+# Fly's TLS-Cert-Validation (ACME via Let's Encrypt) braucht entweder direkten
+# DNS-Pfad (A/AAAA-Records auf Fly-IPs) ODER Ownership-Proof via TXT-Record
+# wenn die Domain durch einen CDN/Proxy geroutet wird. Da wir CF-Proxy für
+# DDoS-Protection + Cache wollen, gehen wir den TXT-Pfad.
+#
+# Token-Wert kommt aus `fly certs setup <domain>` und ist stable über
+# fly_app-Reincarnations hinweg (an die App-ID gebunden, nicht an Cert-ID).
+#
+# Ohne diesen Record: knowledge2.ai-toolhub.org gibt HTTP 525 (SSL handshake
+# failed) zurück weil CF keinen gültigen Origin-Cert findet.
+
+resource "cloudflare_dns_record" "knowledge2_fly_ownership" {
+  count = var.enable_knowledge2_fly_cf ? 1 : 0
+
+  zone_id = data.cloudflare_zone.ai_toolhub.id
+  name    = "_fly-ownership.${var.domain_knowledge}"
+  type    = "TXT"
+  content = "\"app-qj1x1nr\""
+  proxied = false
+  ttl     = 300
+  comment = "managed-by:terraform — Fly TLS-Cert-Ownership-Proof (CF-Proxy-Pfad)"
+}
+
+# ---------------------------------------------------------------------------
 # Zone-Settings — TLS + Bot Fight Mode (Free-Tier)
 # ---------------------------------------------------------------------------
 #
