@@ -2535,12 +2535,20 @@ code {
    ─────────────────────────────────────────────────────────────────────── */
 
 /* Actions kommen ganz links — vor dem Server-Namen. Kompakter Padding,
-   damit auf Mobile alles in eine Zeile passt. */
+   damit auf Mobile alles in eine Zeile passt.
+   Der parent .server-card-title-row hat schon gap:0.5rem — wir geben hier
+   KEIN margin-right (sonst springt der Titel um 0.6rem aus dem Subtitle
+   raus, sobald actions leer ist, z.B. fuer Native/knowledge2). */
 .server-card-actions {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  margin-right: 0.6rem;
+}
+
+/* Wenn actions leer ist (Native ohne Toggle/Delete), Container komplett
+   unsichtbar damit der parent-flex-gap nicht visuell als Einrueckung wirkt. */
+.server-card-actions:empty {
+  display: none;
 }
 
 .server-card-actions .btn-icon {
