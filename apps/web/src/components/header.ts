@@ -136,11 +136,11 @@ const ICON_ACTIONS: ReadonlyArray<IconAction> = [
     label: 'Storage',
     svg: `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v6c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 11v6c0 1.66 4 3 9 3s9-1.34 9-3v-6"/></svg>`,
   },
-  {
-    href: '#/defaults',
-    label: 'Defaults',
-    svg: `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>`,
-  },
+  // 2026-05-17 UX-Refactor Phase E: Defaults-Top-Nav-Icon entfernt.
+  // Tool-Defaults leben jetzt unter Tools → Server-Karte → Konfig → Tab
+  // "Tool-Defaults". Die Legacy-Route #/defaults wird in main.ts auf
+  // #/tools/servers/native/defaults umgeleitet — bestehende Bookmarks
+  // funktionieren weiterhin, aber kein separates Top-Nav-Icon mehr.
   {
     href: '#/settings',
     label: 'Settings',
