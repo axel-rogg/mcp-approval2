@@ -65,12 +65,24 @@ interface GatewayToolEntry {
   readonly sensitivity: 'read' | 'write' | 'danger';
 }
 
+/**
+ * Pro-Gateway Credential-Bedarf, aggregiert aus den Tool-Annotations.
+ * Sub-MCP-Worker deklarieren in `tools/list[].annotations.requires_credential`
+ * was sie brauchen — wir dedupen pro Provider hier am Inventory-Endpoint.
+ */
+interface RequiredCredentialEntry {
+  readonly provider: string;
+  readonly kind: string | null;
+}
+
 interface GatewayEntry {
   readonly name: string;
   readonly displayName: string;
   readonly enabled: boolean;
   readonly toolsCachedAt: number | null;
   readonly tools: ReadonlyArray<GatewayToolEntry>;
+  /** Credentials die der Sub-MCP-Worker fuer mind. eines seiner Tools braucht. */
+  readonly requiredCredentials: ReadonlyArray<RequiredCredentialEntry>;
 }
 
 interface InventoryResponse {
@@ -88,6 +100,53 @@ function sensitivityFromAnnotations(annotations: unknown): 'read' | 'write' | 'd
   }
   // SEC-006: fail-closed default
   return 'write';
+}
+
+/**
+ * Liest `annotations.requires_credential` aus einer Tool-Annotation.
+ * Akzeptiert beide Shapes:
+ *   - Einzel: `{ provider: 'github', kind?: 'api_token' }`
+ *   - Array:  `[ { provider, kind? }, ... ]` (Tool braucht mehrere)
+ */
+function extractRequiredCredentials(
+  annotations: unknown,
+): ReadonlyArray<RequiredCredentialEntry> {
+  if (!annotations || typeof annotations !== 'object') return [];
+  const a = annotations as Record<string, unknown>;
+  const raw = a['requires_credential'];
+  if (!raw) return [];
+  const entries: RequiredCredentialEntry[] = [];
+  const items = Array.isArray(raw) ? raw : [raw];
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    const provider = typeof rec['provider'] === 'string' ? rec['provider'] : null;
+    if (!provider || provider.length === 0) continue;
+    const kind = typeof rec['kind'] === 'string' ? rec['kind'] : null;
+    entries.push({ provider, kind });
+  }
+  return entries;
+}
+
+/**
+ * Aggregiert die `requires_credential`-Annotation ueber alle Tools eines
+ * Gateways. Dedupe per `provider` — pro Provider gewinnt der erste explizit
+ * gesetzte `kind`-Wert.
+ */
+function aggregateRequiredCredentials(
+  tools: ReadonlyArray<{ annotations?: unknown }>,
+): RequiredCredentialEntry[] {
+  const byProvider = new Map<string, RequiredCredentialEntry>();
+  for (const t of tools) {
+    for (const req of extractRequiredCredentials(t.annotations)) {
+      const existing = byProvider.get(req.provider);
+      if (!existing) byProvider.set(req.provider, req);
+      else if (existing.kind === null && req.kind !== null) {
+        byProvider.set(req.provider, req);
+      }
+    }
+  }
+  return [...byProvider.values()].sort((a, b) => a.provider.localeCompare(b.provider));
 }
 
 function mapNative(
@@ -115,6 +174,7 @@ function mapKnowledge2Gateway(
 ): GatewayEntry | null {
   if (snapshot.toolNames.size === 0) return null;
   const tools: GatewayToolEntry[] = [];
+  const annotationsForAgg: Array<{ annotations?: unknown }> = [];
   for (const name of snapshot.toolNames) {
     const meta = registry.get(name);
     if (!meta) continue;
@@ -123,6 +183,7 @@ function mapKnowledge2Gateway(
       description: meta.description ?? null,
       sensitivity: sensitivityFromAnnotations(meta.annotations),
     });
+    annotationsForAgg.push({ annotations: meta.annotations });
   }
   tools.sort((a, b) => a.name.localeCompare(b.name));
   return {
@@ -131,6 +192,7 @@ function mapKnowledge2Gateway(
     enabled: tools.length > 0,
     toolsCachedAt: snapshot.refreshedAt,
     tools,
+    requiredCredentials: aggregateRequiredCredentials(annotationsForAgg),
   };
 }
 
@@ -153,6 +215,9 @@ async function mapGateways(
       enabled: s.enabled,
       toolsCachedAt: s.toolsCachedAt,
       tools,
+      requiredCredentials: aggregateRequiredCredentials(
+        toolsCache.map((t) => ({ annotations: t.annotations })),
+      ),
     };
   });
 }

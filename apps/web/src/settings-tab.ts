@@ -4,18 +4,18 @@
  * Sub-Routes:
  *   #/settings                  → Default (Authenticators)
  *   #/settings/authenticators   → WebAuthn Passkey-Mgmt (Stub — TODO)
- *   #/settings/credentials      → MCP-Server-Credentials (renderCredentialsBody)
  *   #/settings/app              → App-Info + Sign-out
  *
- * Credentials sind hier versenkt (statt Top-Tab), weil sie nur selten
- * gebraucht werden — Setup-Surface fuer MCP-Server-Zugangsdaten.
+ * Hinweis (2026-05-17): "MCP-Credentials" wurden aus Settings entfernt und
+ * leben jetzt unter `#/tools/credentials` (semantisch gehoeren sie zur
+ * MCP-Server-Anbindung, nicht zu App-Settings). Legacy-URL
+ * `#/settings/credentials` redirected in main.ts auf den neuen Pfad.
  */
 import type { ApiClient, Session } from './api.js';
 import { logout, renderSessionExpired } from './auth.js';
 import { renderHeader } from './components/header.js';
-import { renderCredentialsBody } from './credentials.js';
 
-type SettingsSubTab = 'authenticators' | 'credentials' | 'app';
+type SettingsSubTab = 'authenticators' | 'app';
 
 interface SubTabSpec {
   readonly id: SettingsSubTab;
@@ -25,7 +25,6 @@ interface SubTabSpec {
 
 const SUB_TABS: ReadonlyArray<SubTabSpec> = [
   { id: 'authenticators', href: '#/settings/authenticators', label: 'Passkeys' },
-  { id: 'credentials', href: '#/settings/credentials', label: 'MCP-Credentials' },
   { id: 'app', href: '#/settings/app', label: 'App' },
 ];
 
@@ -34,7 +33,7 @@ function parseSettingsSubTab(): SettingsSubTab {
   const m = hash.match(/^#\/settings\/([^?]+)/);
   if (!m || !m[1]) return 'authenticators';
   const sub = m[1];
-  if (sub === 'credentials' || sub === 'app' || sub === 'authenticators') return sub;
+  if (sub === 'app' || sub === 'authenticators') return sub;
   return 'authenticators';
 }
 
@@ -145,9 +144,7 @@ export async function renderSettings(
   root.appendChild(main);
 
   try {
-    if (active === 'credentials') {
-      await renderCredentialsBody(body, api);
-    } else if (active === 'app') {
+    if (active === 'app') {
       renderAppInfo(body, api, session);
     } else {
       renderAuthenticatorsStub(body);

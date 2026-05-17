@@ -81,11 +81,16 @@ type Route =
 function parseRoute(): Route {
   const hash = window.location.hash.replace(/^#\/?/, '');
   if (hash.startsWith('login')) return 'login';
-  // Legacy #/credentials → redirect to #/settings/credentials (Phase 3
-  // migration: Credentials sind jetzt Sub-Tab unter Settings).
+  // Legacy redirects: Credentials sind seit 2026-05-17 unter
+  // #/tools/credentials (semantisch zur MCP-Server-Anbindung gehoerend,
+  // nicht zu App-Settings). Beide alten Pfade umleiten.
   if (hash === 'credentials' || hash.startsWith('credentials?') || hash.startsWith('credentials/')) {
-    window.location.replace('#/settings/credentials');
-    return 'settings';
+    window.location.replace('#/tools/credentials');
+    return 'tools';
+  }
+  if (hash === 'settings/credentials' || hash.startsWith('settings/credentials?')) {
+    window.location.replace('#/tools/credentials');
+    return 'tools';
   }
   if (hash.startsWith('settings')) return 'settings';
   if (hash.startsWith('tools')) return 'tools';

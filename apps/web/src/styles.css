@@ -1842,3 +1842,41 @@ code {
 .server-card-refresh {
   margin-left: auto;
 }
+
+/* ───────────────────────────────────────────────────────────────────────
+   Tools-Tab — Sub-Nav + Per-Gateway-Credential-Status
+   ─────────────────────────────────────────────────────────────────────── */
+
+.tools-subnav {
+  margin-bottom: 1rem;
+}
+
+.tools-credentials {
+  /* Spacing-Reset — credentials.ts rendert mit eigenen padding-Annahmen */
+  margin-top: 1rem;
+}
+
+/* Status-Pill fuer "Warning" (analog .pill-ok / .pill-danger) */
+.pill-warn {
+  background: rgba(179, 89, 0, 0.12);
+  color: var(--warn);
+  border: 1px solid rgba(179, 89, 0, 0.3);
+}
+
+/* Per-Gateway-Card Credential-Status — eine zweite Zeile unter dem Subtitle */
+.server-card-creds {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+.server-card-creds-label {
+  margin-right: 0.3rem;
+}
+
+.server-card-creds-add {
+  margin-left: auto;
+}
+

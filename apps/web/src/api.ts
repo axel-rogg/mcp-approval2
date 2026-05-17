@@ -63,12 +63,18 @@ export interface InventoryGatewayTool {
   readonly sensitivity: 'read' | 'write' | 'danger';
 }
 
+export interface InventoryRequiredCredential {
+  readonly provider: string;
+  readonly kind: string | null;
+}
+
 export interface InventoryGateway {
   readonly name: string;
   readonly displayName: string;
   readonly enabled: boolean;
   readonly toolsCachedAt: number | null;
   readonly tools: ReadonlyArray<InventoryGatewayTool>;
+  readonly requiredCredentials: ReadonlyArray<InventoryRequiredCredential>;
 }
 
 export interface InventoryResponse {
