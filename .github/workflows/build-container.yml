@@ -27,12 +27,15 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Skip wenn push.main UND kein [deploy] in der commit-msg.
+    # Skip wenn push.main UND [deploy] in KEINEM Commit des Pushes.
+    # github.event.commits ist die volle Commit-Liste (nicht nur head_commit) —
+    # faengt Multi-Commit-Pushes ab, bei denen [deploy] in einem buried Commit
+    # steckt und der head_commit kein Tag traegt (v1-Lesson aus mcp-approval).
     # Tag-Pushes ('v*') und workflow_dispatch laufen immer durch.
     if: |
       github.event_name == 'workflow_dispatch' ||
       startsWith(github.ref, 'refs/tags/') ||
-      contains(github.event.head_commit.message, '[deploy]')
+      contains(join(github.event.commits.*.message, ' '), '[deploy]')
     permissions:
       contents: read
       packages: write

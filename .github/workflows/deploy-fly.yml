@@ -43,10 +43,13 @@ jobs:
   deploy:
     name: fly deploy
     runs-on: ubuntu-latest
-    # Skip wenn push-Event UND [deploy] nicht in commit-msg
+    # Skip wenn push-Event UND [deploy] in KEINEM Commit des Pushes.
+    # github.event.commits ist die volle Commit-Liste (nicht nur head_commit) —
+    # faengt Multi-Commit-Pushes ab, bei denen [deploy] in einem buried Commit
+    # steckt und der head_commit kein Tag traegt (v1-Lesson aus mcp-approval).
     if: |
       github.event_name == 'workflow_dispatch' ||
-      contains(github.event.head_commit.message, '[deploy]')
+      contains(join(github.event.commits.*.message, ' '), '[deploy]')
     permissions:
       contents: read
       issues: write  # Notify-on-failure step erstellt ein GH-Issue
