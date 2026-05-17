@@ -385,7 +385,11 @@ export function myServersRoutes(deps: MyServersRouteDeps): Hono<AppBindings> {
         const fwdProto = c.req.header('x-forwarded-proto') ?? 'https';
         const fwdHost = c.req.header('x-forwarded-host') ?? c.req.header('host') ?? '';
         const origin = `${fwdProto}://${fwdHost}`;
-        const canonicalRedirectUri = `${origin}/oauth/sub-mcp-callback?name=${encodeURIComponent(name)}`;
+        // Kein Query-Param mehr — sub_mcp_name wird vom Bridge-Endpoint
+        // via state-Lookup aus user_sub_mcp_oauth_state geholt. Damit ist
+        // die redirect_uri ein konstanter String pro Origin, was strict-
+        // string-Match in GitHub-Apps + anderen Providers garantiert klappt.
+        const canonicalRedirectUri = `${origin}/oauth/sub-mcp-callback`;
         logger.info(
           {
             event: 'oauth.start',
