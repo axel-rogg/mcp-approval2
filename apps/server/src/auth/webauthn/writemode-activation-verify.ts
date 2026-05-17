@@ -158,13 +158,27 @@ export async function verifyWritemodeActivation(
       requireUserVerification: true,
     });
   } catch (err) {
+    const cause = err instanceof Error ? err.message : 'verify error';
+    console.warn('[writemode.activate] verify-threw', {
+      cause,
+      expectedOrigin: args.expectedOrigin,
+      expectedRpId: args.expectedRpId,
+      credIdLen: credId.length,
+    });
     throw HttpError.unauthorized('webauthn_verification_failed', {
-      cause: err instanceof Error ? err.message : 'verify error',
+      cause,
       action: 'writemode.activate',
     });
   }
   if (!verification.verified) {
+    console.warn('[writemode.activate] verify-returned-false', {
+      expectedOrigin: args.expectedOrigin,
+      expectedRpId: args.expectedRpId,
+      storedCounter: cred.counter,
+      newCounter: verification.authenticationInfo?.newCounter,
+    });
     throw HttpError.unauthorized('webauthn_verification_failed', {
+      cause: 'verified=false (challenge/origin/rpId/UV/counter mismatch)',
       action: 'writemode.activate',
     });
   }

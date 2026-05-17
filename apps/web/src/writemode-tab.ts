@@ -133,8 +133,12 @@ async function postActivate(args: {
   if (!res.ok) {
     let msg = `HTTP ${res.status}`;
     try {
-      const err = (await res.json()) as { error?: { message?: string } };
-      if (err.error?.message) msg = err.error.message;
+      const err = (await res.json()) as {
+        error?: { message?: string; details?: { cause?: string } };
+      };
+      const base = err.error?.message;
+      const cause = err.error?.details?.cause;
+      if (base) msg = cause ? `${base} (${cause})` : base;
     } catch {
       /* keep generic */
     }
