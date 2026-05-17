@@ -13,7 +13,7 @@
  * Delete-Flow: PATCH/DELETE → Backend antwortet mit approvalId, PWA navigiert
  * zu #/approvals damit der User signed.
  */
-import type { ApiStorageClient, KnowledgeObject } from './api-storage.js';
+import type { ApiStorageClient, KnowledgeObject, RefView } from './api-storage.js';
 import type { ApiClient, Session } from './api.js';
 import { logout } from './auth.js';
 import { renderHeader } from './components/header.js';
@@ -70,6 +70,143 @@ function showToast(msg: string): void {
   t.textContent = msg;
   document.body.appendChild(t);
   setTimeout(() => t.remove(), 3500);
+}
+
+/**
+ * Group + render refs section. Returns null when both directions empty.
+ *
+ * PLAN-document-linking §10.5 D1 + D4 (Direction-derived labels):
+ *   outgoing.role='resource'   → "Anhang"
+ *   outgoing.role='references' → "Siehe auch"
+ *   outgoing.role='depends_on' → "Benötigt"
+ *   incoming.role='resource'   → "Teil von"  (= part_of, direction-derived)
+ *   incoming.role='references' → "Referenziert von"
+ *   incoming.role='depends_on' → "Wird benutzt von"
+ *
+ * Click on Ref → navigate to `#/storage/<uuid>`. Summary gestripped via
+ * stripIpiWrappers, dann erste 200 chars per textContent (XSS-safe).
+ */
+function renderRefsSection(refs: KnowledgeObject['refs']): HTMLElement | null {
+  const outgoing = refs?.outgoing ?? [];
+  const incoming = refs?.incoming ?? [];
+  if (outgoing.length === 0 && incoming.length === 0) return null;
+
+  const section = document.createElement('section');
+  section.className = 'storage-refs card';
+
+  const heading = document.createElement('h3');
+  heading.className = 'storage-refs-heading';
+  heading.textContent = '🔗 Verknüpfungen';
+  section.appendChild(heading);
+
+  // Group by direction + role.
+  const outGroups = groupByRole(outgoing);
+  const inGroups = groupByRole(incoming);
+
+  const directions: Array<{
+    label: (role: string) => string;
+    groups: Map<string, RefView[]>;
+    truncated: boolean;
+  }> = [
+    { label: outgoingLabel, groups: outGroups, truncated: refs?.truncated.outgoing ?? false },
+    { label: incomingLabel, groups: inGroups, truncated: refs?.truncated.incoming ?? false },
+  ];
+
+  for (const d of directions) {
+    for (const [role, list] of d.groups) {
+      const group = document.createElement('div');
+      group.className = 'storage-refs-group';
+      const lbl = document.createElement('div');
+      lbl.className = 'storage-refs-group-label';
+      lbl.textContent = `${d.label(role)} (${list.length})`;
+      group.appendChild(lbl);
+      const ul = document.createElement('ul');
+      ul.className = 'storage-refs-list';
+      for (const ref of list) {
+        ul.appendChild(renderRefRow(ref));
+      }
+      group.appendChild(ul);
+      section.appendChild(group);
+    }
+  }
+
+  if (refs?.truncated.outgoing || refs?.truncated.incoming) {
+    const more = document.createElement('div');
+    more.className = 'storage-refs-truncated';
+    more.textContent = 'Weitere Refs nicht angezeigt — refs_limit erhöhen für vollständige Liste.';
+    section.appendChild(more);
+  }
+
+  return section;
+}
+
+function groupByRole(refs: ReadonlyArray<RefView>): Map<string, RefView[]> {
+  const map = new Map<string, RefView[]>();
+  for (const r of refs) {
+    const list = map.get(r.role) ?? [];
+    list.push(r);
+    map.set(r.role, list);
+  }
+  return map;
+}
+
+function outgoingLabel(role: string): string {
+  switch (role) {
+    case 'resource':
+      return '📎 Anhang';
+    case 'references':
+      return '↗ Siehe auch';
+    case 'depends_on':
+      return '⚙ Benötigt';
+    default:
+      return `↗ ${role}`;
+  }
+}
+
+function incomingLabel(role: string): string {
+  switch (role) {
+    case 'resource':
+      return '↩ Teil von';
+    case 'references':
+      return '↩ Referenziert von';
+    case 'depends_on':
+      return '↩ Wird benutzt von';
+    default:
+      return `↩ ${role}`;
+  }
+}
+
+function renderRefRow(ref: RefView): HTMLLIElement {
+  const li = document.createElement('li');
+  li.className = 'storage-refs-row';
+
+  const link = document.createElement('a');
+  link.className = 'storage-refs-link';
+  link.href = `#/storage/${ref.id}`;
+  // Click default-navigates via hash-change — kein preventDefault nötig.
+
+  const title = document.createElement('div');
+  title.className = 'storage-refs-title';
+  title.textContent = stripIpiWrappers(ref.title ?? ref.id);
+  link.appendChild(title);
+
+  if (ref.summary) {
+    const sum = document.createElement('div');
+    sum.className = 'storage-refs-summary';
+    const cleaned = stripIpiWrappers(ref.summary);
+    sum.textContent = cleaned.length > 200 ? cleaned.slice(0, 197) + '…' : cleaned;
+    link.appendChild(sum);
+  }
+
+  if (ref.subtype) {
+    const badge = document.createElement('span');
+    badge.className = 'storage-refs-subtype';
+    badge.textContent = ref.subtype;
+    link.appendChild(badge);
+  }
+
+  li.appendChild(link);
+  return li;
 }
 
 export async function renderStorageDetail(
@@ -221,6 +358,14 @@ export async function renderStorageDetail(
     metaSection.hidden = !metaSection.hidden;
     infoBtn.classList.toggle('active', !metaSection.hidden);
   });
+
+  // ─── Verknüpfungen (Refs) — PLAN-document-linking §10.5 D1.
+  // Zeigt outgoing + incoming refs gruppiert nach Rolle. Direction-derived
+  // Labels per D4 (3 Rollen, part_of aus incoming.role='resource').
+  const refsSection = renderRefsSection(obj.refs);
+  if (refsSection) {
+    main.appendChild(refsSection);
+  }
 
   // ─── Summary + Body — beide default OPEN (User-Wunsch).
   // Kein Accordion-Sync mehr: User soll beide gleichzeitig lesen koennen.

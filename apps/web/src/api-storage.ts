@@ -21,6 +21,24 @@
 export type ObjectSubtype = string;
 export type Visibility = 'private' | 'shared' | 'public' | string;
 
+export interface RefView {
+  readonly role: string;
+  readonly id: string;
+  readonly subtype: string | null;
+  readonly title: string | null;
+  readonly summary: string | null;
+  readonly uri: string;
+}
+
+export interface KnowledgeObjectRefs {
+  readonly outgoing: ReadonlyArray<RefView>;
+  readonly incoming: ReadonlyArray<RefView>;
+  readonly truncated: {
+    readonly outgoing: boolean;
+    readonly incoming: boolean;
+  };
+}
+
 export interface KnowledgeObject {
   readonly id: string;
   readonly subtype?: ObjectSubtype | null;
@@ -33,9 +51,16 @@ export interface KnowledgeObject {
   readonly bodyEncoding?: 'utf8' | 'base64' | string;
   readonly contentType?: string | null;
   readonly refcount?: number;
+  readonly isSubdoc?: boolean;
   readonly metaJson?: Record<string, unknown> | null;
+  readonly meta?: Record<string, unknown> | null;
   readonly createdAt: number;
   readonly updatedAt: number;
+  /**
+   * PLAN-document-linking §10.5 D1: Knowledge-Graph-Refs werden bei
+   * GET /v1/knowledge/objects/:id (default refs_limit=5) mit ausgeliefert.
+   */
+  readonly refs?: KnowledgeObjectRefs;
 }
 
 export interface ListObjectsArgs {
