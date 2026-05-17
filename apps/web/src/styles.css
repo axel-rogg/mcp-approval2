@@ -1527,10 +1527,14 @@ code {
    klickbar zum Auf-/Zuklappen. */
 
 .server-card-title-row {
-  display: inline-flex;
+  /* Full-width flex damit margin-left:auto auf .server-card-actions
+     den Action-Cluster echt ans rechte Ende schiebt. Mit inline-flex
+     war der Container content-sized = kein Raum zum Rechtsschieben. */
+  display: flex;
   align-items: center;
   gap: 0.5rem;
   flex-wrap: wrap;
+  width: 100%;
 }
 
 .server-card-title {
