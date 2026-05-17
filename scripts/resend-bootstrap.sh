@@ -81,22 +81,31 @@ CREATE_RESP=$(curl -sS -X POST https://api.resend.com/domains \
   -d "{\"name\":\"$DOMAIN\",\"region\":\"$REGION\"}" \
   || true)
 
-DOMAIN_ID=$(echo "$CREATE_RESP" | jq -r '.id // empty')
+# Diagnostic: print raw response (token NICHT enthalten)
+echo "  Resend POST /domains raw response:"
+echo "$CREATE_RESP" | jq . 2>/dev/null || echo "    (non-JSON): $CREATE_RESP"
+
+DOMAIN_ID=$(echo "$CREATE_RESP" | jq -r '.id // empty' 2>/dev/null)
 
 if [ -z "$DOMAIN_ID" ]; then
-  echo "  Create returned no id — vermutlich bereits vorhanden. Suche per List..."
+  echo "  Create returned no id — vermutlich bereits vorhanden. Suche per GET /domains..."
   LIST_RESP=$(curl -sS https://api.resend.com/domains \
     -H "Authorization: Bearer $RESEND_BOOTSTRAP_TOKEN")
-  DOMAIN_ID=$(echo "$LIST_RESP" | jq -r ".data[] | select(.name == \"$DOMAIN\") | .id" | head -1)
+  echo "  Resend GET /domains raw response:"
+  echo "$LIST_RESP" | jq . 2>/dev/null || echo "    (non-JSON): $LIST_RESP"
+  # Resend's domain-list endpoint returnt manchmal {data:[...]}, manchmal
+  # direkt ein Array. Beide Shapes testen.
+  DOMAIN_ID=$(echo "$LIST_RESP" | jq -r "(.data // .) | (try .[] | select(.name == \"$DOMAIN\") | .id) // empty" 2>/dev/null | head -1)
   if [ -z "$DOMAIN_ID" ]; then
-    echo "  ERROR: konnte Domain weder erstellen noch finden. Response:" >&2
-    echo "$CREATE_RESP" | jq . >&2 || echo "$CREATE_RESP" >&2
+    echo "  ERROR: konnte Domain weder erstellen noch finden." >&2
+    echo "  Pruefe in resend.com/domains ob '$DOMAIN' angelegt ist + ob der Token Permission 'Full access' hat." >&2
     exit 1
   fi
   echo "  Gefunden: $DOMAIN_ID"
-  # Records sind nur in CREATE-Response; bei bestehender Domain holen via GET
   GET_RESP=$(curl -sS "https://api.resend.com/domains/$DOMAIN_ID" \
     -H "Authorization: Bearer $RESEND_BOOTSTRAP_TOKEN")
+  echo "  GET /domains/$DOMAIN_ID raw response:"
+  echo "$GET_RESP" | jq . 2>/dev/null || echo "    (non-JSON): $GET_RESP"
   RECORDS_JSON=$(echo "$GET_RESP" | jq '.records // []')
 else
   echo "  Erstellt: $DOMAIN_ID"

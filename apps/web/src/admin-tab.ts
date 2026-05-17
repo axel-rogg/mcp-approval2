@@ -349,11 +349,6 @@ async function renderOutboxSubtab(root: HTMLElement, api: AdminApi): Promise<voi
   h2.textContent = `Email-Outbox (${rows.length})`;
   card.appendChild(h2);
 
-  const note = document.createElement('p');
-  note.className = 'muted small';
-  note.innerHTML = `Status <code>logged</code> = console-Mode, Email muss <strong>manuell zugestellt</strong> werden (Body-Preview/Copy via Detail-View). Status <code>sent</code> = Resend hat zugestellt. Status <code>failed</code> = Versand fail (Body bleibt als Fallback verfügbar).`;
-  card.appendChild(note);
-
   if (rows.length === 0) {
     card.innerHTML += '<p class="muted small">Keine Einträge.</p>';
     root.appendChild(card);
