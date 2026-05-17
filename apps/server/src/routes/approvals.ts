@@ -160,6 +160,7 @@ function approvalToJson(
     requestId: a.requestId,
     createdAt: a.createdAt,
     expiresAt: a.expiresAt,
+    extensionCount: a.extensionCount ?? 0,
   };
 }
 
@@ -447,6 +448,48 @@ export function approvalsRoutes(deps: ApprovalsRouteDeps): Hono<AppBindings> {
       }
     },
   );
+
+  // POST /v1/approvals/:id/extend
+  // Body: { minutes: 5 } — verlaengert die TTL eines pending-Approvals.
+  // Max 3 Extensions pro Row (= 15 min Budget), Limit im ApprovalService.
+  app.post('/v1/approvals/:id/extend', guard, async (c) => {
+    const principal = c.get('user');
+    if (!principal) throw HttpError.unauthorized();
+    const id = c.req.param('id');
+    let body: { minutes?: number } = {};
+    try {
+      const raw = await c.req.json();
+      if (raw && typeof raw === 'object') body = raw as { minutes?: number };
+    } catch {
+      /* default to 5 min */
+    }
+    const minutes = typeof body.minutes === 'number' ? body.minutes : 5;
+    if (![5, 10, 15].includes(minutes)) {
+      throw HttpError.badRequest('invalid_request', 'minutes must be 5, 10, or 15');
+    }
+    try {
+      const updated = await approvals.extendTtl({
+        id,
+        userId: principal.userId,
+        extensionMs: minutes * 60 * 1000,
+      });
+      return c.json({ approval: approvalToJson(updated) });
+    } catch (err) {
+      if (err instanceof ApprovalConflictError) {
+        return c.json(
+          {
+            error: {
+              code: 'conflict',
+              message: `approval ${id} cannot be extended (status=${err.currentStatus})`,
+              details: { currentStatus: err.currentStatus },
+            },
+          },
+          409,
+        );
+      }
+      throw err;
+    }
+  });
 
   // GET /v1/approvals/:id/result
   app.get('/v1/approvals/:id/result', guard, async (c) => {

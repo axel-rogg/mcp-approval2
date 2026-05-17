@@ -32,6 +32,7 @@ import {
   customType,
   index,
   inet,
+  integer,
   jsonb,
   pgTable,
   text,
@@ -123,6 +124,11 @@ export const pendingApprovalsTable = pgTable(
 
     createdAt: bigint('created_at', { mode: 'number' }).notNull(),
     expiresAt: bigint('expires_at', { mode: 'number' }).notNull(),
+    /**
+     * Wie oft hat der User die TTL verlaengert? 0..MAX_EXTENSION_COUNT (3).
+     * Migration 0025. CAS-Guard in ApprovalService.extendTtl.
+     */
+    extensionCount: integer('extension_count').notNull().default(0),
   },
   (t) => ({
     userPendingIdx: index('idx_approvals_user_pending').on(t.userId, t.status),

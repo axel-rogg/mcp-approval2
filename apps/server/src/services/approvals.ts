@@ -92,12 +92,31 @@ export interface SetResultArgs {
   readonly result: Record<string, unknown>;
 }
 
+export interface ExtendTtlArgs {
+  readonly id: string;
+  readonly userId: string;
+  /** Verlaengerung in Millisekunden. PWA schickt 5 min = 300_000. */
+  readonly extensionMs: number;
+}
+
+export const MAX_EXTENSION_COUNT = 3;
+export const EXTENSION_INCREMENT_MS = 5 * 60 * 1000;
+
 export interface ApprovalService {
   create(args: CreateApprovalArgs): Promise<PendingApproval>;
   get(args: GetApprovalArgs): Promise<PendingApproval | null>;
   list(args: ListApprovalsArgs): Promise<PendingApproval[]>;
   approve(args: ApproveArgs): Promise<PendingApproval>;
   reject(args: RejectArgs): Promise<PendingApproval>;
+  /**
+   * Verlaengert die TTL eines pending-Approvals atomar. Max
+   * MAX_EXTENSION_COUNT Extensions pro Row (= 15 min Budget bei 5-min-Steps).
+   * Wirft ApprovalConflictError wenn:
+   *   - Approval nicht mehr pending
+   *   - Approval bereits expired (expires_at < now)
+   *   - Extension-Budget aufgebraucht (extension_count >= MAX)
+   */
+  extendTtl(args: ExtendTtlArgs): Promise<PendingApproval>;
   sweepExpired(): Promise<number>;
   setResult(args: SetResultArgs): Promise<void>;
 }
@@ -149,6 +168,7 @@ interface ApprovalRowRaw {
   readonly origin_ip: string | null;
   readonly created_at: number | string;
   readonly expires_at: number | string;
+  readonly extension_count: number | string | null;
 }
 
 const SELECT_COLS = `
@@ -160,7 +180,8 @@ const SELECT_COLS = `
   prf_session_id,
   result_json, result_emitted_at,
   request_id, origin_ip,
-  created_at, expires_at
+  created_at, expires_at,
+  extension_count
 `;
 
 function toNumber(v: number | string | null): number | null {
@@ -191,6 +212,7 @@ function rowToApproval(row: ApprovalRowRaw): PendingApproval {
     originIp: row.origin_ip,
     createdAt: toNumber(row.created_at) ?? 0,
     expiresAt: toNumber(row.expires_at) ?? 0,
+    extensionCount: toNumber(row.extension_count) ?? 0,
   };
 }
 
@@ -592,6 +614,68 @@ export function createApprovalService(opts: ApprovalServiceOptions): ApprovalSer
           tool_name: row.tool_name,
           sensitivity: row.sensitivity,
           reason: args.reason ?? null,
+        },
+      });
+
+      return rowToApproval(row);
+    },
+
+    async extendTtl(args) {
+      if (args.extensionMs <= 0 || args.extensionMs > 15 * 60 * 1000) {
+        throw HttpError.badRequest(
+          'invalid_request',
+          'extensionMs must be in (0, 15min]',
+        );
+      }
+      const ts = now();
+      const row = await withScoped(args.userId, async (q) => {
+        // CAS-Update: nur wenn status='pending' AND expires_at>now AND
+        // extension_count < MAX. Atomar — kein TOCTOU.
+        const updated = await q.query<ApprovalRowRaw>(
+          `UPDATE pending_approvals
+              SET expires_at = expires_at + $1,
+                  extension_count = extension_count + 1
+            WHERE id = $2 AND user_id = $3
+              AND status = 'pending'
+              AND expires_at > $4
+              AND extension_count < $5
+           RETURNING ${SELECT_COLS}`,
+          [args.extensionMs, args.id, args.userId, ts, MAX_EXTENSION_COUNT],
+        );
+        if (updated[0]) return updated[0];
+
+        // CAS failed — diagnostiziere fuer korrekten Error.
+        const current = await q.query<ApprovalRowRaw>(
+          `SELECT ${SELECT_COLS} FROM pending_approvals WHERE id = $1 AND user_id = $2`,
+          [args.id, args.userId],
+        );
+        const existing = current[0];
+        if (!existing) {
+          throw HttpError.notFound('approval not found');
+        }
+        if (existing.status !== 'pending') {
+          throw new ApprovalConflictError(args.id, existing.status as ApprovalStatus);
+        }
+        if (toNumber(existing.expires_at) !== null && toNumber(existing.expires_at)! < ts) {
+          throw new ApprovalConflictError(args.id, 'expired');
+        }
+        // Muss extension_count >= MAX sein.
+        throw HttpError.badRequest(
+          'invalid_request',
+          `extension budget exhausted (max ${MAX_EXTENSION_COUNT} extensions)`,
+        );
+      });
+
+      await emitAudit(db, {
+        action: 'tool.approval.ttl_extended',
+        actorUserId: args.userId,
+        result: 'success',
+        details: {
+          approval_id: args.id,
+          tool_name: row.tool_name,
+          extension_ms: args.extensionMs,
+          new_extension_count: toNumber(row.extension_count) ?? 0,
+          new_expires_at: toNumber(row.expires_at) ?? 0,
         },
       });
 

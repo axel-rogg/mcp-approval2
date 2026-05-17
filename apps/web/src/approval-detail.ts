@@ -106,10 +106,38 @@ function renderLoaded(
   // ── Sections (display_string oder Fallback) ──────────────────────────────
   main.appendChild(renderSections(approval));
 
-  // ── Live TTL Countdown ───────────────────────────────────────────────────
+  // ── Live TTL Countdown + Extend-Button ───────────────────────────────────
+  const ttlRow = document.createElement('div');
+  ttlRow.className = 'approval-ttl-row';
+  ttlRow.style.display = 'flex';
+  ttlRow.style.alignItems = 'center';
+  ttlRow.style.gap = '0.5rem';
+  ttlRow.style.flexWrap = 'wrap';
+
   const ttl = document.createElement('p');
   ttl.className = 'approval-ttl';
-  main.appendChild(ttl);
+  ttl.style.margin = '0';
+  ttlRow.appendChild(ttl);
+
+  const extendBtn = document.createElement('button');
+  extendBtn.type = 'button';
+  extendBtn.className = 'btn-small';
+  extendBtn.style.marginLeft = 'auto';
+  const initialExt = approval.extensionCount ?? 0;
+  const MAX_EXT = 3;
+  const updateExtendLabel = (count: number): void => {
+    const remaining = MAX_EXT - count;
+    extendBtn.textContent =
+      remaining > 0
+        ? `+5 min (${count}/${MAX_EXT} verwendet)`
+        : `Budget aufgebraucht (${MAX_EXT}/${MAX_EXT})`;
+    extendBtn.disabled = remaining <= 0;
+  };
+  updateExtendLabel(initialExt);
+  extendBtn.setAttribute('title', 'TTL um 5 Minuten verlaengern (max 3×)');
+  ttlRow.appendChild(extendBtn);
+
+  main.appendChild(ttlRow);
 
   // ── Sensitivity Hint ─────────────────────────────────────────────────────
   if (approval.sensitivity === 'danger') {
@@ -153,9 +181,9 @@ function renderLoaded(
 
   // ── Live countdown tick ──────────────────────────────────────────────────
   let stopped = false;
-  const expiresAt = ((approval as PendingApproval & {
-    expiresAt?: number; createdAt?: number;
-  }).expiresAt) ?? (approval.requestedAt + 5 * 60 * 1000);
+  let expiresAt =
+    ((approval as PendingApproval & { expiresAt?: number; createdAt?: number })
+      .expiresAt) ?? (approval.requestedAt + 5 * 60 * 1000);
   const tick = () => {
     const ms = expiresAt - Date.now();
     ttl.textContent = `Restzeit: ${formatRemaining(ms)}`;
@@ -163,6 +191,7 @@ function renderLoaded(
       stopped = true;
       approveBtn.disabled = true;
       rejectBtn.disabled = true;
+      extendBtn.disabled = true;
       statusLine.textContent = 'Approval abgelaufen.';
     }
   };
@@ -174,6 +203,37 @@ function renderLoaded(
     }
     tick();
   }, 1000);
+
+  extendBtn.addEventListener('click', async () => {
+    if (stopped || extendBtn.disabled) return;
+    extendBtn.disabled = true;
+    const origLabel = extendBtn.textContent;
+    extendBtn.textContent = 'Verlaengere …';
+    try {
+      const updated = await api.extendApproval({ id: approval.id, minutes: 5 });
+      // Server hat expires_at + 5min gesetzt + extension_count incremented.
+      const newExpires =
+        (updated as PendingApproval & { expiresAt?: number }).expiresAt;
+      if (typeof newExpires === 'number') {
+        expiresAt = newExpires;
+      } else {
+        // Fallback: lokal +5 min wenn Server-Wert nicht durchkam
+        expiresAt = expiresAt + 5 * 60 * 1000;
+      }
+      const newCount = updated.extensionCount ?? initialExt + 1;
+      updateExtendLabel(newCount);
+      statusLine.textContent = `TTL um 5 min verlaengert (${newCount}/${MAX_EXT}).`;
+      tick();
+    } catch (err) {
+      extendBtn.textContent = origLabel;
+      extendBtn.disabled = false;
+      if (err instanceof ApiError && err.status === 409) {
+        statusLine.textContent = 'Verlaengerung nicht moeglich (Status oder Budget).';
+      } else {
+        statusLine.textContent = `Verlaengerung fehlgeschlagen: ${(err as Error).message}`;
+      }
+    }
+  });
 
   approveBtn.addEventListener('click', async () => {
     if (stopped) return;

@@ -38,6 +38,8 @@ export interface PendingApproval {
   readonly expiredAt?: number | null;
   /** Original-Ablauf-Zeit (vor Lazy-Flip); UI nutzt es als Fallback. */
   readonly expiresAt?: number | null;
+  /** Wie oft hat der User die TTL verlaengert (0..3). Aus Mig 0025. */
+  readonly extensionCount?: number;
 }
 
 export interface CredentialMeta {
@@ -176,6 +178,11 @@ export interface ApiClient {
     prfSessionId?: string;
   }): Promise<void>;
   rejectApproval(args: { id: string; reason?: string }): Promise<void>;
+  /**
+   * Verlaengert die TTL eines pending-Approvals um `minutes` (5, 10 oder 15).
+   * Max 3 Extensions pro Approval (server enforced).
+   */
+  extendApproval(args: { id: string; minutes: 5 | 10 | 15 }): Promise<PendingApproval>;
   pollResult(approvalId: string): Promise<unknown>;
   getApprovalChallenge(id: string): Promise<{ challengeB64: string; allowCredentialIdsB64: string[] }>;
 
@@ -444,6 +451,17 @@ export function createApiClient(baseUrl?: string): ApiClient {
         method: 'POST',
         body: args.reason ? { reason: args.reason } : undefined,
       });
+    },
+
+    async extendApproval(args) {
+      const out = await request<{ approval: PendingApproval }>(
+        `/v1/approvals/${encodeURIComponent(args.id)}/extend`,
+        {
+          method: 'POST',
+          body: { minutes: args.minutes },
+        },
+      );
+      return out.approval;
     },
 
     async pollResult(approvalId) {
