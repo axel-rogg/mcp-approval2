@@ -100,7 +100,7 @@ async function refresh(api: ApiClient, session: Session): Promise<void> {
 function renderList(
   host: HTMLElement,
   items: ReadonlyArray<PendingApproval>,
-  api: ApiClient,
+  _api: ApiClient,
   _session: Session,
 ): void {
   host.innerHTML = '';
@@ -115,6 +115,6 @@ function renderList(
   }
 
   for (const item of items) {
-    host.appendChild(renderQuickCard(item, api));
+    host.appendChild(renderQuickCard(item));
   }
 }

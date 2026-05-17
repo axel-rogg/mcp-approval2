@@ -1,139 +1,76 @@
 /**
- * Approval-Quick-Action — inline Card-Variante fuer die Pending-Liste.
+ * Approval Quick-Card — Pending-Liste-Eintrag (v1 .approval-card.pending Pattern).
  *
- * Plan-Ref: PLAN-architecture-v1.md §11 Phase 4 — UX-Variante fuer schnelles
- * Approven aus der Liste (kein Detail-Round-trip).
+ * Identisch zu v1 (mcp-approval/assets/app/approval-list.js#buildPendingCard):
  *
- * Card-Form: ToolName + Sensitivity + 1-Zeilen-Display + 3 Buttons:
- *   [Details]   — navigiert zu #/approvals/:id
- *   [Approve]   — startet Decision-Flow inline (PRF-Tap)
- *   [Reject]    — startet Decision-Flow inline
+ *   ┌── 3px accent border-left ──────────────────┐
+ *   │  tool.name              laeuft in 4m 32s   │  card-row1
+ *   │  display-string (1-Zeile, ellipsis, mono)  │  card-row2
+ *   └────────────────────────────────────────────┘
  *
- * Bei `sensitivity='danger'` ist Quick-Approve nicht erlaubt — Approve-Button
- * leitet zwingend in die Detail-View um, weil danger-Operationen den Volltext
- * der Section-Aufschluesselung verlangen. (Defense-in-Depth fuer den User —
- * server-side ist nichts blockiert, aber UX faengt's ab.)
+ * Klick auf die ganze Karte navigiert zu #/approvals/<id>. Approve/Reject
+ * gibt es hier NICHT — User muss die Detail-View aufrufen damit er den
+ * vollen WYSIWYS-Display + die sectioned Aufschluesselung sieht.
+ *
+ * (Die alte v2-Quick-Card mit inline Approve/Reject-Buttons war eine
+ * Convenience-Variante. Sie umging die Sec-Card-Aufschluesselung und ist
+ * mit dem v1-Look-Port entfallen.)
  */
-import type { ApiClient, PendingApproval } from './api.js';
-import { renderDecisionFlow } from './approval-decision.js';
+import type { PendingApproval } from './api.js';
+import { renderDisplay } from './approval-sections.js';
 
-export function renderQuickCard(
-  approval: PendingApproval,
-  api: ApiClient,
-): HTMLElement {
-  const card = document.createElement('div');
-  card.className = `card approval approval-quick approval-${approval.sensitivity}`;
-  card.dataset['id'] = approval.id;
+export function renderQuickCard(approval: PendingApproval): HTMLElement {
+  const link = document.createElement('a');
+  link.href = `#/approvals/${encodeURIComponent(approval.id)}`;
+  link.className = 'approval-card pending';
+  link.dataset['id'] = approval.id;
 
-  // Head
-  const head = document.createElement('div');
-  head.className = 'row approval-head approval-quick-head';
+  // ── card-row1: tool-name + TTL ───────────────────────────────────────────
+  const row1 = document.createElement('div');
+  row1.className = 'card-row1';
 
-  const titleLink = document.createElement('a');
-  titleLink.className = 'approval-quick-title';
-  titleLink.href = `#/approvals/${encodeURIComponent(approval.id)}`;
-  const titleCode = document.createElement('code');
-  titleCode.textContent = approval.toolName;
-  titleLink.appendChild(titleCode);
-  head.appendChild(titleLink);
+  const name = document.createElement('span');
+  name.className = 'tool-name';
+  name.textContent = approval.toolName;
+  row1.appendChild(name);
 
-  const sens = document.createElement('span');
-  sens.className = `pill pill-${approval.sensitivity}`;
-  sens.textContent = approval.sensitivity;
-  head.appendChild(sens);
+  const ttl = document.createElement('span');
+  ttl.className = 'ttl';
+  ttl.textContent = `laeuft in ${formatTtl(expiresAtOf(approval) - Date.now())}`;
+  row1.appendChild(ttl);
 
-  card.appendChild(head);
+  link.appendChild(row1);
 
-  // 1-Zeilen Display (truncated)
-  const display = document.createElement('p');
-  display.className = 'approval-quick-display';
-  display.textContent = shortDisplay(approval);
-  card.appendChild(display);
+  // ── card-row2: display-string (1-Zeile) ──────────────────────────────────
+  const row2 = document.createElement('div');
+  row2.className = 'card-row2 mono';
+  row2.textContent = shortDisplay(approval);
+  link.appendChild(row2);
 
-  // Timestamp
-  const ts = document.createElement('div');
-  ts.className = 'muted small';
-  ts.textContent = `Requested ${new Date(approval.requestedAt).toLocaleString()}`;
-  card.appendChild(ts);
-
-  // Actions
-  const actions = document.createElement('div');
-  actions.className = 'row approval-actions approval-quick-actions';
-
-  const detailsBtn = document.createElement('a');
-  detailsBtn.className = 'btn btn-secondary btn-small';
-  detailsBtn.href = `#/approvals/${encodeURIComponent(approval.id)}`;
-  detailsBtn.textContent = 'Details';
-  actions.appendChild(detailsBtn);
-
-  const approveBtn = document.createElement('button');
-  approveBtn.type = 'button';
-  approveBtn.className = 'btn btn-small btn-approve';
-  approveBtn.textContent = 'Approve';
-  approveBtn.addEventListener('click', () => {
-    if (approval.sensitivity === 'danger') {
-      // Defense-in-Depth: danger-Approvals MUESSEN ueber Detail-View laufen.
-      window.location.hash = `#/approvals/${encodeURIComponent(approval.id)}`;
-      return;
-    }
-    approveBtn.disabled = true;
-    rejectBtn.disabled = true;
-    void renderDecisionFlow(api, approval, 'approve').finally(() => {
-      approveBtn.disabled = false;
-      rejectBtn.disabled = false;
-    });
-  });
-  actions.appendChild(approveBtn);
-
-  const rejectBtn = document.createElement('button');
-  rejectBtn.type = 'button';
-  rejectBtn.className = 'btn btn-secondary btn-small btn-reject';
-  rejectBtn.textContent = 'Reject';
-  rejectBtn.addEventListener('click', () => {
-    approveBtn.disabled = true;
-    rejectBtn.disabled = true;
-    void renderDecisionFlow(api, approval, 'reject').finally(() => {
-      approveBtn.disabled = false;
-      rejectBtn.disabled = false;
-    });
-  });
-  actions.appendChild(rejectBtn);
-
-  card.appendChild(actions);
-  return card;
+  return link;
 }
 
 function shortDisplay(approval: PendingApproval): string {
-  const rendered = (approval as PendingApproval & { displayRendered?: unknown }).displayRendered;
-  if (typeof rendered === 'string' && rendered.length > 0) {
-    return truncate(rendered, 140);
+  const rendered = renderDisplay(approval);
+  if (rendered) {
+    // sectioned strings haben "=== Label ===" Marker — strippen fuer 1-Zeile
+    const flat = rendered.replace(/^=== .+ ===$/gm, '').replace(/\s+/g, ' ').trim();
+    return flat.length > 0 ? flat : approval.toolName;
   }
-  if (approval.displayTemplate) {
-    const subst = applyTemplate(approval.displayTemplate, approval.input);
-    if (subst) return truncate(subst, 140);
-  }
-  // Fallback: 1-line preview of input keys
   const keys = Object.keys(approval.input ?? {});
   if (keys.length === 0) return '(no input)';
   return `Input fields: ${keys.slice(0, 5).join(', ')}${keys.length > 5 ? ', …' : ''}`;
 }
 
-function truncate(s: string, max: number): string {
-  if (s.length <= max) return s;
-  return s.slice(0, max - 1) + '…';
+function expiresAtOf(approval: PendingApproval): number {
+  const v = (approval as PendingApproval & { expiresAt?: number }).expiresAt;
+  return typeof v === 'number' ? v : approval.requestedAt + 5 * 60 * 1000;
 }
 
-function applyTemplate(template: string, input: Record<string, unknown>): string {
-  return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, path: string) => {
-    const segments = path.split('.');
-    let cur: unknown = input;
-    for (const seg of segments) {
-      if (cur !== null && typeof cur === 'object' && seg in (cur as object)) {
-        cur = (cur as Record<string, unknown>)[seg];
-      } else {
-        return '';
-      }
-    }
-    return typeof cur === 'string' ? cur : JSON.stringify(cur);
-  });
+function formatTtl(ms: number): string {
+  if (ms <= 0) return 'abgelaufen';
+  const totalSec = Math.floor(ms / 1000);
+  const mm = Math.floor(totalSec / 60);
+  const ss = totalSec % 60;
+  return `${mm}m ${ss.toString().padStart(2, '0')}s`;
 }

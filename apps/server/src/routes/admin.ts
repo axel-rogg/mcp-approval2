@@ -11,6 +11,7 @@ import type { AppBindings } from '../lib/context.js';
 import { HttpError } from '../lib/errors.js';
 import type { AdminService } from '../services/admin.js';
 import type { EmailOutboxService } from '../services/email-outbox.js';
+import type { ApprovalService } from '../services/approvals.js';
 
 export function adminOnly(): MiddlewareHandler<AppBindings> {
   return async (c, next) => {
@@ -24,6 +25,7 @@ export function adminOnly(): MiddlewareHandler<AppBindings> {
 export interface AdminRouteDeps {
   admin: AdminService;
   emailOutbox?: EmailOutboxService;
+  approvals?: ApprovalService;
 }
 
 export function adminRoutes(deps: AdminRouteDeps): Hono<AppBindings> {
@@ -170,6 +172,81 @@ export function adminRoutes(deps: AdminRouteDeps): Hono<AppBindings> {
     const result = await deps.emailOutbox.resend({ principalRole: actor.role, outboxId });
     return c.json(result);
   });
+
+  // ─── Test-Approval (Operator-Diagnostic) ───────────────────────────────────
+  // Erzeugt einen synthetischen approval-Eintrag mit sectioned displayTemplate
+  // (v1-Format "=== Label ===") fuer:
+  //   - Visual-Smoke der PWA-Detail-View (sec-card-Renderer, Badge, TTL, ...)
+  //   - End-to-End Push-Delivery-Test (Service Worker / Notification)
+  //   - Verifikation dass Approve/Reject-Flow gegen ein nicht-real-dispatched
+  //     Approval clean durchlaeuft (das resultJson bleibt null, kein Tool
+  //     wird ausgefuehrt).
+  // Tool-Name: test.send-notification (kommt aus deriveTarget-Map als
+  // "Test surface" raus). Sensitivity wahlbar (default 'write').
+  app.post(
+    '/test-approval',
+    zValidator(
+      'json',
+      z
+        .object({
+          sensitivity: z.enum(['write', 'danger']).optional(),
+          ttlSec: z.number().int().min(30).max(900).optional(),
+        })
+        .optional(),
+    ),
+    async (c) => {
+      if (!deps.approvals) {
+        throw new HttpError(503, 'not_found', 'approval service not configured');
+      }
+      const actor = c.get('user');
+      if (!actor) throw new HttpError(401, 'unauthorized', 'authentication required');
+      const body = c.req.valid('json') ?? {};
+      const sensitivity = body.sensitivity ?? 'write';
+
+      // Sectioned displayTemplate (v1-Format "=== Label ===") — wird vom
+      // renderDisplayTemplate-Service substituiert. Section-Header sind reine
+      // Literal-Strings (kein {{...}}), bleiben also unveraendert; nur die
+      // `{{path}}`-Werte werden aus toolInput gezogen. Clamp bei 500 chars.
+      const displayTemplate = [
+        '=== Tool ===',
+        'test.send-notification · Diagnostic',
+        '',
+        '=== Beschreibung ===',
+        '{{description}}',
+        '',
+        '=== Empfaenger ===',
+        '{{recipient}}',
+        '',
+        '=== Sensitivity ===',
+        '{{sensitivityNote}}',
+      ].join('\n');
+
+      const approval = await deps.approvals.create({
+        userId: actor.userId,
+        toolName: 'test.send-notification',
+        sensitivity,
+        displayTemplate,
+        toolInput: {
+          description:
+            'Synthetisches Approval fuer Visual-Smoke + Push-Test. Kein echter Tool-Call.',
+          recipient: actor.email,
+          sensitivityNote:
+            sensitivity === 'danger'
+              ? 'DANGER — der Detail-View zeigt rotes Badge + Frischer-Passkey-Hint.'
+              : 'WRITE — der Detail-View zeigt oranges Badge + reversible-Hint.',
+        },
+        ttlSec: body.ttlSec ?? 300,
+      });
+
+      return c.json({
+        id: approval.id,
+        toolName: approval.toolName,
+        sensitivity: approval.sensitivity,
+        status: approval.status,
+        expiresAt: approval.expiresAt,
+      });
+    },
+  );
 
   return app;
 }

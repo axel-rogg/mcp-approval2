@@ -1,21 +1,126 @@
 /**
- * Approval-Sections-Renderer — strukturiert Detail-View in 4 Sections.
+ * Approval-Sections-Renderer.
  *
- * Plan-Ref: PLAN-architecture-v1.md §11 Phase 4 (WYSIWYS).
+ * Two render-paths:
+ *  1. SECTIONED — wenn `displayRendered` (oder substituiertes `displayTemplate`)
+ *     "=== Label ===" Marker enthaelt: split + render eine Karte pro Section
+ *     (long bodies in <details>-Foldout). Visual identisch zu v1
+ *     (mcp-approval/assets/app/approval-sections.js).
+ *  2. FALLBACK — sonst die 4-Section-View ("What will happen / Data sent /
+ *     Where it goes / Sensitivity") wie sie vor dem v1-Port war. Erlaubt
+ *     migrierten Tools v1-Look + lasst unmigrated Tools weiterhin lesbar.
  *
- * Sections (alle <details>-collapsible):
- *   1. What will happen        — rendered display_template ODER toolName-Fallback
- *   2. Data sent               — pretty-printed Tool-Input
- *   3. Where it goes           — service-host falls aus toolName ableitbar
- *   4. Sensitivity             — write / danger Erklaerung
- *
- * Wir tolerieren ein optionales `displayRendered` Feld (vom Hub schon
- * gerendertes Template); fallback auf clientseitige `{{path}}`-Template-
- * Substitution wenn nur `displayTemplate + input` da sind.
+ * WYSIWYS: das was wir anzeigen ist exakt der canonical display-string —
+ * keine zusaetzliche Information, kein Reordering.
  */
 import type { PendingApproval } from './api.js';
 
+const SECTION_RE = /^=== (.+) ===$/;
+const COLLAPSE_CHARS = 200;
+const COLLAPSE_LINES = 3;
+const SUMMARY_MAX = 80;
+
+export interface Section {
+  readonly label: string;
+  readonly body: string;
+}
+
 export function renderSections(approval: PendingApproval): HTMLElement {
+  const rendered = renderDisplay(approval);
+  const sections = parseSections(rendered);
+  if (sections) {
+    return renderSectionedView(sections);
+  }
+  return renderFallbackView(approval);
+}
+
+/**
+ * Split a "=== Label ===" string into [{label, body}]. Returns null if no
+ * section header detected — caller falls back to the legacy view.
+ */
+export function parseSections(input: string | null): Section[] | null {
+  if (!input || input.length === 0) return null;
+  const lines = input.split('\n');
+  const out: { label: string; body: string }[] = [];
+  let current: { label: string; body: string } | null = null;
+  for (const line of lines) {
+    const m = SECTION_RE.exec(line);
+    if (m && m[1]) {
+      if (current) {
+        current.body = current.body.replace(/\n+$/, '');
+        out.push(current);
+      }
+      current = { label: m[1], body: '' };
+    } else if (current) {
+      current.body += (current.body ? '\n' : '') + line;
+    }
+    // Lines before the first === marker werden absichtlich verworfen.
+  }
+  if (current) {
+    current.body = current.body.replace(/\n+$/, '');
+    out.push(current);
+  }
+  return out.length > 0 ? out : null;
+}
+
+function renderSectionedView(sections: ReadonlyArray<Section>): HTMLElement {
+  const host = document.createElement('div');
+  host.className = 'sec-host';
+  for (const s of sections) host.appendChild(renderSectionCard(s));
+  return host;
+}
+
+function renderSectionCard(section: Section): HTMLElement {
+  const card = document.createElement('div');
+  card.className = 'sec-card';
+
+  const label = document.createElement('div');
+  label.className = 'sec-label';
+  label.textContent = section.label;
+  card.appendChild(label);
+
+  if (shouldCollapse(section.body)) {
+    const details = document.createElement('details');
+    details.className = 'sec-details';
+
+    const summary = document.createElement('summary');
+    summary.className = 'sec-summary mono';
+    summary.textContent = summaryFor(section.body) + ' …';
+    details.appendChild(summary);
+
+    const body = document.createElement('pre');
+    body.className = 'sec-body mono';
+    body.textContent = section.body;
+    details.appendChild(body);
+
+    card.appendChild(details);
+  } else {
+    const body = document.createElement('pre');
+    body.className = 'sec-body mono';
+    body.textContent = section.body;
+    card.appendChild(body);
+  }
+
+  return card;
+}
+
+function shouldCollapse(body: string): boolean {
+  if (body.length > COLLAPSE_CHARS) return true;
+  return body.split('\n').length > COLLAPSE_LINES;
+}
+
+function summaryFor(body: string): string {
+  const firstLine = body.split('\n').find((l) => l.trim().length > 0) ?? '';
+  return firstLine.length > SUMMARY_MAX
+    ? firstLine.slice(0, SUMMARY_MAX) + '…'
+    : firstLine;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Fallback view — pre-port 4-section layout fuer un-migrated tools.
+// ────────────────────────────────────────────────────────────────────────────
+
+function renderFallbackView(approval: PendingApproval): HTMLElement {
   const wrap = document.createElement('div');
   wrap.className = 'approval-sections';
 
@@ -101,11 +206,10 @@ function renderSensitivity(approval: PendingApproval): HTMLElement {
 }
 
 /**
- * Server liefert idealerweise `displayRendered` (Pre-Substitution). Fallback:
- * clientseitig die `{{path}}` Platzhalter aus dem displayTemplate ersetzen.
+ * displayRendered (Server-Side Pre-Render) bevorzugen, sonst clientseitig
+ * `{{path}}` aus displayTemplate substituieren.
  */
-function renderDisplay(approval: PendingApproval): string {
-  // Some backends might attach a pre-rendered `displayRendered` field.
+export function renderDisplay(approval: PendingApproval): string {
   const rendered = (approval as PendingApproval & { displayRendered?: unknown }).displayRendered;
   if (typeof rendered === 'string' && rendered.length > 0) return rendered;
   if (approval.displayTemplate) {
@@ -129,11 +233,6 @@ function applyTemplate(template: string, input: Record<string, unknown>): string
   });
 }
 
-/**
- * Tool-Name → surface guess. `cf.workers.put` → cloudflare, `gws:gmail.send`
- * → google-workspace, `slack.send` → slack. Reine UX-Hilfe, kein Security-
- * Statement.
- */
 function deriveTarget(toolName: string): string | null {
   if (!toolName.includes('.') && !toolName.includes(':')) return null;
   const sep = toolName.includes(':') ? ':' : '.';
@@ -153,6 +252,7 @@ function deriveTarget(toolName: string): string | null {
     apps: 'Apps (local)',
     memorize: 'Memo store (local)',
     prefs: 'User preferences (local)',
+    test: 'Test surface',
   };
   return map[prefix] ?? prefix;
 }

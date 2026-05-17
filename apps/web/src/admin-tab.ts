@@ -65,6 +65,12 @@ export async function renderAdminTab(
   h1.textContent = 'Admin';
   main.appendChild(h1);
 
+  // Diagnostic-Toolbar (Test-Approval) — sichtbar von jeder Admin-Subpage.
+  // Erzeugt ein synthetisches Approval mit sectioned displayTemplate damit der
+  // Operator den Visual-Look der Detail-View live verifizieren kann (Badge,
+  // sec-cards, TTL, btn-row). Sicher: es wird kein Tool dispatched.
+  main.appendChild(buildDiagnosticToolbar());
+
   // Sub-Tab-Navigation — Tools-Tab-Pattern (anchor-basiert + settings-subnav
   // CSS-Classes, statt selbst-gebauter button-pills).
   const subtabs: ReadonlyArray<{ id: SubTab; label: string }> = [
@@ -539,4 +545,66 @@ function escapeHtml(s: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+// ─── Diagnostic Toolbar ──────────────────────────────────────────────────────
+
+function buildDiagnosticToolbar(): HTMLElement {
+  const card = document.createElement('div');
+  card.className = 'card admin-diagnostic';
+
+  const title = document.createElement('strong');
+  title.textContent = 'Diagnostic ';
+  card.appendChild(title);
+
+  const hint = document.createElement('span');
+  hint.className = 'muted small';
+  hint.textContent = ' — erzeugt ein synthetisches Approval (kein echter Tool-Call) damit du Display, Push-Notification und Approve/Reject-Flow live testen kannst.';
+  card.appendChild(hint);
+
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.style.marginTop = '0.6rem';
+
+  const writeBtn = document.createElement('button');
+  writeBtn.type = 'button';
+  writeBtn.className = 'btn btn-small';
+  writeBtn.textContent = '🔒 Test-Approval (WRITE)';
+  row.appendChild(writeBtn);
+
+  const dangerBtn = document.createElement('button');
+  dangerBtn.type = 'button';
+  dangerBtn.className = 'btn btn-small btn-reject';
+  dangerBtn.textContent = '⚠ Test-Approval (DANGER)';
+  row.appendChild(dangerBtn);
+
+  const status = document.createElement('span');
+  status.className = 'muted small';
+  row.appendChild(status);
+
+  card.appendChild(row);
+
+  async function trigger(sensitivity: 'write' | 'danger'): Promise<void> {
+    writeBtn.disabled = true;
+    dangerBtn.disabled = true;
+    status.textContent = `Erzeuge ${sensitivity}-Approval …`;
+    try {
+      const adminApi = createAdminApi();
+      const result = await adminApi.createTestApproval({ sensitivity });
+      showToast(`Test-Approval erzeugt (${sensitivity})`, 'success');
+      // Navigate direkt zur Detail-View — User sieht den Visual-Look sofort.
+      window.location.hash = `#/approvals/${encodeURIComponent(result.id)}`;
+    } catch (err) {
+      status.textContent = `Fehler: ${(err as Error).message}`;
+      showToast(`Test-Approval Fehler: ${(err as Error).message}`, 'error');
+    } finally {
+      writeBtn.disabled = false;
+      dangerBtn.disabled = false;
+    }
+  }
+
+  writeBtn.addEventListener('click', () => void trigger('write'));
+  dangerBtn.addEventListener('click', () => void trigger('danger'));
+
+  return card;
 }

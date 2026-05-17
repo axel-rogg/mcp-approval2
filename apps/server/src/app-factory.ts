@@ -413,7 +413,11 @@ export async function createApp(
     });
     app.route(
       '/v1/admin',
-      adminRoutes({ admin: adminService, emailOutbox: emailOutboxService }),
+      adminRoutes({
+        admin: adminService,
+        emailOutbox: emailOutboxService,
+        approvals: approvalService,
+      }),
     );
   }
 

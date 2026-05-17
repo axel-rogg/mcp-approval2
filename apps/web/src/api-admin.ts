@@ -79,6 +79,14 @@ async function jsonOrThrow<T>(res: Response): Promise<T> {
   return JSON.parse(text) as T;
 }
 
+export interface CreateTestApprovalResult {
+  readonly id: string;
+  readonly toolName: string;
+  readonly sensitivity: 'write' | 'danger';
+  readonly status: string;
+  readonly expiresAt: number;
+}
+
 export interface AdminApi {
   listUsers(args?: { status?: AdminUser['status']; limit?: number }): Promise<AdminUser[]>;
   suspendUser(id: string, reason?: string): Promise<void>;
@@ -95,6 +103,7 @@ export interface AdminApi {
     providerMessageId: string | null;
     errorDetail: string | null;
   }>;
+  createTestApproval(args?: { sensitivity?: 'write' | 'danger'; ttlSec?: number }): Promise<CreateTestApprovalResult>;
 }
 
 export function createAdminApi(): AdminApi {
@@ -213,6 +222,19 @@ export function createAdminApi(): AdminApi {
         providerMessageId: string | null;
         errorDetail: string | null;
       }>(res);
+    },
+
+    async createTestApproval(args) {
+      const res = await authedFetch(
+        '/v1/admin/test-approval',
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(args ?? {}),
+        },
+        base,
+      );
+      return jsonOrThrow<CreateTestApprovalResult>(res);
     },
   };
 }
