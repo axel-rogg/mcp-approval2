@@ -71,11 +71,19 @@ export async function verifyApprovalAssertion(
 
   // Step 1+2: Credential laden + Cross-User-Check.
   // Lookup per credential_id ist RLS-frei (unsafe-raw), weil wir den userId-
-  // mismatch HIER explizit pruefen.
+  // mismatch HIER explizit pruefen. Dual-encoding-Fallback: BYTEA-Spalte hat
+  // u.U. ASCII-Bytes (alte Inserts) oder binaere b64url-Decoded-Bytes (neue) —
+  // beide Wege werden ausprobiert.
+  let credIdBin: Buffer;
+  try {
+    credIdBin = Buffer.from(credId, 'base64url');
+  } catch {
+    credIdBin = Buffer.alloc(0);
+  }
   const raw = db.unsafe('approval_webauthn_lookup');
   const rows = await raw.query<{
     userId: string;
-    credentialId: string;
+    credentialId: string | Uint8Array;
     publicKey: Buffer;
     counter: number;
     transports: string | null;
@@ -83,9 +91,9 @@ export async function verifyApprovalAssertion(
     `SELECT user_id AS "userId", credential_id AS "credentialId", public_key AS "publicKey",
             counter, transports
        FROM webauthn_credentials
-      WHERE credential_id = $1 AND invalidated_at IS NULL
+      WHERE (credential_id = $1 OR credential_id = $2) AND invalidated_at IS NULL
       LIMIT 1`,
-    [credId],
+    [credId, credIdBin],
   );
   const cred = rows[0];
   if (!cred) {
@@ -118,8 +126,10 @@ export async function verifyApprovalAssertion(
   const credentialTransports = cred.transports
     ? (JSON.parse(cred.transports) as AuthenticatorTransportFuture[])
     : undefined;
+  const credIdString =
+    typeof cred.credentialId === 'string' ? cred.credentialId : credId;
   const credentialBase = {
-    id: cred.credentialId,
+    id: credIdString,
     publicKey: new Uint8Array(cred.publicKey),
     counter: cred.counter,
   };
@@ -159,7 +169,7 @@ export async function verifyApprovalAssertion(
   await scoped.query(
     `UPDATE webauthn_credentials
         SET counter = $1, last_used_at = $2
-      WHERE credential_id = $3 AND user_id = $4`,
-    [newCounter, Date.now(), cred.credentialId, args.userId],
+      WHERE (credential_id = $3 OR credential_id = $4) AND user_id = $5`,
+    [newCounter, Date.now(), credId, credIdBin, args.userId],
   );
 }

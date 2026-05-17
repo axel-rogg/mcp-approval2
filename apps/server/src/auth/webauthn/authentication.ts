@@ -102,11 +102,19 @@ export async function finishAuthentication(
   input: LoginFinishInput,
 ): Promise<LoginFinishResult> {
   // Look up credential by id (raw, kein User-Scope bekannt vorher).
+  // Dual-encoding-Fallback: BYTEA-Spalte enthaelt entweder ASCII-Bytes des
+  // b64url-Strings (alte INSERTs) oder binaere decoded-bytes (neue).
   const raw = db.unsafe('webauthn_credential_lookup');
   const credId = input.response.id;
+  let credIdBin: Buffer;
+  try {
+    credIdBin = Buffer.from(credId, 'base64url');
+  } catch {
+    credIdBin = Buffer.alloc(0);
+  }
   const rows = await raw.query<{
     userId: string;
-    credentialId: string;
+    credentialId: string | Uint8Array;
     publicKey: Buffer;
     counter: number;
     transports: string;
@@ -114,8 +122,8 @@ export async function finishAuthentication(
     `SELECT user_id AS "userId", credential_id AS "credentialId", public_key AS "publicKey",
             counter, transports
        FROM webauthn_credentials
-      WHERE credential_id = $1 AND invalidated_at IS NULL LIMIT 1`,
-    [credId],
+      WHERE (credential_id = $1 OR credential_id = $2) AND invalidated_at IS NULL LIMIT 1`,
+    [credId, credIdBin],
   );
   const cred = rows[0];
   if (!cred) throw HttpError.unauthorized('webauthn_credential_unknown');
@@ -123,8 +131,10 @@ export async function finishAuthentication(
   const credentialTransports = cred.transports
     ? (JSON.parse(cred.transports) as AuthenticatorTransportFuture[])
     : undefined;
+  const credIdString =
+    typeof cred.credentialId === 'string' ? cred.credentialId : credId;
   const credentialBase = {
-    id: cred.credentialId,
+    id: credIdString,
     publicKey: new Uint8Array(cred.publicKey),
     counter: cred.counter,
   };
@@ -160,8 +170,9 @@ export async function finishAuthentication(
   // Counter update (replay protection per spec)
   const scoped = await db.scoped(cred.userId);
   await scoped.query(
-    `UPDATE webauthn_credentials SET counter = $1, last_used_at = $2 WHERE credential_id = $3`,
-    [newCounter, Date.now(), cred.credentialId],
+    `UPDATE webauthn_credentials SET counter = $1, last_used_at = $2
+      WHERE (credential_id = $3 OR credential_id = $4)`,
+    [newCounter, Date.now(), credId, credIdBin],
   );
 
   const ext = input.response.clientExtensionResults as unknown as
@@ -169,7 +180,7 @@ export async function finishAuthentication(
     | undefined;
   const result: LoginFinishResult = {
     userId: cred.userId,
-    credentialId: cred.credentialId,
+    credentialId: credIdString,
     newCounter,
     ...(ext?.prf?.results?.first ? { prfFirst: ext.prf.results.first } : {}),
   };
