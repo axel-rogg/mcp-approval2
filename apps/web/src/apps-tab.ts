@@ -29,7 +29,14 @@ function fmtAge(now: number, ms: number | null | undefined): string {
   return `${d}d ago`;
 }
 
-function appCard(app: AppInstance, now: number): HTMLElement {
+// Trash-Icon inline-SVG (Heroicons-Outline-Style).
+const TRASH_SVG_MARKUP = `<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>`;
+
+function appCard(
+  app: AppInstance,
+  now: number,
+  onDelete: (app: AppInstance) => void,
+): HTMLElement {
   const link = el('a', {
     class: 'app-card-link',
     href: `#/apps/${encodeURIComponent(app.id)}`,
@@ -44,7 +51,20 @@ function appCard(app: AppInstance, now: number): HTMLElement {
     ]),
   ]);
 
-  return el('li', { class: 'card app-card', 'data-id': app.id }, [link]);
+  const deleteBtn = document.createElement('button');
+  deleteBtn.type = 'button';
+  deleteBtn.className = 'icon-btn app-card-delete';
+  deleteBtn.setAttribute('aria-label', `App "${app.title || app.id}" loeschen`);
+  deleteBtn.setAttribute('title', 'App loeschen');
+  deleteBtn.innerHTML = TRASH_SVG_MARKUP;
+  deleteBtn.addEventListener('click', (e) => {
+    // Verhindert dass der Card-Link triggert.
+    e.preventDefault();
+    e.stopPropagation();
+    onDelete(app);
+  });
+
+  return el('li', { class: 'card app-card', 'data-id': app.id }, [link, deleteBtn]);
 }
 
 function emptyState(): HTMLElement {
@@ -71,6 +91,21 @@ export async function renderAppsTab(
   const main = el('main', { class: 'apps-tab' });
   const listHost = el('ul', { class: 'apps-list' });
 
+  async function handleDelete(appInst: AppInstance): Promise<void> {
+    const title = appInst.title || appInst.id;
+    if (!window.confirm(`App "${title}" wirklich loeschen?\n\nDas kann nicht rueckgaengig gemacht werden.`)) {
+      return;
+    }
+    try {
+      await api.deleteApp(appInst.id);
+    } catch (err) {
+      const msg = err instanceof ApiError ? `${err.code}: ${err.message}` : String(err);
+      alert('Loeschen fehlgeschlagen: ' + msg);
+      return;
+    }
+    await reload();
+  }
+
   async function reload(): Promise<void> {
     listHost.replaceChildren(el('p', { class: 'muted', text: 'Lade…' }));
     let apps: AppInstance[];
@@ -87,7 +122,9 @@ export async function renderAppsTab(
     }
     const now = Date.now();
     listHost.replaceChildren();
-    for (const a of apps) listHost.appendChild(appCard(a, now));
+    for (const a of apps) {
+      listHost.appendChild(appCard(a, now, (app) => void handleDelete(app)));
+    }
   }
 
   main.appendChild(el('header', { class: 'apps-tab-header' }, [el('h1', { text: 'Apps' })]));

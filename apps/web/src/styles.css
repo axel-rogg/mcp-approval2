@@ -774,17 +774,37 @@ code {
 .app-card {
   padding: 0;
   margin-bottom: 0.65rem;
+  display: flex;
+  align-items: stretch;
+  position: relative;
 }
 
 .app-card-link {
   display: block;
   padding: 0.85rem 1rem;
   color: var(--fg);
+  flex: 1;
+  min-width: 0;
 }
 
 .app-card-link:hover {
   text-decoration: none;
   background: var(--bg);
+}
+
+.app-card-delete {
+  align-self: center;
+  margin-right: 0.5rem;
+  flex-shrink: 0;
+  color: var(--fg-muted);
+  width: 2rem;
+  height: 2rem;
+}
+
+.app-card-delete:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+  background: var(--danger-bg);
 }
 
 .app-card-title {
