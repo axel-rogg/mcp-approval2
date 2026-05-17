@@ -432,8 +432,18 @@ async function renderServersView(
       return;
     }
 
+    // Render-Phase: ab hier sind alle Fetches done. Wenn der inv-Body nicht
+    // die erwartete Shape hat (z.B. Server-Drift bei Schema-Aenderungen),
+    // throwen die Accessors unten — wir wrappen in try/catch damit
+    // "Lade Inventar…" nicht stehen bleibt.
+    try {
+    const safeInv: InventoryResponse = {
+      native: Array.isArray(inv?.native) ? inv.native : [],
+      gateways: Array.isArray(inv?.gateways) ? inv.gateways : [],
+      available: Array.isArray(inv?.available) ? inv.available : [],
+    };
     const haveProviders = new Set(creds.map((c) => c.provider));
-    const sections = sectionsFromInventory(inv);
+    const sections = sectionsFromInventory(safeInv);
     listHost.replaceChildren();
     for (const s of sections) {
       listHost.appendChild(
@@ -447,7 +457,7 @@ async function renderServersView(
 
     // Verfuegbar-Section: Catalog-Defaults die der User noch nicht aktiviert
     // hat. Render je Card als kompakte Box mit [Aktivieren]-Knopf.
-    if (inv.available && inv.available.length > 0) {
+    if (safeInv.available && safeInv.available.length > 0) {
       const availHeader = document.createElement('h2');
       availHeader.className = 'tools-available-header';
       availHeader.textContent = 'Verfügbar';
@@ -459,7 +469,7 @@ async function renderServersView(
         'Aktivieren bringt die Tools in deine Liste — Tokens / OAuth musst du danach konfigurieren.';
       listHost.appendChild(availDesc);
 
-      for (const av of inv.available) {
+      for (const av of safeInv.available) {
         const card = document.createElement('section');
         card.className = 'card available-server-card';
 
@@ -494,11 +504,24 @@ async function renderServersView(
       }
     }
 
-    const total = inv.native.length + inv.gateways.reduce((a, g) => a + g.tools.length, 0);
-    const availableCount = inv.available?.length ?? 0;
+    const total =
+      safeInv.native.length +
+      safeInv.gateways.reduce((a, g) => a + (g.tools?.length ?? 0), 0);
+    const availableCount = safeInv.available?.length ?? 0;
     footerHost.textContent =
-      `Gesamt: ${total} Tools über ${1 + inv.gateways.length} aktivierte Server` +
+      `Gesamt: ${total} Tools über ${1 + safeInv.gateways.length} aktivierte Server` +
       (availableCount > 0 ? ` · ${availableCount} weitere verfügbar` : '');
+    } catch (renderErr) {
+      // Render-Pfad ist hard-failed. "Lade Inventar…"-Placeholder mit Fehler
+      // ueberschreiben damit der User nicht im Limbo haengt.
+      console.error('inventory render failed', renderErr, inv, creds);
+      listHost.replaceChildren(
+        Object.assign(document.createElement('p'), {
+          className: 'err',
+          textContent: `Inventar-Rendering fehlgeschlagen: ${(renderErr as Error).message ?? String(renderErr)}`,
+        }),
+      );
+    }
   }
 
   async function handleToggleSubscription(name: string, enabled: boolean): Promise<void> {
@@ -598,24 +621,32 @@ function parseAutoOpenProvider(): string | undefined {
 /**
  * Slots aus dem Inventar bauen: pro Provider den Gateway-Display-Namen
  * sammeln der ihn deklariert. So weiss der User "Benötigt für: gws".
+ *
+ * Sammelt aus aktivierten gateways UND available-(noch-nicht-aktivierten)
+ * Servern — damit User Tokens vorab konfigurieren kann.
  */
 function buildSlotsFromInventory(inv: InventoryResponse): CredentialSlot[] {
   const byProvider = new Map<string, { kind: string | null; usedBy: string[] }>();
-  for (const gw of inv.gateways) {
-    for (const rc of gw.requiredCredentials ?? []) {
+  const collect = (name: string, displayName: string, reqs: ReadonlyArray<InventoryRequiredCredential>) => {
+    for (const rc of reqs ?? []) {
       const existing = byProvider.get(rc.provider);
+      const usedByName = displayName || name;
       if (!existing) {
         byProvider.set(rc.provider, {
           kind: rc.kind ?? null,
-          usedBy: [gw.displayName || gw.name],
+          usedBy: [usedByName],
         });
       } else {
-        if (!existing.usedBy.includes(gw.displayName || gw.name)) {
-          existing.usedBy.push(gw.displayName || gw.name);
-        }
+        if (!existing.usedBy.includes(usedByName)) existing.usedBy.push(usedByName);
         if (existing.kind === null && rc.kind !== null) existing.kind = rc.kind;
       }
     }
+  };
+  for (const gw of inv.gateways ?? []) {
+    collect(gw.name, gw.displayName, gw.requiredCredentials);
+  }
+  for (const av of inv.available ?? []) {
+    collect(av.name, av.displayName, av.requiredCredentials);
   }
   return [...byProvider.entries()]
     .map(([provider, v]) => ({ provider, kind: v.kind, usedBy: v.usedBy }))
