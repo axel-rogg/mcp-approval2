@@ -11,7 +11,7 @@
  * purges old caches.
  */
 
-const CACHE_VERSION = 'mcp-approval2-v1';
+const CACHE_VERSION = 'mcp-approval2-v2';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -105,6 +105,14 @@ self.addEventListener('notificationclick', (event) => {
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return;
+
+  // Navigation-Requests (top-level browsing) NIE abfangen. Wenn der Server
+  // einen 302-Redirect returnt (OAuth-Callback: /auth/google/callback →
+  // 302 zu /), wird der mit redirect=manual-mode zu einer opaque-redirect-
+  // Response — die der Browser dann nicht folgt. Resultat: TypeError
+  // "Failed to fetch" + Browser haengt. Fix: SW gibt navigation-requests
+  // komplett an den Browser zurueck — der kann 302-Chains nativ handlen.
+  if (req.mode === 'navigate') return;
 
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
