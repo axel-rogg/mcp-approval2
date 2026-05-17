@@ -51,6 +51,7 @@ import { auth as authMiddleware } from './middleware/auth.js';
 // Public + auth-protected routes
 import { healthRoutes } from './routes/health.js';
 import { googleAuthRoutes } from './routes/auth/google.js';
+import { debugRoutes } from './routes/debug.js';
 import { sessionRoutes } from './routes/auth/session.js';
 import { webauthnRoutes } from './routes/auth/webauthn.js';
 import { inviteRoutes } from './routes/auth/invite.js';
@@ -302,6 +303,8 @@ export async function createApp(
   // Public routes (kein Bearer-Token noetig)
   // ─────────────────────────────────────────────────────────────────────
   app.route('/', healthRoutes());
+  // Debug-Diagnostics — `/debug/whoami` etc. Auth-frei, keine Secrets.
+  app.route('/', debugRoutes(server));
 
   // OAuth 2.1 Authorization-Server (Discovery + JWKS sind public; Authorize/
   // Token/Register/Revoke regeln Auth intern).
