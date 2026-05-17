@@ -12,7 +12,7 @@
  */
 import { Hono } from 'hono';
 import type { AppBindings, ServerContext } from '../lib/context.js';
-import { resolveOrigin } from '../lib/config.js';
+import { resolveOrigin, resolveRpId } from '../lib/config.js';
 
 const SAFE_HEADERS = [
   'host',
@@ -64,6 +64,8 @@ export function debugRoutes(server: ServerContext) {
         requestOrigin,
         configOrigin: server.config.ORIGIN,
         rpOrigin: server.config.RP_ORIGIN,
+        configRpId: server.config.RP_ID,
+        resolvedRpId: resolveRpId(requestOrigin, server.config),
         cookieDomain,
         cookieDomainApplies,
         allowedOrigins: server.config.ALLOWED_ORIGINS,
