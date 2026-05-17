@@ -21,6 +21,7 @@ import type { AppBindings, ServerContext } from '../../lib/context.js';
 import { HttpError } from '../../lib/errors.js';
 import { auth } from '../../middleware/auth.js';
 import { authCookieOpts } from '../../lib/cookie.js';
+import { resolveOrigin } from '../../lib/config.js';
 import { beginRegistration, finishRegistration } from '../../auth/webauthn/registration.js';
 import { beginAuthentication, finishAuthentication } from '../../auth/webauthn/authentication.js';
 import { issueSessionJwt } from '../../auth/session/issuer.js';
@@ -163,7 +164,7 @@ export function webauthnRoutes(server: ServerContext): Hono<AppBindings> {
         server.config,
       );
       const refresh = await issueInitialRefresh(server.db, server.config, { sessionId, userId: result.userId });
-      setCookie(c, 'refresh_token', refresh.rawToken, authCookieOpts(server.config, { maxAge: server.config.REFRESH_TTL_SEC }));
+      setCookie(c, 'refresh_token', refresh.rawToken, authCookieOpts(server.config, { maxAge: server.config.REFRESH_TTL_SEC, requestOrigin: resolveOrigin(c.req.raw, server.config) }));
 
       return c.json({
         accessToken: token,

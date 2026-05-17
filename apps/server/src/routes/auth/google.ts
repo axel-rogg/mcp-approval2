@@ -87,7 +87,7 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
       ...(inviteToken ? { inviteToken } : {}),
       ...(returnTo ? { returnTo } : {}),
     };
-    setCookie(c, STATE_COOKIE, JSON.stringify(payload), authCookieOpts(server.config, { maxAge: 10 * 60 }));
+    setCookie(c, STATE_COOKIE, JSON.stringify(payload), authCookieOpts(server.config, { maxAge: 10 * 60, requestOrigin }));
     const startArgs = inviteToken
       ? { state, nonce, inviteToken, redirectUri }
       : { state, nonce, redirectUri };
@@ -132,7 +132,9 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
     } catch {
       throw HttpError.badRequest('invalid_request', 'corrupt oauth state cookie');
     }
-    deleteCookie(c, STATE_COOKIE, deleteCookieOpts(server.config));
+    // Multi-Origin: derive Origin um Cookie auf richtigen Scope zu loeschen
+    const callbackOrigin = resolveOrigin(c.req.raw, server.config);
+    deleteCookie(c, STATE_COOKIE, deleteCookieOpts(server.config, { requestOrigin: callbackOrigin }));
 
     const profile = await idp.complete({
       code,
@@ -219,15 +221,16 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
       details: { sessionId, idp: 'google' },
     });
 
-    // Refresh-Token als HTTP-only-Cookie
-    setCookie(c, 'refresh_token', refresh.rawToken, authCookieOpts(server.config, { maxAge: server.config.REFRESH_TTL_SEC }));
+    // Refresh-Token als HTTP-only-Cookie (Origin-aware: fly.dev wird
+    // host-scoped, ai-toolhub.org bekommt .ai-toolhub.org Domain)
+    setCookie(c, 'refresh_token', refresh.rawToken, authCookieOpts(server.config, { maxAge: server.config.REFRESH_TTL_SEC, requestOrigin: callbackOrigin }));
 
     // AS-3 (§1.1): wenn die Login-Start-Phase eine `returnTo` mitgegeben
     // hat (z.B. /oauth/authorize-Browser-Flow), redirect dorthin nach
     // Session-Bake. Wir setzen ein same-origin-Session-Cookie (`session_jwt`)
     // damit der nachgelagerte Authorize-Endpoint den User wiedererkennt.
     if (stateCookie.returnTo && isSafeReturnPath(stateCookie.returnTo, returnAllowOrigins(server.config))) {
-      setCookie(c, 'session_jwt', accessToken, authCookieOpts(server.config, { maxAge: server.config.SESSION_TTL_SEC }));
+      setCookie(c, 'session_jwt', accessToken, authCookieOpts(server.config, { maxAge: server.config.SESSION_TTL_SEC, requestOrigin: callbackOrigin }));
       log.info(
         { event: 'auth.google.callback.redirect', returnTo: stateCookie.returnTo, userId, role },
         'oauth.callback.redirect',

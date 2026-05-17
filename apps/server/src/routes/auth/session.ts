@@ -12,6 +12,7 @@ import { issueSessionJwt } from '../../auth/session/issuer.js';
 import { rotateRefresh, revokeSession } from '../../auth/session/refresh.js';
 import { findUserByEmail } from '../../services/user.js';
 import { authCookieOpts, deleteCookieOpts } from '../../lib/cookie.js';
+import { resolveOrigin } from '../../lib/config.js';
 
 export function sessionRoutes(server: ServerContext): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
@@ -34,7 +35,8 @@ export function sessionRoutes(server: ServerContext): Hono<AppBindings> {
       { userId: result.userId, email: u.email, role: u.role, sessionId: result.sessionId },
       server.config,
     );
-    setCookie(c, 'refresh_token', result.newToken.rawToken, authCookieOpts(server.config, { maxAge: server.config.REFRESH_TTL_SEC }));
+    const requestOrigin = resolveOrigin(c.req.raw, server.config);
+    setCookie(c, 'refresh_token', result.newToken.rawToken, authCookieOpts(server.config, { maxAge: server.config.REFRESH_TTL_SEC, requestOrigin }));
     return c.json({ accessToken: token, expiresAt, sessionId: result.sessionId });
   });
 
@@ -46,7 +48,8 @@ export function sessionRoutes(server: ServerContext): Hono<AppBindings> {
       userId: principal.userId,
       reason: 'logout',
     });
-    deleteCookie(c, 'refresh_token', deleteCookieOpts(server.config));
+    const requestOrigin = resolveOrigin(c.req.raw, server.config);
+    deleteCookie(c, 'refresh_token', deleteCookieOpts(server.config, { requestOrigin }));
     return c.json({ ok: true });
   });
 
