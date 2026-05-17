@@ -203,12 +203,75 @@ function renderArchiveList(host: HTMLElement, items: ReadonlyArray<PendingApprov
     );
     return;
   }
-  // Sortierung kommt schon vom Server (decided-at desc). Wir gruppieren
-  // optisch via einfacher Status-Badge — keine separate Sections, sonst
-  // schaut die Chronologie kaputt aus.
-  for (const item of items) {
-    host.appendChild(renderArchiveCard(item));
+  // Drei zusammengeklappte Gruppen (approved / rejected / expired). Jede ist
+  // ein <details>-Element, default-collapsed — User klickt um zu expanden.
+  // Reihenfolge: approved zuerst (wichtigste), dann rejected, dann expired.
+  const groups: Array<{
+    status: PendingApproval['status'];
+    label: string;
+    icon: string;
+  }> = [
+    { status: 'approved', label: 'Approved', icon: '✓' },
+    { status: 'rejected', label: 'Rejected', icon: '✗' },
+    { status: 'expired', label: 'Expired', icon: '⏱' },
+  ];
+
+  for (const g of groups) {
+    const groupItems = items.filter((i) => i.status === g.status);
+    if (groupItems.length === 0) continue;
+    host.appendChild(renderArchiveGroup(g.label, g.icon, g.status, groupItems));
   }
+}
+
+function renderArchiveGroup(
+  label: string,
+  icon: string,
+  status: PendingApproval['status'],
+  items: ReadonlyArray<PendingApproval>,
+): HTMLElement {
+  const details = document.createElement('details');
+  details.className = `archive-group archive-group-${status}`;
+  // Default-collapsed — User klickt um zu expanden.
+  details.style.marginBottom = '0.5rem';
+  details.style.borderRadius = '6px';
+  details.style.background = 'var(--surface-2, #f9fafb)';
+
+  const summary = document.createElement('summary');
+  summary.style.padding = '0.5rem 0.75rem';
+  summary.style.cursor = 'pointer';
+  summary.style.fontWeight = '600';
+  summary.style.userSelect = 'none';
+  summary.style.display = 'flex';
+  summary.style.justifyContent = 'space-between';
+  summary.style.alignItems = 'center';
+  summary.style.gap = '0.5rem';
+
+  const left = document.createElement('span');
+  left.textContent = `${icon} ${label}`;
+  summary.appendChild(left);
+
+  const b = statusBadge(status);
+  const count = document.createElement('span');
+  count.textContent = String(items.length);
+  count.style.background = b.bg;
+  count.style.color = b.fg;
+  count.style.padding = '1px 8px';
+  count.style.borderRadius = '10px';
+  count.style.fontSize = '0.75rem';
+  count.style.minWidth = '1.5rem';
+  count.style.textAlign = 'center';
+  summary.appendChild(count);
+
+  details.appendChild(summary);
+
+  const body = document.createElement('div');
+  body.style.padding = '0 0.5rem 0.5rem 0.5rem';
+  for (const item of items) {
+    body.appendChild(renderArchiveCard(item));
+  }
+  details.appendChild(body);
+
+  return details;
 }
 
 function fmtTime(ms: number | null | undefined): string {
