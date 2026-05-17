@@ -315,7 +315,9 @@ function renderServerCard(
 
   if (s.isGateway) {
     const configLink = document.createElement('a');
-    configLink.href = `#/tools/servers/${encodeURIComponent(s.name)}/config`;
+    // Phase B: Detail-Page (Übersicht/Auth/Tool-Defaults/Diagnostik) als
+    // One-Stop-Shop, statt Legacy-Drawer #/tools/servers/<name>/config.
+    configLink.href = `#/tools/servers/${encodeURIComponent(s.name)}`;
     configLink.className = 'btn btn-icon btn-config server-card-config';
     configLink.setAttribute('aria-label', `${s.displayName} konfigurieren`);
     configLink.title = 'Konfigurieren (Tokens, OAuth, Tool-Defaults, Diagnose)';

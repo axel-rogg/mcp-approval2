@@ -2268,6 +2268,107 @@ code {
 }
 
 /* ───────────────────────────────────────────────────────────────────────
+   Phase B UX-Refactor — Server-Detail-Page
+   ─────────────────────────────────────────────────────────────────────── */
+
+.server-detail {
+  padding: 1rem 1.2rem;
+}
+
+.server-detail-head {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.server-detail-title {
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 600;
+  flex-grow: 1;
+}
+
+.server-detail-tabs {
+  margin-bottom: 1rem;
+}
+
+.server-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-top: 0.8rem;
+}
+
+.server-detail-section {
+  padding: 1rem;
+}
+
+.server-detail-kv {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.server-detail-kv:last-child {
+  border-bottom: none;
+}
+
+.server-detail-kv-key {
+  min-width: 9rem;
+  flex-shrink: 0;
+}
+
+.server-detail-kv-val {
+  font-weight: 500;
+}
+
+.server-detail-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.5rem;
+}
+
+.server-detail-action-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.server-detail-dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.4rem 1rem;
+}
+
+.server-detail-dl dt {
+  font-weight: 500;
+  color: var(--fg-muted);
+}
+
+.server-detail-dl dd {
+  margin: 0;
+}
+
+.banner {
+  padding: 0.7rem 1rem;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.banner-info {
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(37, 99, 235, 0.2);
+}
+
+/* ───────────────────────────────────────────────────────────────────────
    Tools-Tab — Sub-Nav + Per-Gateway-Credential-Status
    ─────────────────────────────────────────────────────────────────────── */
 

@@ -44,6 +44,7 @@ import { renderSettings } from './settings-tab.js';
 import { renderToolsTab } from './tools-tab.js';
 import { renderServerConfig, renderServerOAuthCallback } from './server-config.js';
 import { renderServerNew } from './server-new.js';
+import { renderServerDetail } from './server-detail.js';
 import { renderAdminTab } from './admin-tab.js';
 import { subscribePush } from './push.js';
 import { renderDebugLog, debug } from './debug-log.js';
@@ -81,6 +82,7 @@ type Route =
   | 'apps-detail'
   | 'tools'
   | 'tools-server-new'
+  | 'tools-server-detail'
   | 'tools-server-config'
   | 'tools-server-oauth-callback'
   | 'writemode'
@@ -111,8 +113,13 @@ function parseRoute(): Route {
   if (/^tools\/servers\/[^/?]+\/oauth\/callback/.test(hash)) {
     return 'tools-server-oauth-callback';
   }
-  // #/tools/servers/<name>/config — Per-Server-Config-Drawer (Phase 2)
+  // #/tools/servers/<name>/config — Legacy-Drawer, BC-Alias zu Detail-Page
   if (/^tools\/servers\/[^/?]+\/config/.test(hash)) return 'tools-server-config';
+  // #/tools/servers/<name>/<tab> — Server-Detail-Page (Phase B UX-Refactor)
+  // tab ∈ {overview, auth, defaults, diagnostics}, optional. Default: overview.
+  if (/^tools\/servers\/[^/?]+(?:\/(?:overview|auth|defaults|diagnostics))?(?:\?|$)/.test(hash)) {
+    return 'tools-server-detail';
+  }
   if (hash.startsWith('tools')) return 'tools';
   if (hash.startsWith('defaults')) return 'defaults';
   if (hash.startsWith('writemode') || hash.startsWith('write-mode')) return 'writemode';
@@ -174,6 +181,19 @@ function parseServerConfigName(): string | null {
   }
 }
 
+function parseServerDetailName(): string | null {
+  // hash form: '#/tools/servers/<name>' or '#/tools/servers/<name>/<tab>'
+  // <tab> ∈ {overview, auth, defaults, diagnostics}.
+  const hash = window.location.hash;
+  const m = hash.match(/^#\/tools\/servers\/([^/?]+)(?:\/|\?|$)/);
+  if (!m || !m[1] || m[1] === 'new') return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return m[1];
+  }
+}
+
 async function boot(): Promise<void> {
   const root = document.getElementById('app');
   if (!root) {
@@ -221,6 +241,15 @@ async function boot(): Promise<void> {
     case 'tools-server-new':
       await renderServerNewSafe(root, session);
       return;
+    case 'tools-server-detail': {
+      const name = parseServerDetailName();
+      if (!name) {
+        window.location.hash = '#/tools/servers';
+        return;
+      }
+      await renderServerDetailSafe(root, session, name);
+      return;
+    }
     case 'tools-server-config': {
       const name = parseServerConfigName();
       if (!name) {
@@ -404,6 +433,19 @@ async function renderServerNewSafe(root: HTMLElement, s: Session): Promise<void>
     await renderServerNew(root, api, s);
   } catch (err) {
     console.error('server-new render failed', err);
+    renderSessionExpired(root);
+  }
+}
+
+async function renderServerDetailSafe(
+  root: HTMLElement,
+  s: Session,
+  serverName: string,
+): Promise<void> {
+  try {
+    await renderServerDetail(root, api, s, serverName);
+  } catch (err) {
+    console.error('server-detail render failed', err);
     renderSessionExpired(root);
   }
 }
