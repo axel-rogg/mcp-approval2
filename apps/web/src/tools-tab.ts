@@ -417,7 +417,7 @@ function renderServerCard(
 
   if (s.tools.length === 0) {
     const empty = document.createElement('p');
-    empty.className = 'muted small';
+    empty.className = 'muted small server-card-empty';
     empty.textContent = 'Keine Tools registriert (oder Discovery-Cache leer).';
     details.appendChild(empty);
   } else {

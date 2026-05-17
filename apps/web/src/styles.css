@@ -1496,6 +1496,13 @@ code {
   flex-direction: column;
 }
 
+/* Empty-State innerhalb einer Server-Card — gleicher Left/Right-Inset
+   wie .tool-list, sonst springt der Text aus dem Card-Padding heraus. */
+.server-card-empty {
+  margin: 0;
+  padding: 0 1rem 0.85rem;
+}
+
 .tool-row {
   padding: 0.5rem 0;
   border-top: 1px solid var(--border);
