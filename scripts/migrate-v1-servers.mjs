@@ -91,10 +91,9 @@ try {
 console.log(`  Gefunden: ${servers.length} aktive gateway_servers`);
 
 console.log('\n2. Lese gateway_oauth_tokens (Metadaten ohne Refresh-Tokens)...');
-const oauthRows = d1Query(`
-  SELECT server_id, scopes, authorization_endpoint, token_endpoint, client_id
-    FROM gateway_oauth_tokens
-`);
+const oauthRows = d1Query(
+  'SELECT server_id, scopes, authorization_endpoint, token_endpoint, client_id FROM gateway_oauth_tokens',
+);
 console.log(`  Gefunden: ${oauthRows.length} OAuth-Metadaten-Rows`);
 
 const oauthByServerId = new Map(oauthRows.map((r) => [r.server_id, r]));
