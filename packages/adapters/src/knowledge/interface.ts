@@ -139,6 +139,12 @@ export interface RevokeShareArgs extends OnBehalfOfFields {
 export interface EraseUserArgs {
   readonly userId: string;
   readonly confirmationToken: string;
+  /**
+   * SEC-K-016 + MUSS-§4.1.2: Optional approval-id zur Korrelation. Wird in
+   * den Erase-Receipt-JWS (`payload.approval_id`) eingebettet damit
+   * mcp-knowledge2 die Erase einer Approval-Spur zuordnen kann.
+   */
+  readonly approvalId?: string;
 }
 
 /**

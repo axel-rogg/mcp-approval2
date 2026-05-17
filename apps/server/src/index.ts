@@ -116,8 +116,12 @@ interface BootEnv {
   readonly JWT_RS256_PUBLIC_KEY_PEM?: string;
   readonly JWT_KID?: string;
   readonly MCP_APPROVAL_INTERNAL_TOKEN?: string;
-  /** AS-3: shared S2S Bearer fuer KC2-Calls (alongside OBO-JWT). */
+  /** AS-3: shared S2S Bearer fuer KC2-Calls (alongside OBO-JWT). Legacy admin-master. */
   readonly MCP_KNOWLEDGE_SERVICE_TOKEN?: string;
+  /** SEC-K-009: scope-spezifische Service-Tokens fuer KC2-Internal-Routes. */
+  readonly MCP_KNOWLEDGE_SERVICE_TOKEN_ERASE?: string;
+  readonly MCP_KNOWLEDGE_SERVICE_TOKEN_SYNC?: string;
+  readonly MCP_KNOWLEDGE_SERVICE_TOKEN_OPS?: string;
   /** AS-3: `iss`-Claim in OBO-JWTs an KC2. Default Fallback: config.ORIGIN. */
   readonly SELF_OAUTH_ISSUER?: string;
 }
@@ -210,6 +214,10 @@ async function buildOptionalDeps(
       JWT_ISSUER: string;
       JWT_AUDIENCE: string;
       JWT_KID?: string;
+      SERVICE_TOKEN?: string;
+      SERVICE_TOKEN_ERASE?: string;
+      SERVICE_TOKEN_SYNC?: string;
+      SERVICE_TOKEN_OPS?: string;
     } = {
       KNOWLEDGE_URL: bootEnv.KNOWLEDGE_URL,
       JWT_RS256_PRIVATE_KEY_PEM: knowledgePem,
@@ -217,6 +225,19 @@ async function buildOptionalDeps(
       JWT_AUDIENCE: 'mcp-knowledge2',
     };
     if (bootEnv.JWT_KID !== undefined) knowledgeEnv.JWT_KID = bootEnv.JWT_KID;
+    if (bootEnv.MCP_KNOWLEDGE_SERVICE_TOKEN !== undefined) {
+      knowledgeEnv.SERVICE_TOKEN = bootEnv.MCP_KNOWLEDGE_SERVICE_TOKEN;
+    }
+    // SEC-K-009: scope-spezifische Tokens fuer KC2-Internal-Routes
+    if (bootEnv.MCP_KNOWLEDGE_SERVICE_TOKEN_ERASE !== undefined) {
+      knowledgeEnv.SERVICE_TOKEN_ERASE = bootEnv.MCP_KNOWLEDGE_SERVICE_TOKEN_ERASE;
+    }
+    if (bootEnv.MCP_KNOWLEDGE_SERVICE_TOKEN_SYNC !== undefined) {
+      knowledgeEnv.SERVICE_TOKEN_SYNC = bootEnv.MCP_KNOWLEDGE_SERVICE_TOKEN_SYNC;
+    }
+    if (bootEnv.MCP_KNOWLEDGE_SERVICE_TOKEN_OPS !== undefined) {
+      knowledgeEnv.SERVICE_TOKEN_OPS = bootEnv.MCP_KNOWLEDGE_SERVICE_TOKEN_OPS;
+    }
     deps.knowledge = await createKnowledgeService({ env: knowledgeEnv, audit });
   }
 
@@ -278,6 +299,16 @@ function pickBootEnv(env: NodeJS.ProcessEnv): BootEnv {
   }
   if (env['MCP_KNOWLEDGE_SERVICE_TOKEN']) {
     out.MCP_KNOWLEDGE_SERVICE_TOKEN = env['MCP_KNOWLEDGE_SERVICE_TOKEN'];
+  }
+  // SEC-K-009 scope-spezifische Tokens
+  if (env['MCP_KNOWLEDGE_SERVICE_TOKEN_ERASE']) {
+    out.MCP_KNOWLEDGE_SERVICE_TOKEN_ERASE = env['MCP_KNOWLEDGE_SERVICE_TOKEN_ERASE'];
+  }
+  if (env['MCP_KNOWLEDGE_SERVICE_TOKEN_SYNC']) {
+    out.MCP_KNOWLEDGE_SERVICE_TOKEN_SYNC = env['MCP_KNOWLEDGE_SERVICE_TOKEN_SYNC'];
+  }
+  if (env['MCP_KNOWLEDGE_SERVICE_TOKEN_OPS']) {
+    out.MCP_KNOWLEDGE_SERVICE_TOKEN_OPS = env['MCP_KNOWLEDGE_SERVICE_TOKEN_OPS'];
   }
   if (env['SELF_OAUTH_ISSUER']) out.SELF_OAUTH_ISSUER = env['SELF_OAUTH_ISSUER'];
   return out;

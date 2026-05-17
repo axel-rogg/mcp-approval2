@@ -74,6 +74,21 @@ export interface SignOboArgs {
   readonly ttlSec?: number;
 }
 
+/**
+ * SEC-K-016 / MUSS-§4.1.2: Args fuer `JwtSigner.signEraseReceipt`. JWT bindet
+ * an einen konkreten zu-erasenden User + an die Approval die das authorisiert
+ * hat. mcp-knowledge2 verifiziert `payload.sub === body.user_id` und schuetzt
+ * `jti` gegen Replay.
+ */
+export interface SignEraseReceiptArgs {
+  /** Subject = User-ID die geloescht werden soll. KC2 enforced sub===body.user_id. */
+  readonly sub: string;
+  /** Approval-ID die das Erase autorisiert hat (audit-trail correlation). */
+  readonly approvalId?: string;
+  /** Default 60s — erase ist nicht hot-path, kurze TTL ok. */
+  readonly ttlSec?: number;
+}
+
 export interface JwtSigner {
   /**
    * Signt einen kurzlebigen Service-Boundary-JWT (Legacy-Pattern, v1).
@@ -94,6 +109,18 @@ export interface JwtSigner {
    * Plan-Ref: PLAN-as3-autonomous.md §2.1.
    */
   signOBO(args: SignOboArgs): Promise<string>;
+
+  /**
+   * SEC-K-016 / MUSS-§4.1.2: Signt einen Erase-Receipt-JWS fuer den
+   * Service-Call approval2 → KC2 /v1/internal/erase-user. Audience ist fest
+   * `mcp-knowledge2:erase`, signed mit demselben RS256-Key wie OBO →
+   * Verifikation via JWKS dort.
+   *
+   * Optional: solange KC2 REQUIRE_ERASE_RECEIPT=false ist, kann der Signer
+   * undefined returnen oder die Methode kann komplett fehlen — der Caller
+   * sollte beide Faelle abfangen.
+   */
+  signEraseReceipt?(args: SignEraseReceiptArgs): Promise<string>;
 }
 
 export type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
@@ -110,8 +137,27 @@ export interface HttpKnowledgeAdapterOptions {
    * D-10: Statischer Service-Token (Bearer) fuer Internal-Routes wie
    * `/v1/internal/erase-user`. Wenn nicht gesetzt: `eraseUser` wirft beim
    * Aufruf (statt unsicher mit User-JWT zu probieren).
+   *
+   * Legacy-Token (KC2's SERVICE_TOKEN). Bei aktivem Scope-Split bevorzugt
+   * `serviceTokens` (per-Scope). Sobald KC2 das legacy SERVICE_TOKEN
+   * unsetzt, MUSS der Caller scoped tokens setzen.
    */
   readonly serviceToken?: string;
+
+  /**
+   * SEC-K-009: scope-spezifische Service-Tokens fuer die KC2-Internal-Routes.
+   * `serviceFetch` waehlt anhand des Path die richtige Variante; faellt auf
+   * `serviceToken` (legacy admin-master) zurueck wenn ein scope-token nicht
+   * gesetzt ist.
+   */
+  readonly serviceTokens?: {
+    /** Fuer /v1/internal/erase-user */
+    readonly erase?: string;
+    /** Fuer /v1/internal/users/sync */
+    readonly sync?: string;
+    /** Fuer /v1/internal/health-deep (+ weitere read-only ops) */
+    readonly ops?: string;
+  };
 }
 
 interface AuthedFetchArgs {
@@ -153,6 +199,7 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
   private readonly jwtTtlSec: number;
   private readonly requestIdFactory: () => string;
   private readonly serviceToken: string | undefined;
+  private readonly serviceTokens: HttpKnowledgeAdapterOptions['serviceTokens'];
 
   constructor(opts: HttpKnowledgeAdapterOptions) {
     if (!opts.baseUrl) throw new Error('HttpKnowledgeAdapter: baseUrl required');
@@ -163,6 +210,22 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
     this.jwtTtlSec = opts.jwtTtlSec ?? 60;
     this.requestIdFactory = opts.requestIdFactory ?? defaultRequestId;
     this.serviceToken = opts.serviceToken;
+    this.serviceTokens = opts.serviceTokens;
+  }
+
+  /**
+   * SEC-K-009: waehle den scope-spezifischen Service-Token basierend auf
+   * dem Path. Fallback auf legacy serviceToken (master) wenn scope-Variante
+   * nicht gesetzt — kompatibel mit nicht-migrierten KC2-Versionen.
+   */
+  private pickServiceToken(path: string): string | undefined {
+    const tokens = this.serviceTokens;
+    if (tokens) {
+      if (path === '/v1/internal/erase-user' && tokens.erase) return tokens.erase;
+      if (path === '/v1/internal/users/sync' && tokens.sync) return tokens.sync;
+      if (path === '/v1/internal/health-deep' && tokens.ops) return tokens.ops;
+    }
+    return this.serviceToken;
   }
 
   // ---------------------------------------------------------------------------
@@ -212,8 +275,11 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
     return this.doFetch<T>({ method: args.method, url, token, body: args.body, reqId });
   }
 
-  private async serviceFetch<T>(args: ServiceFetchArgs): Promise<T> {
-    if (!this.serviceToken) {
+  private async serviceFetch<T>(
+    args: ServiceFetchArgs & { readonly extraHeaders?: Record<string, string> },
+  ): Promise<T> {
+    const token = this.pickServiceToken(args.path);
+    if (!token) {
       throw new ServiceError(
         'HttpKnowledgeAdapter: serviceToken not configured — cannot call internal route',
         500,
@@ -224,9 +290,10 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
     return this.doFetch<T>({
       method: args.method,
       url,
-      token: this.serviceToken,
+      token,
       body: args.body,
       reqId,
+      ...(args.extraHeaders !== undefined ? { extraHeaders: args.extraHeaders } : {}),
     });
   }
 
@@ -238,6 +305,8 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
     readonly reqId: string;
     /** AS-3: OBO-JWT als `X-On-Behalf-Of`-Header, parallel zum Service-Bearer. */
     readonly oboToken?: string;
+    /** SEC-K-016: zusaetzliche Header (z.B. `x-erase-receipt`). */
+    readonly extraHeaders?: Record<string, string>;
   }): Promise<T> {
     const headers: Record<string, string> = {
       authorization: `Bearer ${opts.token}`,
@@ -246,6 +315,11 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
     };
     if (opts.oboToken !== undefined) {
       headers['x-on-behalf-of'] = opts.oboToken;
+    }
+    if (opts.extraHeaders !== undefined) {
+      for (const [k, v] of Object.entries(opts.extraHeaders)) {
+        headers[k.toLowerCase()] = v;
+      }
     }
     let bodyInit: BodyInit | undefined;
     if (opts.body !== undefined) {
@@ -547,6 +621,22 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
   }
 
   async eraseUser(args: EraseUserArgs): Promise<EraseUserResult> {
+    // SEC-K-016 + MUSS-§4.1.2: wenn der Signer `signEraseReceipt` anbietet,
+    // signen wir einen Receipt-JWS und packen ihn als `x-erase-receipt`-
+    // Header dazu. KC2 enforced (mit REQUIRE_ERASE_RECEIPT=true) dass
+    // `payload.sub === body.user_id`. Bei Adaptern ohne Signer-Support
+    // weiterhin nur SERVICE_TOKEN — KC2 toleriert das im Migrations-Window.
+    const extraHeaders: Record<string, string> = {};
+    if (this.jwtSigner.signEraseReceipt) {
+      const receiptArgs: { sub: string; ttlSec: number; approvalId?: string } = {
+        sub: args.userId,
+        ttlSec: 60,
+      };
+      if (args.approvalId !== undefined) receiptArgs.approvalId = args.approvalId;
+      const receipt = await this.jwtSigner.signEraseReceipt(receiptArgs);
+      extraHeaders['x-erase-receipt'] = receipt;
+    }
+
     const raw = await this.serviceFetch<{
       status: 'ok' | 'partial';
       deleted: {
@@ -565,6 +655,7 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
         user_id: args.userId,
         confirmation_token: args.confirmationToken,
       },
+      extraHeaders,
     });
     return {
       status: raw.status,

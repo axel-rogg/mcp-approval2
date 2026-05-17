@@ -624,8 +624,15 @@ export interface KnowledgeServiceEnv {
    * Factory den HttpKnowledgeAdapter mit OBO-Pattern auf (alle user-Routes
    * senden `Authorization: Bearer <service-token>` + `X-On-Behalf-Of: <obo-jwt>`).
    * Wenn ungesetzt: Legacy-Pfad (`Authorization: Bearer <user-jwt>`).
+   *
+   * SEC-K-009: Internal-Routes nutzen die scope-spezifischen Tokens unten
+   * wenn gesetzt. Legacy SERVICE_TOKEN bleibt der Fallback bis KC2 das
+   * legacy master-Secret unsetzt.
    */
   readonly SERVICE_TOKEN?: string;
+  readonly SERVICE_TOKEN_ERASE?: string;
+  readonly SERVICE_TOKEN_SYNC?: string;
+  readonly SERVICE_TOKEN_OPS?: string;
 }
 
 /**
@@ -674,6 +681,7 @@ export async function createKnowledgeService(args: {
     baseUrl: string;
     jwtSigner: JwtSigner;
     serviceToken?: string;
+    serviceTokens?: { erase?: string; sync?: string; ops?: string };
   } = {
     baseUrl: args.env.KNOWLEDGE_URL,
     jwtSigner: signer,
@@ -682,6 +690,21 @@ export async function createKnowledgeService(args: {
   // OBO-Pfad um. Ohne den Token gilt der Legacy-Bearer-JWT-Pfad.
   if (args.env.SERVICE_TOKEN !== undefined && args.env.SERVICE_TOKEN.length > 0) {
     baseAdapterOpts.serviceToken = args.env.SERVICE_TOKEN;
+  }
+  // SEC-K-009: scope-spezifische Tokens. Wenn gesetzt nimmt pickServiceToken
+  // in HttpKnowledgeAdapter sie pro path; sonst Fallback auf master-token.
+  const scopedTokens: { erase?: string; sync?: string; ops?: string } = {};
+  if (args.env.SERVICE_TOKEN_ERASE !== undefined && args.env.SERVICE_TOKEN_ERASE.length > 0) {
+    scopedTokens.erase = args.env.SERVICE_TOKEN_ERASE;
+  }
+  if (args.env.SERVICE_TOKEN_SYNC !== undefined && args.env.SERVICE_TOKEN_SYNC.length > 0) {
+    scopedTokens.sync = args.env.SERVICE_TOKEN_SYNC;
+  }
+  if (args.env.SERVICE_TOKEN_OPS !== undefined && args.env.SERVICE_TOKEN_OPS.length > 0) {
+    scopedTokens.ops = args.env.SERVICE_TOKEN_OPS;
+  }
+  if (Object.keys(scopedTokens).length > 0) {
+    baseAdapterOpts.serviceTokens = scopedTokens;
   }
   const fetchImpl = args.fetchImpl;
   const adapter = new HttpKnowledgeAdapter(
@@ -763,6 +786,27 @@ export function makeRs256Signer(args: Rs256SignerArgs): JwtSigner {
         expiresInSec: ttlSec,
         issuer,
         audience: aud,
+        subject: sub,
+        jti: randomUuid(),
+      };
+      if (kid !== undefined) signArgs.kid = kid;
+      return signJwt(signArgs);
+    },
+
+    // SEC-K-016 + MUSS-§4.1.2: Erase-Receipt-JWS. Selber RS256-Key + Issuer
+    // wie OBO; KC2 verifiziert beide ueber das gleiche JWKS-Endpoint.
+    // Audience fest 'mcp-knowledge2:erase' → KC2 unterscheidet daran von
+    // OBO. payload.sub === user-id-to-erase; KC2 enforced sub===body.user_id.
+    async signEraseReceipt({ sub, approvalId, ttlSec = 60 }) {
+      const payload: Record<string, unknown> = {};
+      if (approvalId !== undefined) payload['approval_id'] = approvalId;
+      const signArgs: Parameters<typeof signJwt>[0] = {
+        payload,
+        privateKey,
+        alg: 'RS256',
+        expiresInSec: ttlSec,
+        issuer,
+        audience: 'mcp-knowledge2:erase',
         subject: sub,
         jti: randomUuid(),
       };
