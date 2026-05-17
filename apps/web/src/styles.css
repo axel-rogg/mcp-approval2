@@ -786,42 +786,6 @@ code {
   font-style: italic;
 }
 
-/* Skill-Bundle (PLAN-doc-linking §9 P9) — Resource-Eager-Load card. */
-.storage-bundle {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.storage-bundle-resource {
-  border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
-  border-radius: 6px;
-  padding: 0.5rem 0.75rem;
-}
-
-.storage-bundle-resource > summary {
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 0.9rem;
-  padding: 0.125rem 0;
-  list-style: none;
-  user-select: none;
-}
-
-.storage-bundle-resource > summary::-webkit-details-marker {
-  display: none;
-}
-
-.storage-bundle-resource > summary::before {
-  content: '▸ ';
-  color: var(--fg-muted);
-  transition: transform 0.15s ease;
-  display: inline-block;
-}
-
-.storage-bundle-resource[open] > summary::before {
-  transform: rotate(90deg);
-}
 
 .edit-pencil {
   appearance: none;
@@ -1796,20 +1760,16 @@ code {
 .approval-card .ttl       { margin-left: auto; color: var(--fg-muted); font-size: 0.8rem; }
 .approval-card .when      { margin-left: auto; font-size: 0.8rem; color: var(--fg-muted); }
 .approval-card.pending    { border-left: 3px solid var(--accent); }
-/* Archive/History: flach als Ledger-Liste — kein Full-Border, kein Radius,
- * kein margin-Spalt. Nur eine 1px Trenner-Linie unten zwischen den Items. */
+/* Archive/History: kompakte Box (Auswahl-Affordance bleibt), aber kleiner
+ * als Pending-Cards. Full-Border + Border-Radius wie Pending, aber
+ * reduziertes Padding + dichtere Marge + kleinere Fonts. */
 .approval-card.history {
   background: transparent;
-  border: none;
-  border-bottom: 1px solid var(--border);
-  border-radius: 0;
-  padding: 0.3rem 0.5rem;
-  margin: 0;
+  padding: 0.35rem 0.55rem;
+  margin-bottom: 0.25rem;
 }
-.approval-card.history:last-child { border-bottom: none; }
 .approval-card.history .card-row1 { font-size: 0.9rem; }
-.approval-card.history .card-row2 { margin-top: 0; font-size: 0.78rem; }
-.approval-card.history:hover { background: var(--bg-card); }
+.approval-card.history .card-row2 { margin-top: 0.1rem; font-size: 0.78rem; }
 .approval-card .st-icon   { font-size: 1rem; width: 1.2em; display: inline-block; text-align: center; }
 .approval-card.st-approved .st-icon { color: var(--ok); }
 .approval-card.st-rejected .st-icon { color: var(--danger); }

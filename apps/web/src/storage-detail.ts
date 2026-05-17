@@ -151,61 +151,6 @@ function renderRefChip(ref: RefView, prefix: string): HTMLAnchorElement {
   return a;
 }
 
-/**
- * Render fetched bundle-resources (refs.outgoing with role='resource' + body)
- * as collapsible <details> sections under the bundle-button card.
- *
- * Per-resource decode: ref carries body=base64 + bodyEncoding='base64'.
- * Re-uses decodeBody by treating ref as a KnowledgeObject-shaped subset.
- * Truncated refs (oversized/budget) show a hint inline.
- *
- * PLAN-document-linking §9 P9.
- */
-function renderBundleResources(section: HTMLElement, refs: ReadonlyArray<RefView>): void {
-  const resources = refs.filter((r) => r.role === 'resource');
-  if (resources.length === 0) {
-    section.appendChild(
-      Object.assign(document.createElement('p'), {
-        className: 'muted',
-        textContent: 'Keine Resource-Refs auf diesem Skill.',
-      }),
-    );
-    return;
-  }
-  for (const ref of resources) {
-    const det = document.createElement('details');
-    det.className = 'storage-bundle-resource';
-    const sum = document.createElement('summary');
-    sum.textContent = stripIpiWrappers(ref.title ?? ref.id);
-    det.appendChild(sum);
-
-    const tr = (ref as RefView & { truncatedReason?: string }).truncatedReason;
-    const body = (ref as RefView & { body?: string }).body;
-    if (tr) {
-      const note = document.createElement('p');
-      note.className = 'muted';
-      note.textContent =
-        tr === 'oversized'
-          ? '⚠ Body > 1 MB — bitte separat öffnen.'
-          : '⚠ Token-Budget erschöpft — bitte separat öffnen.';
-      det.appendChild(note);
-    } else if (body) {
-      // Decode as base64-text (same UTF-8 path as decodeBody).
-      const pseudo = { body, bodyEncoding: 'base64' } as KnowledgeObject;
-      const text = decodeBody(pseudo);
-      const pre = document.createElement('pre');
-      pre.className = 'storage-body-pre';
-      pre.textContent = stripIpiWrappers(text);
-      det.appendChild(pre);
-    } else {
-      const note = document.createElement('p');
-      note.className = 'muted';
-      note.textContent = 'Kein Body verfügbar.';
-      det.appendChild(note);
-    }
-    section.appendChild(det);
-  }
-}
 
 export async function renderStorageDetail(
   root: HTMLElement,
@@ -343,41 +288,12 @@ export async function renderStorageDetail(
   });
 
   // ─── Verknüpfungen (Refs) — PLAN-document-linking §10.5 D1.
+  // Chips sind klickbar → Browser-User navigiert per Click. Eager-Bundle-
+  // Mechanik (?include_bodies=resource) wird agent-side via skills.get_bundle
+  // MCP-Tool genutzt; für Browser-Lesen ist der per-Chip-Click ausreichend.
   const refsSection = renderRefsSection(obj.refs);
   if (refsSection) {
     main.appendChild(refsSection);
-  }
-
-  // ─── Skill-Bundle-Button (PLAN-doc-linking §9 P9 + R15).
-  // Für skill_manifest mit ≥1 resource-Ref: Button bietet eager-Bundle-Load
-  // an. Klick re-fetched mit ?include_bodies=resource und rendert die
-  // Resource-Bodies inline als Accordion unter dem Skill-Markdown.
-  const hasResourceRefs = (obj.refs?.outgoing ?? []).some((r) => r.role === 'resource');
-  if (obj.subtype === 'skill_manifest' && hasResourceRefs) {
-    const bundleSection = document.createElement('section');
-    bundleSection.className = 'storage-bundle card';
-    const bundleBtn = document.createElement('button');
-    bundleBtn.type = 'button';
-    bundleBtn.className = 'btn btn-secondary';
-    bundleBtn.textContent = '📦 Resources laden (Bundle)';
-    bundleBtn.title = 'Lädt alle resource-Refs inline. Token-Budget 200 KB.';
-    bundleBtn.addEventListener('click', async () => {
-      bundleBtn.disabled = true;
-      bundleBtn.textContent = '… lade …';
-      try {
-        const full = await api.getObject(obj.id, {
-          expandBody: true,
-          includeRefBodies: ['resource'],
-        });
-        renderBundleResources(bundleSection, full.refs?.outgoing ?? []);
-      } catch (err) {
-        bundleBtn.disabled = false;
-        bundleBtn.textContent = '📦 Resources laden (Bundle)';
-        showToast(`Bundle-Load fehlgeschlagen: ${(err as Error).message}`);
-      }
-    });
-    bundleSection.appendChild(bundleBtn);
-    main.appendChild(bundleSection);
   }
 
   // ─── Summary + Body — Labels weggelassen (User-Wunsch Platz-Spar).
