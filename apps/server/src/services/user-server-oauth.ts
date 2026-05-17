@@ -167,9 +167,16 @@ export function createUserServerOAuthService(
       if (oauth.scopes && oauth.scopes.length > 0) {
         url.searchParams.set('scope', oauth.scopes.join(' '));
       }
-      // Google-OAuth-Specifics: offline-access damit Refresh-Token kommt
-      url.searchParams.set('access_type', 'offline');
-      url.searchParams.set('prompt', 'consent');
+      // Provider-Specifics: nur Google versteht access_type=offline + prompt=consent.
+      // Cloudflare's MCP-OAuth + GitHub + andere geben sonst 500 server_error
+      // wenn man ihnen unbekannte query params schickt.
+      // (Bug-Fix 2026-05-17 nach cf-Authorize-Fail).
+      const provider = oauth.provider?.toLowerCase() ?? '';
+      const isGoogle = provider.includes('google') || (oauth.authorize_url ?? '').includes('accounts.google.com');
+      if (isGoogle) {
+        url.searchParams.set('access_type', 'offline');
+        url.searchParams.set('prompt', 'consent');
+      }
 
       return { authorizeUrl: url.toString(), state };
     },
