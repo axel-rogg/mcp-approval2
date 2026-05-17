@@ -675,25 +675,15 @@ code {
   background: var(--bg);
 }
 
-/* Summary-Card — leicht gelblicher Tint, sticky-note-Look ohne grell.
-   User-Wunsch 2026-05-17: visuell von anderen Cards abgehoben (parchment
-   tone), aber im Dark-Mode dezent, nicht knall-gelb. Beide Themes nutzen
-   einen subtilen warmen Yellow-Tint über dem jeweiligen Card-Background. */
+/* Summary-Card — dezenter warmer Yellow-Tint, dark-mode-first.
+   User-Klarstellung 2026-05-17: "es gibt keinen light modus, alles ist
+   dunkel". Tint wird mit rgba über der jeweiligen Card-Background-Farbe
+   gelegt → robust für beide Themes ohne media-query. */
 .storage-summary {
   position: relative;
-  /* Light-mode: leicht-gelblicher Hintergrund über weiß */
-  background: #fbf6e3;
-  border-color: #d8c47e;
+  background: rgba(255, 220, 120, 0.06);
+  border-color: rgba(255, 220, 120, 0.25);
   color: inherit;
-}
-
-@media (prefers-color-scheme: dark) {
-  .storage-summary {
-    /* Dark-mode: nur ein Hauch warmer Yellow-Tint, lesbar bleiben */
-    background: rgba(255, 220, 120, 0.06);
-    border-color: rgba(255, 220, 120, 0.25);
-    color: inherit;
-  }
 }
 
 .storage-summary-text {

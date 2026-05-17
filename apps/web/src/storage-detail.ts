@@ -337,7 +337,20 @@ export async function renderStorageDetail(
     const bodySection = document.createElement('section');
     bodySection.className = 'storage-body card';
 
-    const rendered = dispatchRenderer(obj);
+    // Interaktiver List-Toggle (PLAN 2026-05-17 User-Wunsch): wenn der
+    // body-renderer eine Liste ist, persistieren wir Checkbox-Ticks direkt
+    // via PATCH /v1/knowledge/objects/:id mit neuem body. Optimistic UI:
+    // renderer flippt sofort, revert nur bei API-Fehler.
+    const rendered = dispatchRenderer(obj, {
+      onListToggle: async ({ newBody }) => {
+        try {
+          await api.updateBody(obj.id, newBody);
+        } catch (err) {
+          showToast(`Tick fehlgeschlagen: ${(err as Error).message}`);
+          throw err; // re-throw → renderer revert
+        }
+      },
+    });
     walkAndStripIpi(rendered);
 
     if (!rendered.textContent || rendered.textContent.trim().length === 0) {

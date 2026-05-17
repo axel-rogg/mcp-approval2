@@ -25,17 +25,28 @@ import type { KnowledgeObject } from '../api-storage.js';
 import { renderAppLink } from './app-link.js';
 import { renderBinary } from './binary.js';
 import { renderCode } from './code.js';
-import { renderList } from './list.js';
+import { renderList, type ListToggleHandler } from './list.js';
 import { renderMarkdown } from './markdown.js';
 import { renderMemo } from './memo.js';
 import { renderSkillManifest } from './skill-manifest.js';
 import { decodeBody, detectContentKind } from './utils.js';
 
+/**
+ * Optional renderer-context für interaktive Renderer. Aktuell nur von
+ * `renderList` genutzt (Checkbox-Tick). Wenn undefined: read-only fallback.
+ */
+export interface DispatchContext {
+  readonly onListToggle?: ListToggleHandler;
+}
+
 function readMeta(obj: KnowledgeObject): Record<string, unknown> {
   return (obj.meta ?? obj.metaJson ?? {}) as Record<string, unknown>;
 }
 
-export function dispatchRenderer(obj: KnowledgeObject): HTMLElement {
+export function dispatchRenderer(
+  obj: KnowledgeObject,
+  ctx?: DispatchContext,
+): HTMLElement {
   const subtype = obj.subtype ?? '';
 
   if (subtype.startsWith('app:')) {
@@ -44,7 +55,7 @@ export function dispatchRenderer(obj: KnowledgeObject): HTMLElement {
 
   switch (subtype) {
     case 'list':
-      return renderList(decodeBody(obj));
+      return renderList(decodeBody(obj), ctx?.onListToggle);
     case 'note':
       return renderMarkdown(decodeBody(obj));
     case 'memo':

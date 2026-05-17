@@ -97,6 +97,13 @@ export interface ApiStorageClient {
   getObject(id: string, opts?: { expandBody?: boolean; includeRefBodies?: ReadonlyArray<string> }): Promise<KnowledgeObject>;
   deleteObject(id: string, opts?: { force?: boolean }): Promise<{ approvalId: string }>;
   updateSummary(id: string, summary: string): Promise<{ approvalId: string }>;
+  /**
+   * PATCH /v1/knowledge/objects/:id mit {body: <utf-8 string>}.
+   * Wird z.B. von der interaktiven List-Renderer-Checkbox genutzt um
+   * Tick-State zu persistieren. Geht durch knowledge-proxy ohne Approval-
+   * Gate (PWA = trusted-UI für eingeloggten User).
+   */
+  updateBody(id: string, body: string): Promise<void>;
 }
 
 export class StorageApiError extends Error {
@@ -238,6 +245,13 @@ export function createApiStorageClient(baseUrl?: string): ApiStorageClient {
       );
       const approvalId = raw.approvalId ?? raw.approval_id ?? '';
       return { approvalId };
+    },
+
+    async updateBody(id, body) {
+      await request<unknown>(
+        `/v1/knowledge/objects/${encodeURIComponent(id)}`,
+        { method: 'PATCH', body: { body } },
+      );
     },
   };
 }
