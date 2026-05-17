@@ -154,9 +154,49 @@ function makeMemoryDb(): DbAdapter & { _rows: Map<string, ApprovalRow>; _audit: 
 
     if (
       t.startsWith("UPDATE pending_approvals SET status = 'expired'") &&
+      t.includes("user_id = $2 AND status = 'pending' AND expires_at < $1")
+    ) {
+      // Lazy-expire-user (per-Request): [ts, userId]
+      const [tsP, userId] = params as readonly unknown[];
+      const out: { id: string }[] = [];
+      for (const r of rows.values()) {
+        if (
+          r.user_id === String(userId) &&
+          r.status === 'pending' &&
+          r.expires_at < Number(tsP)
+        ) {
+          r.status = 'expired';
+          r.expired_at = Number(tsP);
+          out.push({ id: r.id });
+        }
+      }
+      return out as unknown as T[];
+    }
+
+    if (
+      t.startsWith("UPDATE pending_approvals SET status = 'expired'") &&
+      t.includes("id = $2 AND user_id = $3")
+    ) {
+      // Lazy-expire-one: [ts, id, userId]
+      const [tsP, id, userId] = params as readonly unknown[];
+      const r = rows.get(String(id));
+      if (
+        r &&
+        r.user_id === String(userId) &&
+        r.status === 'pending' &&
+        r.expires_at < Number(tsP)
+      ) {
+        r.status = 'expired';
+        r.expired_at = Number(tsP);
+      }
+      return [] as unknown as T[];
+    }
+
+    if (
+      t.startsWith("UPDATE pending_approvals SET status = 'expired'") &&
       t.includes("WHERE status = 'pending' AND expires_at < $1")
     ) {
-      // Sweep: WHERE status='pending' AND expires_at < $1 RETURNING id
+      // Sweep (cron): [ts]
       const [now] = params as readonly unknown[];
       const out: { id: string }[] = [];
       for (const r of rows.values()) {
@@ -445,6 +485,102 @@ describe('ApprovalService', () => {
     const actions = db._audit.map((p) => (p as ReadonlyArray<unknown>)[3]);
     expect(actions).toContain('tool.approval.created');
     expect(actions).toContain('tool.approval.rejected');
+  });
+
+  it('lazy-expire on list flips stale pending → expired before SELECT', async () => {
+    const db = makeMemoryDb();
+    let nowVal = 1_000_000;
+    const svc = createApprovalService({ db, now: () => nowVal });
+    const a = await svc.create({
+      userId: USER_A,
+      toolName: 'docs.put',
+      toolInput: {},
+      sensitivity: 'write',
+      ttlSec: 30,
+    });
+    // Fast-forward past TTL — but NO cron has run yet.
+    nowVal += 31 * 1000;
+    const pending = await svc.list({ userId: USER_A, status: 'pending' });
+    // expired Row darf nicht mehr in der pending-Liste auftauchen
+    expect(pending.find((p) => p.id === a.id)).toBeUndefined();
+    const fetched = await svc.get({ id: a.id, userId: USER_A });
+    expect(fetched?.status).toBe('expired');
+    expect(fetched?.expiredAt).toBeGreaterThan(0);
+  });
+
+  it('lazy-expire on get flips one stale row, leaves others alone', async () => {
+    const db = makeMemoryDb();
+    let nowVal = 1_000_000;
+    const svc = createApprovalService({ db, now: () => nowVal });
+    const expired = await svc.create({
+      userId: USER_A,
+      toolName: 'docs.put',
+      toolInput: { i: 'stale' },
+      sensitivity: 'write',
+      ttlSec: 30,
+    });
+    const fresh = await svc.create({
+      userId: USER_A,
+      toolName: 'docs.put',
+      toolInput: { i: 'fresh' },
+      sensitivity: 'write',
+      ttlSec: 3600,
+    });
+    nowVal += 31 * 1000;
+    const got = await svc.get({ id: expired.id, userId: USER_A });
+    expect(got?.status).toBe('expired');
+    // Andere Row bleibt pending — nicht ueber-eager
+    const stillPending = await svc.get({ id: fresh.id, userId: USER_A });
+    expect(stillPending?.status).toBe('pending');
+  });
+
+  it('lazy-expire is per-user (User A expires don\'t affect User B)', async () => {
+    const db = makeMemoryDb();
+    let nowVal = 1_000_000;
+    const svc = createApprovalService({ db, now: () => nowVal });
+    const aRow = await svc.create({
+      userId: USER_A,
+      toolName: 'docs.put',
+      toolInput: {},
+      sensitivity: 'write',
+      ttlSec: 30,
+    });
+    const bRow = await svc.create({
+      userId: USER_B,
+      toolName: 'docs.put',
+      toolInput: {},
+      sensitivity: 'write',
+      ttlSec: 30,
+    });
+    nowVal += 31 * 1000;
+    // User A liest ihre Liste — flippt NUR USER_A's row.
+    await svc.list({ userId: USER_A });
+    const aFresh = await svc.get({ id: aRow.id, userId: USER_A });
+    expect(aFresh?.status).toBe('expired');
+    // User B's row darf trotzdem noch pending sein — lazyExpire ist scoped.
+    // (Aus User Bs Sicht; sobald User B liest wird auch dort geflipped.)
+    // Direct-Get aus User B's Scope flippt jetzt deren Row.
+    const bFresh = await svc.get({ id: bRow.id, userId: USER_B });
+    expect(bFresh?.status).toBe('expired');
+  });
+
+  it('lazy-expire keeps original expired_at on subsequent reads', async () => {
+    const db = makeMemoryDb();
+    let nowVal = 1_000_000;
+    const svc = createApprovalService({ db, now: () => nowVal });
+    const a = await svc.create({
+      userId: USER_A,
+      toolName: 'docs.put',
+      toolInput: {},
+      sensitivity: 'write',
+      ttlSec: 30,
+    });
+    nowVal += 31 * 1000;
+    const first = await svc.get({ id: a.id, userId: USER_A });
+    const firstExpiredAt = first?.expiredAt;
+    nowVal += 60 * 1000;
+    const second = await svc.get({ id: a.id, userId: USER_A });
+    expect(second?.expiredAt).toBe(firstExpiredAt);
   });
 
   it('expire-sweep flips pending → expired when past TTL', async () => {
