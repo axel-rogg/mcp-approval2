@@ -8,9 +8,11 @@
  */
 import { _resetCatalogForTesting, listBlocks, registerBlock } from './catalog.js';
 import { actionButtonBlock } from './action_button.js';
+import { calendarGridBlock } from './calendar_grid.js';
 import { chartBlock } from './chart.js';
 import { counterBlock } from './counter.js';
 import { formBlock } from './form.js';
+import { headerBlock } from './header.js';
 import { listBlock } from './list.js';
 import { placesBlock } from './places.js';
 import { progressRingBlock } from './progress_ring.js';
@@ -29,9 +31,11 @@ let _booted = false;
 export function bootBlockCatalog(): void {
   if (_booted) return;
   registerBlock(actionButtonBlock);
+  registerBlock(calendarGridBlock);
   registerBlock(chartBlock);
   registerBlock(counterBlock);
   registerBlock(formBlock);
+  registerBlock(headerBlock);
   registerBlock(listBlock);
   registerBlock(placesBlock);
   registerBlock(progressRingBlock);
@@ -68,9 +72,11 @@ export type {
   BlockSensitivity,
 } from './types.js';
 export { actionButtonBlock } from './action_button.js';
+export { calendarGridBlock } from './calendar_grid.js';
 export { chartBlock } from './chart.js';
 export { counterBlock } from './counter.js';
 export { formBlock } from './form.js';
+export { headerBlock } from './header.js';
 export { listBlock } from './list.js';
 export { placesBlock } from './places.js';
 export { progressRingBlock } from './progress_ring.js';
