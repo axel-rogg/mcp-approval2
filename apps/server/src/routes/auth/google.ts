@@ -180,11 +180,18 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
     // Auflosung: existierender User? Invite? Bootstrap?
     let userId: string;
     let role: 'admin' | 'member';
+    // AS-3 (A11): Indikator ob KC2-Sync noetig ist. Pflicht bei jeder
+    // "User-State wurde geaendert"-Variante (Bootstrap, Invite-Accept,
+    // erste externalId-Verknuepfung). Bei plain re-login wo der User
+    // schon einmal gesynct wurde: skippen (KC2-row ist da).
+    let kcSyncNeeded = false;
 
     const existingByExt = await findUserByExternalId(server.db, profile.externalId);
     if (existingByExt && existingByExt.status === 'active') {
       userId = existingByExt.id;
       role = existingByExt.role;
+      // Re-login eines schon gesynchten Users — kein extra-Push noetig
+      // (KC2 hat den User schon).
     } else {
       const existingByEmail = await findUserByEmail(server.db, profile.email);
       if (stateCookie.inviteToken) {
@@ -196,6 +203,7 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
         });
         userId = accepted.userId;
         role = accepted.role;
+        kcSyncNeeded = true;
       } else if (existingByEmail && existingByEmail.status === 'active') {
         // Email-Match ohne externalId → erste Verknuepfung
         const raw = server.db.unsafe('link_external_id');
@@ -205,6 +213,7 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
         );
         userId = existingByEmail.id;
         role = existingByEmail.role;
+        kcSyncNeeded = true;
       } else {
         // Bootstrap-Versuch (SEC-008: BOOTSTRAP_ADMIN_EMAIL-Gate aktiv).
         const bs = await bootstrapIfNeeded(
@@ -220,7 +229,31 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
         );
         userId = bs.userId;
         role = bs.role;
+        kcSyncNeeded = true;
       }
+    }
+
+    // AS-3 (A11): Push State an KC2. Fire-and-forget mit audit-on-failure
+    // (UserSyncService.push throwt nicht). Wenn KC2 down ist, swallowt der
+    // Service den Error und der Login klappt trotzdem — der replay-cron
+    // (Phase 2) faengt verlorene Syncs spaeter auf.
+    //
+    // SEC-K-001-Hardening-Hook: KC2 macht jetzt `payload.sub === external_id`-
+    // Cross-Check im OBO-Pfad. Damit OBO-Calls fuer diesen User klappen MUSS
+    // der User in KC2's users-Tabelle mit external_id=approval2.user.id
+    // existieren. Genau das macht dieser Sync.
+    //
+    // Skip-Bedingung: kcSyncNeeded=false (re-login eines schon synchronen
+    // Users). Skip-Bedingung 2: server.userSync ist undefined (lokaler dev-
+    // Modus ohne KC2-Anbindung).
+    if (kcSyncNeeded && server.userSync) {
+      await server.userSync.push({
+        userId,
+        email: profile.email,
+        displayName: profile.displayName,
+        status: 'active',
+        externalId: userId, // approval2 user-id = KC2 external_id
+      });
     }
 
     // Sitzung erstellen

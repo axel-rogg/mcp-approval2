@@ -41,4 +41,11 @@ export interface ServerContext {
    * gesetzt sein (Console- oder Resend-Adapter, je nach Config).
    */
   readonly email?: import('@mcp-approval2/adapters').EmailAdapter;
+  /**
+   * AS-3 (A11) UserSyncService — push approval2-User-State an KC2 nach
+   * create/login/invite-accept. Optional weil deps.knowledge optional ist
+   * (lokaler dev-Modus ohne KC2). Wird in app-factory.ts dynamisch
+   * attached (line ~383), daher hier optional statt Pflicht.
+   */
+  userSync?: import('../services/user-sync.js').UserSyncService;
 }
