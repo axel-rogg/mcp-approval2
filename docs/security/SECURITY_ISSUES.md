@@ -213,6 +213,13 @@ Findings sind innerhalb der Severity nach **Schweregrad/Wahrscheinlichkeit** sor
   - Origin-Header-Check: nur `origin ∈ ALLOWED_ORIGINS` (eng) durchlassen.
   - Pfad-Traversal: `decodeURIComponent(targetPath).split('/').includes('..')` als zusätzliche Prüfung.
   - `new URL(targetPath, baseUrl + '/'); if (u.origin !== new URL(baseUrl).origin) throw forbidden();` für Authority-Injection-Schutz.
+- **Status:** ✅ FIXED 2026-05-17 (Phase B) — alle 5 Punkte umgesetzt:
+  1. [kc-proxy.ts](../../apps/server/src/routes/kc-proxy.ts) `ALLOWED_PATH_PREFIXES = ['/v1/']` (kein `/admin/` mehr).
+  2. `resolvePrincipal` ist Bearer-only (Cookie-Read entfernt).
+  3. Pre-Handler Origin-Check gegen `Set([RP_ORIGIN, ORIGIN, ...ALLOWED_ORIGINS])`; fremder Origin → 403.
+  4. `decodeURIComponent(targetPath).split('/')` mit `.includes('..')` und `.includes('.')` — schluepft auch durch `%2E%2E`-encoded variants nicht.
+  5. `new URL(targetPath, baseUrl + '/'); if (origin-mismatch) throw badRequest('authority injection denied')`.
+  Tests: 1 neue Test im kc-proxy.test.ts (cookie-fallback rejected) + 2 neue im contract/kc-proxy-forward.test.ts (origin-fremd→403, /admin/*→404). Bestehende Test "accepts /admin/*" → "SEC-011: rejects /admin/*" geflippt.
 
 ### SEC-012 — `session_jwt` Cookie via `Domain=.ai-toolhub.org` → cross-subdomain-Leak
 

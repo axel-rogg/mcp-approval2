@@ -37,7 +37,6 @@
  *     `/admin/kc-proxy/../../weird` ausnutzt.
  */
 import { Hono } from 'hono';
-import { getCookie } from 'hono/cookie';
 import type { AppBindings, ServerContext, SessionPrincipal } from '../lib/context.js';
 import { HttpError } from '../lib/errors.js';
 import { verifySessionJwt } from '../auth/session/issuer.js';
@@ -61,8 +60,12 @@ export interface KcProxyDeps {
 /**
  * Whitelist KC2-Path-Prefixes die die PWA proxyen darf. Defense-in-Depth
  * gegen Pfad-Traversal + unbeabsichtigte KC2-internal-Routes-Exposure.
+ *
+ * SEC-011: `/admin/` wurde entfernt. PWA darf KC2-Admin nicht via Proxy
+ * ansprechen — Admin-Aktionen laufen ueber separate first-party PWA-Routen
+ * die durch die approval2-Approval-Wall gehen (kein Cookie-CSRF-Pfad).
  */
-const ALLOWED_PATH_PREFIXES = ['/v1/', '/admin/'];
+const ALLOWED_PATH_PREFIXES = ['/v1/'];
 
 /**
  * Headers die NIE an die PWA zurueckgereicht werden — KC2-side Cookies
@@ -126,6 +129,23 @@ export function kcProxyRoutes(server: ServerContext, deps: KcProxyDeps): Hono<Ap
 
   // Catch-all → forward.
   app.all('/admin/kc-proxy/*', async (c) => {
+    // SEC-011: Origin-Header-Allowlist als CSRF-Defense. Same-site-Cookies
+    // wuerden Cross-Subdomain-Calls von z.B. attacker-controlled
+    // dev-preview.ai-toolhub.org durchlassen — wir lehnen jede Origin ab
+    // die nicht in der Allowlist steht. Same-origin-Calls (Origin == ORIGIN
+    // oder Origin-fehlend wie bei direct-API-Tool-Calls) sind erlaubt.
+    const originHeader = c.req.header('origin');
+    if (originHeader) {
+      const allowed = new Set<string>([
+        server.config.RP_ORIGIN,
+        server.config.ORIGIN,
+        ...server.config.ALLOWED_ORIGINS,
+      ]);
+      if (!allowed.has(originHeader)) {
+        throw HttpError.forbidden('forbidden', `kc-proxy: origin not allowed: ${originHeader}`);
+      }
+    }
+
     const principal = await resolvePrincipal(c, server);
     if (!principal) {
       throw HttpError.unauthorized('login_required');
@@ -140,13 +160,32 @@ export function kcProxyRoutes(server: ServerContext, deps: KcProxyDeps): Hono<Ap
     }
     const targetPath = fullPath.slice(PREFIX.length);
 
-    // Whitelist-Pruefung.
+    // Whitelist-Pruefung. SEC-011: /admin/ ist nicht mehr in der Liste.
     if (!ALLOWED_PATH_PREFIXES.some((p) => targetPath.startsWith(p))) {
       throw HttpError.notFound(`kc-proxy: target path not allowed: ${targetPath}`);
     }
-    // Pfad-Traversal-Schutz: keine `..` in Segmenten.
-    if (targetPath.includes('/../') || targetPath.endsWith('/..')) {
+    // Pfad-Traversal-Schutz: keine `..`-Segmente, weder roh noch URL-
+    // encoded. SEC-011: decodeURIComponent-Roundtrip damit z.B. `%2E%2E`
+    // nicht durch den simplen string-includes-Check schluepft.
+    let decodedPath: string;
+    try {
+      decodedPath = decodeURIComponent(targetPath);
+    } catch {
+      throw HttpError.badRequest('invalid_request', 'kc-proxy: invalid url-encoding in path');
+    }
+    const segments = decodedPath.split('/');
+    if (segments.includes('..') || segments.includes('.')) {
       throw HttpError.badRequest('invalid_request', 'kc-proxy: path traversal denied');
+    }
+    // Authority-Injection-Schutz: verifizieren dass `targetPath` keinen
+    // anderen Host injiziert (z.B. `//attacker.com/x` waere bei naivem
+    // URL-Resolve gegen base zu attacker.com aufgeloest).
+    const targetCandidate = new URL(targetPath, `${baseUrl}/`);
+    if (targetCandidate.origin !== new URL(baseUrl).origin) {
+      throw HttpError.badRequest(
+        'invalid_request',
+        'kc-proxy: authority injection denied',
+      );
     }
 
     // OBO-JWT bauen.
@@ -229,11 +268,13 @@ export function kcProxyRoutes(server: ServerContext, deps: KcProxyDeps): Hono<Ap
 }
 
 /**
- * Loest den User-Principal aus Cookie ODER Bearer-Header auf. Wir
- * koennen die `auth()`-Middleware hier nicht direkt einhaengen, weil
- * der Cookie-Fallback `auth()` nicht abdeckt — `auth()` ist auf Bearer-
- * Header festgelegt (kein impliziter Cookie-Read; das passiert in
- * `oauth/authorize.ts` separat).
+ * Loest den User-Principal aus dem Bearer-Header auf.
+ *
+ * SEC-011: Cookie-Fallback wurde entfernt. Damit kann eine andere
+ * Subdomain unter `*.ai-toolhub.org` (zukuenftige Pilot-Instance,
+ * Marketing-Page, dev-preview) NICHT mehr cross-origin POST/PATCH/DELETE
+ * auf `/admin/kc-proxy/*` machen + den same-site-Cookie ausnutzen. PWA
+ * muss expliziten `Authorization`-Header senden (wie `/v1/*` schon).
  */
 async function resolvePrincipal(
   c: { req: { header: (n: string) => string | undefined; url: string } },
@@ -243,9 +284,6 @@ async function resolvePrincipal(
   let token: string | null = null;
   if (header && header.toLowerCase().startsWith('bearer ')) {
     token = header.slice(7).trim();
-  }
-  if (!token) {
-    token = getCookie(c as unknown as Parameters<typeof getCookie>[0], 'session_jwt') ?? null;
   }
   if (!token) return null;
   try {

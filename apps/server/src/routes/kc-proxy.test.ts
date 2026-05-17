@@ -119,6 +119,24 @@ describe('kc-proxy — auth', () => {
     expect(res.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  // SEC-011: Cookie-Fallback wurde entfernt. session_jwt-Cookie alleine
+  // darf nicht mehr ausreichen — sonst koennte eine fremde Subdomain
+  // unter *.ai-toolhub.org cross-site-Calls mit dem same-site-Cookie machen.
+  it('SEC-011: rejects session_jwt cookie alone (no Bearer header) → 401', async () => {
+    const fetchMock = vi.fn();
+    const { app, cfg } = await buildApp({
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      signer: makeStubSigner(),
+    });
+    const cookieToken = await makeBearer(cfg);
+    const res = await app.request('/admin/kc-proxy/v1/objects', {
+      method: 'GET',
+      headers: { cookie: `session_jwt=${cookieToken}` },
+    });
+    expect(res.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
 
 describe('kc-proxy — forwarding', () => {

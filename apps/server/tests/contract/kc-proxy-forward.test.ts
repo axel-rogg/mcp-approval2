@@ -181,18 +181,20 @@ describe('kc-proxy — HTTP-Header contract (KC2-side require_jwt_or_obo)', () =
     expect(h['authorization']).toBe(`Bearer ${SERVICE_TOKEN}`);
   });
 
-  it('does NOT smuggle PWA headers (cookie/origin/host) through to KC2', async () => {
+  it('does NOT smuggle PWA headers (cookie/host) through to KC2', async () => {
     const signer = makeRecordingSigner();
     const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
     const { app, cfg } = await buildApp({ fetchImpl: fetchMock as unknown as typeof fetch, signer });
     const bearer = await makeBearer(cfg);
 
+    // SEC-011: Origin-Header darf nicht von fremder Domain kommen. Diese
+    // Test-Variante: KEIN origin header (direct-API-Call), aber andere
+    // Smuggle-Versuche.
     await app.request('http://approval2.test/admin/kc-proxy/v1/objects', {
       method: 'GET',
       headers: {
         authorization: `Bearer ${bearer}`,
         cookie: 'session_jwt=stolen',
-        origin: 'https://evil.test',
         host: 'evil.test',
       },
     });
@@ -201,6 +203,23 @@ describe('kc-proxy — HTTP-Header contract (KC2-side require_jwt_or_obo)', () =
     expect(h['cookie']).toBeUndefined();
     expect(h['origin']).toBeUndefined();
     expect(h['host']).toBeUndefined();
+  });
+
+  // SEC-011: Origin-Header von fremder Domain → 403
+  it('SEC-011: rejects requests with disallowed Origin header (403)', async () => {
+    const signer = makeRecordingSigner();
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    const { app, cfg } = await buildApp({ fetchImpl: fetchMock as unknown as typeof fetch, signer });
+    const bearer = await makeBearer(cfg);
+    const res = await app.request('http://approval2.test/admin/kc-proxy/v1/objects', {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${bearer}`,
+        origin: 'https://attacker.example',
+      },
+    });
+    expect(res.status).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
@@ -220,7 +239,9 @@ describe('kc-proxy — path-whitelist (anti-SSRF)', () => {
     expect(fetchMock).toHaveBeenCalled();
   });
 
-  it('accepts /admin/* paths (KC2-side admin routes are also proxyable)', async () => {
+  // SEC-011: /admin/* wurde aus der ALLOWED_PATH_PREFIXES entfernt — PWA
+  // darf KC2-Admin-Routes NICHT mehr via Proxy ansprechen.
+  it('SEC-011: rejects /admin/* paths (CSRF-Defense)', async () => {
     const signer = makeRecordingSigner();
     const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
     const { app, cfg } = await buildApp({ fetchImpl: fetchMock as unknown as typeof fetch, signer });
@@ -229,7 +250,8 @@ describe('kc-proxy — path-whitelist (anti-SSRF)', () => {
       method: 'GET',
       headers: { authorization: `Bearer ${bearer}` },
     });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('rejects /mcp prefix — Claude.ai-MCP-Endpoint must NOT be proxyable from PWA', async () => {
