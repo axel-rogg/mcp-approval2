@@ -58,7 +58,15 @@ export function oauthBridgeRoutes(_server: ServerContext): Hono<AppBindings> {
       if (k === 'name') continue;
       fwd.append(k, v);
     }
-    const target = `${url.origin}/#/tools/servers/${encodeURIComponent(name)}/oauth/callback?${fwd.toString()}`;
+    // Origin re-konstruieren: hinter Fly-Proxy ist `c.req.url` interner
+    // http://-Hostname. X-Forwarded-Proto / Host vom Edge bevorzugen,
+    // sonst Fallback auf c.req.url-Origin.
+    const fwdProto = c.req.header('x-forwarded-proto') ?? '';
+    const fwdHost = c.req.header('x-forwarded-host') ?? c.req.header('host') ?? '';
+    const scheme = fwdProto === 'https' || fwdProto === 'http' ? fwdProto : 'https';
+    const host = fwdHost || url.host;
+    const targetOrigin = `${scheme}://${host}`;
+    const target = `${targetOrigin}/#/tools/servers/${encodeURIComponent(name)}/oauth/callback?${fwd.toString()}`;
     return c.redirect(target, 302);
   });
 
