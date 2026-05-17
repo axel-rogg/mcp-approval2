@@ -117,6 +117,14 @@ for (const s of servers) {
     .split(/\s+/)
     .map((x) => x.trim())
     .filter(Boolean);
+  // V1 nutzte fuer cf DCR (Dynamic Client Registration) — der client_id den V1
+  // hat ist nur fuer V1's redirect_uri gueltig, V2 muss seinen eigenen DCR-
+  // Register machen (V2-Code seit commit nach 2026-05-17). Daher cf als
+  // kind='dcr' migrieren OHNE client_id; V2 generiert den frisch beim ersten
+  // Authorize.
+  // github war pre-registered (User-OAuth-App in github.com/settings/applications),
+  // client_id darf migriert werden.
+  const isDcr = s.name === 'cf';
   payload.push({
     name: s.name,
     displayName: s.name === 'github' ? 'GitHub' : s.name === 'cf' ? 'Cloudflare' : s.name,
@@ -124,11 +132,11 @@ for (const s of servers) {
     authMode: 'oauth',
     oauth: {
       provider: s.name === 'github' ? 'github' : s.name === 'cf' ? 'cloudflare' : s.name,
-      kind: 'pre', // V1 hatte beide, aber wir migrieren als pre — V2 unterstuetzt DCR nicht
+      kind: isDcr ? 'dcr' : 'pre',
       authorize_url: oauth.authorization_endpoint,
       token_url: oauth.token_endpoint,
       scopes,
-      client_id: oauth.client_id,
+      ...(isDcr ? {} : { client_id: oauth.client_id }),
     },
   });
   console.log(`  ✓ ${s.name}: ${s.url} (scopes=${scopes.join(',') || '-'})`);

@@ -37,6 +37,19 @@ export interface OAuthSchemaMeta {
   readonly scopes?: ReadonlyArray<string>;
   readonly authorize_url?: string;
   readonly token_url?: string;
+  /**
+   * DCR-only (RFC 7591): registration_endpoint. Wird beim ersten Authorize
+   * automatisch hit; gibt client_id (+ optional client_secret) zurueck.
+   * V2 persistiert beides in user_sub_mcp_config[_oauth_client_id/_oauth_client_secret].
+   */
+  readonly registration_endpoint?: string;
+  /**
+   * DCR-only: Wenn kein registration_endpoint deklariert ist, kann V2 ihn
+   * via RFC 9728 (probe MCP endpoint without auth → WWW-Authenticate header
+   * → resource_metadata → authorization-server metadata) entdecken.
+   * Wenn TRUE: V2 versucht discovery; FALSE: error wenn registration_endpoint fehlt.
+   */
+  readonly discover?: boolean;
 }
 
 export interface OAuthStartResult {
@@ -114,6 +127,69 @@ export function createUserServerOAuthService(
     return schema.oauth;
   }
 
+  /**
+   * RFC 7591 Dynamic Client Registration. POST an die registration_endpoint
+   * mit V2's redirect_uri → AuthZ-Server gibt frische client_id (+ optional
+   * client_secret) zurueck. Wird in start() automatisch getriggert wenn
+   * kind='dcr' und kein _oauth_client_id im user_sub_mcp_config liegt.
+   */
+  async function dynamicClientRegistration(args: {
+    registrationEndpoint: string;
+    redirectUri: string;
+    serverName: string;
+  }): Promise<{ clientId: string; clientSecret: string | null }> {
+    const body = {
+      client_name: `mcp-approval2 gateway: ${args.serverName}`,
+      redirect_uris: [args.redirectUri],
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      token_endpoint_auth_method: 'none', // PKCE-only, public client (V1-pattern)
+      application_type: 'web',
+    };
+    const resp = await fetchImpl(args.registrationEndpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new HttpError(
+        502,
+        'internal',
+        `DCR-Register fehlgeschlagen: HTTP ${resp.status} ${text.slice(0, 200)}`,
+      );
+    }
+    const json = (await resp.json()) as {
+      client_id?: string;
+      client_secret?: string;
+      error?: string;
+    };
+    if (!json.client_id) {
+      throw new HttpError(502, 'internal', `DCR-Register: keine client_id in der response`);
+    }
+    return { clientId: json.client_id, clientSecret: json.client_secret ?? null };
+  }
+
+  /**
+   * Discover registration_endpoint via RFC 9728 → RFC 8414. Fallback wenn
+   * _meta.oauth.registration_endpoint nicht deklariert.
+   */
+  async function discoverRegistrationEndpoint(baseUrl: string): Promise<string | null> {
+    try {
+      const origin = new URL(baseUrl).origin;
+      const metaUrl = `${origin}/.well-known/oauth-authorization-server`;
+      const resp = await fetchImpl(metaUrl, {
+        method: 'GET',
+        headers: { accept: 'application/json' },
+      });
+      if (!resp.ok) return null;
+      const meta = (await resp.json()) as { registration_endpoint?: string };
+      return meta.registration_endpoint ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   return {
     async start(userId, subMcpName, redirectUri) {
       const oauth = await getOAuthSchema(subMcpName);
@@ -123,20 +199,43 @@ export function createUserServerOAuthService(
           `server '${subMcpName}' has no authorize_url`,
         );
       }
-      if (oauth.kind === 'dcr') {
-        throw HttpError.badRequest(
-          'invalid_request',
-          'DCR-mode not supported in Phase 3 (User-Decision Q3: pre-registered only)',
-        );
-      }
-      // Pre-registered: User muss client_id + (optional) client_secret schon
-      // in user_sub_mcp_config eingetragen haben.
       const userConfig = await config.getAllValues(userId, subMcpName);
-      const clientId = userConfig.get('_oauth_client_id') ?? userConfig.get('client_id');
+      let clientId = userConfig.get('_oauth_client_id') ?? userConfig.get('client_id');
+
+      // DCR (RFC 7591) — wenn kind='dcr' und kein client_id im config:
+      // dynamisch beim AuthZ-Server registrieren mit V2's redirect_uri.
+      // Resultierender client_id (+ optional client_secret) wird KMS-encrypted
+      // in user_sub_mcp_config gespeichert. Wenn schon ein client_id existiert
+      // aber fuer falsche redirect_uri (z.B. V1-migriert): User muss zuerst
+      // den existierenden _oauth_client_id loeschen.
+      if (oauth.kind === 'dcr' && !clientId) {
+        let regEndpoint = oauth.registration_endpoint;
+        if (!regEndpoint && oauth.discover !== false) {
+          // Discovery fallback: probe authorize_url's origin
+          regEndpoint = (await discoverRegistrationEndpoint(oauth.authorize_url)) ?? undefined;
+        }
+        if (!regEndpoint) {
+          throw HttpError.badRequest(
+            'invalid_request',
+            `server '${subMcpName}' kind='dcr' aber kein registration_endpoint deklariert + discovery erfolglos`,
+          );
+        }
+        const dcr = await dynamicClientRegistration({
+          registrationEndpoint: regEndpoint,
+          redirectUri,
+          serverName: subMcpName,
+        });
+        await config.set(userId, subMcpName, '_oauth_client_id', dcr.clientId);
+        if (dcr.clientSecret) {
+          await config.set(userId, subMcpName, '_oauth_client_secret', dcr.clientSecret);
+        }
+        clientId = dcr.clientId;
+      }
+
       if (!clientId) {
         throw HttpError.badRequest(
           'invalid_request',
-          `client_id missing — bitte unter Konfigurieren "_oauth_client_id" eintragen`,
+          `client_id missing — bitte unter Konfigurieren "_oauth_client_id" eintragen oder DCR aktivieren (kind='dcr' in configSchema)`,
         );
       }
       const verifier = generateCodeVerifier();

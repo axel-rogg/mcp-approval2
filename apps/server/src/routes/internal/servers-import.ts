@@ -68,6 +68,7 @@ const ServerPayloadSchema = z.object({
     authorize_url: z.string().url(),
     token_url: z.string().url(),
     scopes: z.array(z.string()).default([]),
+    registration_endpoint: z.string().url().optional(),
     client_id: z.string().min(1).max(256).optional(),
   }),
 });
@@ -132,13 +133,26 @@ export function internalServersImportRoutes(
                 authorize_url: s.oauth.authorize_url,
                 token_url: s.oauth.token_url,
                 scopes: s.oauth.scopes,
+                ...(s.oauth.registration_endpoint
+                  ? { registration_endpoint: s.oauth.registration_endpoint }
+                  : {}),
               },
             };
             await deps.registry.updateConfigSchema(cfgId, meta);
           }
 
-          // Client-ID in user_sub_mcp_config schreiben (wenn vorhanden + KMS-fähig)
-          if (s.oauth.client_id && deps.config) {
+          // DCR-Mode: existing _oauth_client_id/_oauth_client_secret koennten aus
+          // einer frueheren V1-Migration kommen, sind aber fuer V2's redirect_uri
+          // ungueltig. Loeschen damit V2 beim ersten Authorize einen frischen
+          // DCR-Register macht.
+          if (s.oauth.kind === 'dcr' && deps.config) {
+            // delete liefert 404 wenn schon weg → ignore
+            await deps.config.delete(user.id, s.name, '_oauth_client_id').catch(() => {});
+            await deps.config.delete(user.id, s.name, '_oauth_client_secret').catch(() => {});
+            // Refresh-Token auch loeschen — der war bei V1's client_id gebunden.
+            await deps.config.delete(user.id, s.name, '_oauth_refresh_token').catch(() => {});
+          } else if (s.oauth.client_id && deps.config) {
+            // Pre-registered: Client-ID in user_sub_mcp_config schreiben
             await deps.config.set(user.id, s.name, '_oauth_client_id', s.oauth.client_id);
           }
 
