@@ -106,7 +106,9 @@ function buildOneWrapper(
 ): Tool<unknown, unknown> {
   const annotations: ToolAnnotations = entry.annotations ?? {};
   // Sensitivity-Resolution: Manifest-Annotation, dann Override-up.
-  let sensitivity: ToolSensitivity = resolveSensitivity(annotations);
+  // SEC-006: resolveSensitivity defaultet auf 'write' (fail-closed) wenn das
+  // KC2-Tool-Manifest keine `sensitivity`-Annotation traegt.
+  let sensitivity: ToolSensitivity = resolveSensitivity(annotations, entry.name);
   const override = opts.sensitivityOverrides?.[entry.name];
   if (override !== undefined) {
     // Override-up only — down ablehnen.
@@ -163,14 +165,50 @@ function buildOneWrapper(
   return tool;
 }
 
-function resolveSensitivity(annotations: ToolAnnotations | undefined): ToolSensitivity {
-  if (!annotations) return 'read';
-  const a = annotations as ToolAnnotations & { write?: boolean; sensitivity?: ToolSensitivity };
-  if (a.sensitivity) return a.sensitivity;
-  if (a.write === true) return 'write';
+/**
+ * SEC-006: fail-closed Sensitivity-Default fuer kc_wrappers.
+ *
+ * Begruendung: KC2 wird in einem separaten Repo gepflegt; bei jedem Tools-
+ * Discovery-Refresh (cron every 5 min) koennten neue schreibende Tools auftauchen,
+ * die im Manifest VERGESSEN haben `annotations.sensitivity='write'` zu setzen.
+ * Wenn wir dann fail-OPEN auf 'read' defaulten, wuerde `registry.dispatch`
+ * die Approval-Wall ueberspringen und der MCP-Client koennte das Tool ohne
+ * User-Verification aufrufen.
+ *
+ * Fail-CLOSED-Regel: Sensitivity wird in dieser Reihenfolge bestimmt:
+ *   1. Explizites `sensitivity` (read/write/danger).
+ *   2. `destructiveHint=true` → danger.
+ *   3. `write=true` → write.
+ *   4. `readOnlyHint=true` → read. NUR diese Annotation kann ein Tool
+ *      als read kategorisieren.
+ *   5. Default: write (NICHT read). Operator-Drift in KC2 fuehrt damit zu
+ *      einer ueberfluessigen Approval-Page, nicht zu einem stillen Bypass.
+ *
+ * Ein console.warn() macht den Drift sichtbar — der Operator soll das Tool
+ * in KC2 nachannotieren.
+ */
+export function resolveSensitivity(
+  annotations: ToolAnnotations | undefined,
+  toolName?: string,
+): ToolSensitivity {
+  const a = (annotations ?? {}) as ToolAnnotations & {
+    write?: boolean;
+    sensitivity?: ToolSensitivity;
+  };
+  if (a.sensitivity === 'read' || a.sensitivity === 'write' || a.sensitivity === 'danger') {
+    return a.sensitivity;
+  }
   if (a.destructiveHint === true) return 'danger';
+  if (a.write === true) return 'write';
   if (a.readOnlyHint === true) return 'read';
-  return 'read';
+  // SEC-006: kein Read-Default mehr — fail-closed auf 'write'.
+  if (toolName) {
+    console.warn(
+      `[kc_wrappers] tool "${toolName}" has no sensitivity annotation — defaulting to 'write' (SEC-006 fail-closed). ` +
+        `Set annotations.sensitivity='read' on the KC2-side tool manifest if appropriate.`,
+    );
+  }
+  return 'write';
 }
 
 function rankSensitivity(s: ToolSensitivity): number {

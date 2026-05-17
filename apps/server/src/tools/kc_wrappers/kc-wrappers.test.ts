@@ -147,6 +147,65 @@ describe('buildKcWrappers', () => {
     expect(tools[0]?.displayTemplate).toBe('Create {{kind}}');
   });
 
+  // SEC-006: fail-closed Default — KC2 vergisst sensitivity-Annotation,
+  // approval2 darf NICHT auf read defaulten.
+  it('SEC-006: tool ohne sensitivity-annotation → write (fail-closed default)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonRpcResponse({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          tools: [
+            {
+              name: 'mystery.tool',
+              description: 'Tool without any sensitivity hint',
+              inputSchema: { type: 'object' },
+              // KEINE annotations
+            },
+          ],
+        },
+      }),
+    );
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { tools } = await buildKcWrappers({
+      knowledgeUrl: 'https://kc',
+      serviceToken: 'tok',
+      signer: makeSigner(),
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    expect(tools[0]?.sensitivity).toBe('write');
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('"mystery.tool"'),
+    );
+    warnSpy.mockRestore();
+  });
+
+  it('SEC-006: destructiveHint=true → danger (kein write-downgrade)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonRpcResponse({
+        jsonrpc: '2.0',
+        id: 1,
+        result: {
+          tools: [
+            {
+              name: 'objects.purge',
+              description: 'Hard-delete',
+              inputSchema: { type: 'object' },
+              annotations: { destructiveHint: true },
+            },
+          ],
+        },
+      }),
+    );
+    const { tools } = await buildKcWrappers({
+      knowledgeUrl: 'https://kc',
+      serviceToken: 'tok',
+      signer: makeSigner(),
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
+    expect(tools[0]?.sensitivity).toBe('danger');
+  });
+
   it('readOnlyHint → sensitivity read', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonRpcResponse({

@@ -120,7 +120,7 @@ Findings sind innerhalb der Severity nach **Schweregrad/Wahrscheinlichkeit** sor
   - Variante 1 (strikt): `return 'write'` als Fallback. Operator MUSS explizit `readOnlyHint: true` setzen damit ein Tool als read durchgeht.
   - Variante 2 (eng): Explizite Allowlist `KNOWN_READ_TOOLS` aus approval2-Konfig. Tool nicht in der Liste → `'write'`.
   - Plus: `console.warn('[kc_wrappers] tool X has no sensitivity annotation, defaulting to write')` bei jedem Refresh ins Audit-Log, damit Drift sichtbar wird.
-- **Status:** OPEN — **Cutover-Blocker**.
+- **Status:** ✅ FIXED 2026-05-17 (Phase A) — Variante 1 umgesetzt. `resolveSensitivity()` in [kc_wrappers/index.ts](../../apps/server/src/tools/kc_wrappers/index.ts) ist jetzt fail-closed: nur explizites `sensitivity` / `destructiveHint=true` / `write=true` / `readOnlyHint=true` kategorisieren das Tool; ohne Annotation → `'write'` Default + `console.warn` mit tool-name. Reihenfolge umgedreht damit `destructiveHint` Vorrang vor `write` hat (danger > write). 2 neue Regression-Tests in [kc-wrappers.test.ts](../../apps/server/src/tools/kc_wrappers/kc-wrappers.test.ts).
 
 ### SEC-007 — `emailVerified` wird in Bootstrap + Invite-Accept nie geprüft <a id="sec-007"></a>
 
