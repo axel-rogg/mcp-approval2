@@ -142,7 +142,7 @@ Findings sind innerhalb der Severity nach **Schweregrad/Wahrscheinlichkeit** sor
   }
   ```
   Tests: assertion dass `emailVerified=false` in Bootstrap-Pfad UND Invite-Pfad 403 produziert.
-- **Status:** OPEN — **Cutover-Blocker**.
+- **Status:** ✅ FIXED 2026-05-17 (Phase A) — [routes/auth/google.ts](../../apps/server/src/routes/auth/google.ts) callback prueft `profile.emailVerified` unmittelbar nach `idp.complete()` und wirft `HttpError.forbidden('forbidden', '...')` bei false. Failed attempt audit-logged als `auth.login.rejected` mit reason `email_not_verified`. Damit ist KEINER der Pfade (findUserByExternalId/acceptInvite/findUserByEmail/bootstrap) erreichbar ohne verifizierte Email.
 
 ---
 
@@ -168,6 +168,10 @@ Findings sind innerhalb der Severity nach **Schweregrad/Wahrscheinlichkeit** sor
 - **Fix:**
   1. Env `BOOTSTRAP_ADMIN_EMAIL` — refuse wenn `input.email !== config.BOOTSTRAP_ADMIN_EMAIL`. Audit-Log auch den rejected-attempt.
   2. Partial unique Index: `CREATE UNIQUE INDEX one_active_admin ON users((1)) WHERE role='admin' AND status='active';` (Migration 0011).
+- **Status:** ✅ FIXED 2026-05-17 (Phase A) — beide Schichten umgesetzt:
+  1. `BOOTSTRAP_ADMIN_EMAIL` Env-Var in [config.ts](../../apps/server/src/lib/config.ts) + [bootstrap.ts](../../apps/server/src/auth/bootstrap.ts) prueft case-insensitive + trimmed Match. Mismatch → `HttpError.forbidden('bootstrap_only')` + `admin.bootstrap.rejected` audit-event. Backward-compat: ohne Env-Var → console.warn + alter "first-to-login"-Pfad bleibt aktiv.
+  2. [Migration 0012](../../apps/server/migrations/0012_bootstrap_admin_uniq.sql) fuegt `CREATE UNIQUE INDEX one_active_admin ON users((TRUE)) WHERE role='admin' AND status='active'` hinzu. `bootstrap.ts` faengt PG-error 23505 (unique_violation) + mapped auf 403 statt 500. Damit ist die SELECT-COUNT-vs-INSERT-Race auf DB-Ebene zugemacht. 6 neue Tests in [bootstrap.test.ts](../../apps/server/src/auth/bootstrap.test.ts).
+- **Operator-Setup:** Doppler-Secret `BOOTSTRAP_ADMIN_EMAIL=<operator-email>` setzen VOR dem ersten Deploy.
 
 ### SEC-009 — WebAuthn-`requireUserVerification: false` überall
 

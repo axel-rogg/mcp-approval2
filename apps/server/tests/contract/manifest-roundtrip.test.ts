@@ -196,7 +196,11 @@ describe('manifest-roundtrip: buildKcWrappers sensitivity', () => {
     expect(tools[0]?.sensitivity).toBe('write');
   });
 
-  it('defaults to read when neither sensitivity nor write are set', async () => {
+  // SEC-006: fail-closed flip. Tools ohne explizite sensitivity-annotation
+  // werden NICHT mehr als 'read' geladen; sie defaulten auf 'write' damit
+  // KC2-Schema-Drift nicht zu Approval-Bypass fuehrt. Wer Read will, muss
+  // `readOnlyHint: true` setzen.
+  it('SEC-006 fail-closed: tools without sensitivity hint default to write', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonRpcResponse({
         jsonrpc: '2.0',
@@ -209,17 +213,27 @@ describe('manifest-roundtrip: buildKcWrappers sensitivity', () => {
               inputSchema: { type: 'object' },
               annotations: {},
             },
+            {
+              name: 'objects.search',
+              description: 'Search.',
+              inputSchema: { type: 'object' },
+              annotations: { readOnlyHint: true },
+            },
           ],
         },
       }),
     );
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { tools } = await buildKcWrappers({
       knowledgeUrl: 'https://kc',
       serviceToken: 'svc',
       signer: makeStubSigner(),
       fetchImpl: fetchMock as unknown as typeof fetch,
     });
-    expect(tools[0]?.sensitivity).toBe('read');
+    const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
+    expect(byName['health.ping']?.sensitivity).toBe('write');
+    expect(byName['objects.search']?.sensitivity).toBe('read');
+    warnSpy.mockRestore();
   });
 
   it('applies override-up but rejects override-down', async () => {

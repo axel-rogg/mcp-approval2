@@ -147,6 +147,36 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
       ...(stateCookie.redirectUri ? { redirectUri: stateCookie.redirectUri } : {}),
     });
 
+    // SEC-007: emailVerified-Gate. Google liefert email_verified im id_token
+    // — wir defaulten fail-CLOSED: ohne explizites true gehen wir davon aus
+    // dass die Email ungeprueft ist. Das schliesst:
+    //   - Workspace-Accounts mit IdP-Federation die das Flag nicht setzen
+    //   - Edge-Cases in denen Google's Verhalten sich aendert
+    //   - Bootstrap-Race-Attacks via fresh-erstellte unverified-Account
+    const callbackIp =
+      c.req.header('fly-client-ip') ??
+      c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ??
+      null;
+    if (!profile.emailVerified) {
+      await emitAudit(server.db, {
+        action: 'auth.login.rejected',
+        actorUserId: null,
+        result: 'failure',
+        ...(callbackIp ? { ip: callbackIp } : {}),
+        details: {
+          reason: 'email_not_verified',
+          email: profile.email,
+          idp: 'google',
+        },
+      }).catch(() => {
+        /* audit failure non-fatal */
+      });
+      throw HttpError.forbidden(
+        'forbidden',
+        'Google account email must be verified before login',
+      );
+    }
+
     // Auflosung: existierender User? Invite? Bootstrap?
     let userId: string;
     let role: 'admin' | 'member';
@@ -176,12 +206,18 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
         userId = existingByEmail.id;
         role = existingByEmail.role;
       } else {
-        // Bootstrap-Versuch
-        const bs = await bootstrapIfNeeded(server.db, {
-          externalId: profile.externalId,
-          email: profile.email,
-          displayName: profile.displayName,
-        });
+        // Bootstrap-Versuch (SEC-008: BOOTSTRAP_ADMIN_EMAIL-Gate aktiv).
+        const bs = await bootstrapIfNeeded(
+          server.db,
+          {
+            externalId: profile.externalId,
+            email: profile.email,
+            displayName: profile.displayName,
+          },
+          server.config.BOOTSTRAP_ADMIN_EMAIL
+            ? { BOOTSTRAP_ADMIN_EMAIL: server.config.BOOTSTRAP_ADMIN_EMAIL }
+            : undefined,
+        );
         userId = bs.userId;
         role = bs.role;
       }

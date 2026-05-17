@@ -157,6 +157,13 @@ const ConfigSchema = z.object({
         .map((h) => h.trim().toLowerCase())
         .filter(Boolean),
     ),
+
+  // SEC-008: First-Login-Bootstrap Email-Gate. Wenn gesetzt, MUSS die erste
+  // Google-Login-Email exact-match (case-insensitive). Ohne diese Variable
+  // gilt die alte "First-to-login wird admin"-Regel — anfaellig gegen Race-
+  // Attacks zwischen Deploy-T+0 und erstem Operator-Login.
+  // STRONGLY RECOMMENDED in Production zu setzen.
+  BOOTSTRAP_ADMIN_EMAIL: z.string().email().optional(),
 });
 
 export type AppConfig = z.infer<typeof ConfigSchema>;
