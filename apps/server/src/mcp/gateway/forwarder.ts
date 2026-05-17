@@ -38,6 +38,21 @@ export interface SubMcpForwarderOptions {
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MCP_ENDPOINT_PATH = '/mcp';
 
+/**
+ * Wenn baseUrl bereits einen Pfad enthaelt (z.B. github-MCP:
+ * `https://api.githubcopilot.com/mcp/`), ist baseUrl die volle Endpoint-URL —
+ * KEIN `/mcp`-Append. Sonst (Origin-only wie utils/gws/gcloud) `/mcp` anhaengen.
+ */
+function buildMcpUrl(baseUrl: string): string {
+  try {
+    const u = new URL(baseUrl);
+    if (u.pathname && u.pathname !== '/') return baseUrl;
+  } catch {
+    // Fallback unten
+  }
+  return `${baseUrl}${MCP_ENDPOINT_PATH}`;
+}
+
 export class SubMcpForwarder {
   private readonly registry: SubMcpRegistry;
   private readonly fetchImpl: typeof fetch;
@@ -102,7 +117,7 @@ export class SubMcpForwarder {
 
     let response: Response;
     try {
-      response = await this.fetchImpl(`${cfg.baseUrl}${MCP_ENDPOINT_PATH}`, {
+      response = await this.fetchImpl(buildMcpUrl(cfg.baseUrl), {
         method: 'POST',
         headers,
         body: JSON.stringify(payload),

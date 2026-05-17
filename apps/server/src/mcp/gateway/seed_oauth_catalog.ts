@@ -8,11 +8,13 @@
  * einen EIGENEN OAuth-Flow:
  *   - cf       (Cloudflare-MCP)  → DCR (RFC 7591): jeder User registriert sich
  *                                   einen eigenen DCR-Client beim Authorize-Start
- *   - github   (GitHub-MCP)      → Pre-registered: jeder User muss eine eigene
- *                                   GitHub-App/OAuth-App anlegen und client_id +
- *                                   client_secret unter /v1/me/servers/github/config
- *                                   eintragen, BEVOR der OAuth-Start läuft
- *                                   (siehe project_github_oauth_needs_github_app.md)
+ *
+ * **Bewusst nicht im Catalog**: github — User-Decision 2026-05-18, der
+ * GitHub-MCP-Server bleibt User-managed (POST /v1/me/servers manuell mit
+ * eigener GitHub-App/OAuth-App). Grund: der existing per-User-Setup darf
+ * nicht von einem Boot-Time-Seed ueberschrieben werden (config_schema-Drift
+ * + scopes/URLs sind GitHub-App-spezifisch und vom User in seiner App-Definition
+ * abhaengig).
  *
  * Die Catalog-Row tragt nur die "öffentlichen" Metadaten (base_url,
  * authorize_url, token_url, default_scopes) in `config_schema._meta.oauth`.
@@ -80,22 +82,6 @@ export const DEFAULT_OAUTH_CATALOG_SERVERS: ReadonlyArray<OAuthCatalogServerSeed
       registration_endpoint: 'https://bindings.mcp.cloudflare.com/oauth/register',
       default_scopes: ['mcp:tools'],
       provider: 'cloudflare',
-    },
-  },
-  {
-    name: 'github',
-    displayName: 'GitHub MCP',
-    // GitHub-MCP via Copilot-Endpoint (offizieller MCP-Server).
-    // 2026-05: GitHub OAuth-Apps liefern keine Refresh-Tokens mehr für
-    // axelrogg-Accounts → User muss GitHub *App* (nicht OAuth-App) anlegen.
-    // Siehe memory project_github_oauth_needs_github_app.md
-    baseUrl: 'https://api.githubcopilot.com/mcp/',
-    oauthKind: 'pre',
-    oauthMeta: {
-      authorize_url: 'https://github.com/login/oauth/authorize',
-      token_url: 'https://github.com/login/oauth/access_token',
-      default_scopes: ['read:user', 'repo'],
-      provider: 'github',
     },
   },
 ] as const;

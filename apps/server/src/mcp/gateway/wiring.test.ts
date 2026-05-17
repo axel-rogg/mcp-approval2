@@ -440,7 +440,7 @@ describe('seedSatelliteWorkers', () => {
     expect(byName.get('utils')?.innerOAuth).toBeUndefined();
   });
 
-  it('writes config_schema._meta.oauth for gws + gcloud at seed time', async () => {
+  it('writes config_schema.oauth (top-level) for gws + gcloud at seed time', async () => {
     const { db, captured } = makeStubDb([
       [{ name: 'gcloud', was_new: true }],
       [{ name: 'gws', was_new: true }],
@@ -451,14 +451,28 @@ describe('seedSatelliteWorkers', () => {
 
     const gwsCall = captured.find((c) => c.params[0] === 'gws');
     expect(gwsCall).toBeDefined();
-    // param[5] = config_schema JSON
+    // param[5] = config_schema JSON (top-level oauth, NICHT _meta.oauth —
+    // PWA + UserServerOAuthService lesen top-level, siehe seed_oauth_catalog.ts)
     const gwsSchema = JSON.parse(String(gwsCall?.params[5])) as {
-      _meta: { oauth: { kind: string; provider: string; scopes: string[] } };
+      oauth: { kind: string; provider: string; scopes: string[] };
     };
-    expect(gwsSchema._meta.oauth.kind).toBe('shared-app');
-    expect(gwsSchema._meta.oauth.provider).toBe('google');
-    expect(gwsSchema._meta.oauth.scopes).toContain(
+    expect(gwsSchema.oauth.kind).toBe('shared-app');
+    expect(gwsSchema.oauth.provider).toBe('google');
+    expect(gwsSchema.oauth.scopes).toContain(
       'https://www.googleapis.com/auth/calendar',
+    );
+
+    // gcloud hat oauth + config_fields
+    const gcloudCall = captured.find((c) => c.params[0] === 'gcloud');
+    const gcloudSchema = JSON.parse(String(gcloudCall?.params[5])) as {
+      oauth: { scopes: string[] };
+      config_fields: Array<{ key: string }>;
+    };
+    expect(gcloudSchema.oauth.scopes).toContain(
+      'https://www.googleapis.com/auth/cloud-platform',
+    );
+    expect(gcloudSchema.config_fields.map((f) => f.key)).toContain(
+      '_service_account_json',
     );
 
     // utils hat KEIN inner-OAuth → config_schema sollte null sein
@@ -468,12 +482,14 @@ describe('seedSatelliteWorkers', () => {
 });
 
 // ---------------------------------------------------------------------------
-// seedOAuthCatalogServers — Catalog-OAuth-Server (cf, github)
+// seedOAuthCatalogServers — Catalog-OAuth-Server (cf)
+// github bewusst NICHT im Catalog (User-Decision 2026-05-18 — bleibt
+// per-User managed, kein Boot-Seed der die existing Config ueberschreibt).
 // ---------------------------------------------------------------------------
 
 describe('seedOAuthCatalogServers', () => {
-  it('DEFAULT_OAUTH_CATALOG_SERVERS contains cf (dcr) + github (pre)', () => {
-    expect(DEFAULT_OAUTH_CATALOG_SERVERS).toHaveLength(2);
+  it('DEFAULT_OAUTH_CATALOG_SERVERS contains only cf (dcr) — github bleibt user-managed', () => {
+    expect(DEFAULT_OAUTH_CATALOG_SERVERS).toHaveLength(1);
     const byName = new Map(DEFAULT_OAUTH_CATALOG_SERVERS.map((s) => [s.name, s]));
 
     const cf = byName.get('cf');
@@ -482,48 +498,40 @@ describe('seedOAuthCatalogServers', () => {
     expect(cf?.oauthMeta.provider).toBe('cloudflare');
     expect(cf?.oauthMeta.registration_endpoint).toBeDefined();
 
-    const gh = byName.get('github');
-    expect(gh?.oauthKind).toBe('pre');
-    expect(gh?.oauthMeta.provider).toBe('github');
-    expect(gh?.oauthMeta.token_url).toContain('github.com');
-    // GitHub-Mode hat kein registration_endpoint (pre-registered)
-    expect(gh?.oauthMeta.registration_endpoint).toBeUndefined();
+    // github darf nicht in Catalog — sonst wuerde Boot den per-User Setup ueberschreiben
+    expect(byName.get('github')).toBeUndefined();
   });
 
-  it('inserts both servers as catalog-defaults with auth_mode=oauth', async () => {
-    const { db, captured } = makeStubDb([
-      [{ name: 'cf', was_new: true }],
-      [{ name: 'github', was_new: true }],
-    ]);
+  it('inserts cf as catalog-default with auth_mode=oauth + top-level oauth schema', async () => {
+    const { db, captured } = makeStubDb([[{ name: 'cf', was_new: true }]]);
     const result = await seedOAuthCatalogServers({ db });
-    expect(result.registered.sort()).toEqual(['cf', 'github']);
+    expect(result.registered).toEqual(['cf']);
     expect(result.updated).toEqual([]);
-    expect(captured).toHaveLength(2);
+    expect(captured).toHaveLength(1);
 
-    // Beide INSERTs müssen auth_mode='oauth' setzen + config_schema._meta.oauth
-    for (const c of captured) {
-      expect(String(c.sql)).toContain("'oauth'");
-      const cfgSchema = JSON.parse(String(c.params[4])) as {
-        _meta: { oauth: { kind: string; authorize_url: string; token_url: string } };
-      };
-      expect(cfgSchema._meta.oauth.kind).toMatch(/^(dcr|pre)$/);
-      expect(cfgSchema._meta.oauth.authorize_url).toMatch(/^https:\/\//);
-      expect(cfgSchema._meta.oauth.token_url).toMatch(/^https:\/\//);
-    }
+    const insert = captured[0];
+    expect(insert).toBeDefined();
+    expect(String(insert?.sql)).toContain("'oauth'");
+    // config_schema liegt in params[4] und enthaelt TOP-LEVEL `oauth`
+    // (NICHT `_meta.oauth`) — aligned mit user-server-oauth.ts:getOAuthSchema()
+    // und der PWA.
+    const cfgSchema = JSON.parse(String(insert?.params[4])) as {
+      oauth: { kind: string; authorize_url: string; token_url: string };
+    };
+    expect(cfgSchema.oauth.kind).toBe('dcr');
+    expect(cfgSchema.oauth.authorize_url).toContain('cloudflare.com');
+    expect(cfgSchema.oauth.token_url).toContain('cloudflare.com');
   });
 
   it('reports updated when ON CONFLICT branch fires with was_new=false', async () => {
-    const { db } = makeStubDb([
-      [{ name: 'cf', was_new: false }],
-      [{ name: 'github', was_new: false }],
-    ]);
+    const { db } = makeStubDb([[{ name: 'cf', was_new: false }]]);
     const result = await seedOAuthCatalogServers({ db });
     expect(result.registered).toEqual([]);
-    expect(result.updated.sort()).toEqual(['cf', 'github']);
+    expect(result.updated).toEqual(['cf']);
   });
 
   it('idempotent: empty INSERT-return means already-in-sync', async () => {
-    const { db } = makeStubDb([[], []]);
+    const { db } = makeStubDb([[]]);
     const result = await seedOAuthCatalogServers({ db });
     expect(result.registered).toEqual([]);
     expect(result.updated).toEqual([]);

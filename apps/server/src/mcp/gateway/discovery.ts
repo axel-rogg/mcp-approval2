@@ -59,6 +59,21 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const MCP_ENDPOINT_PATH = '/mcp';
 
 /**
+ * Wenn baseUrl bereits einen Pfad enthaelt (z.B. github-MCP:
+ * `https://api.githubcopilot.com/mcp/`), ist baseUrl die volle Endpoint-URL —
+ * KEIN `/mcp`-Append. Sonst (Origin-only wie utils/gws/gcloud) `/mcp` anhaengen.
+ */
+function buildMcpUrl(baseUrl: string): string {
+  try {
+    const u = new URL(baseUrl);
+    if (u.pathname && u.pathname !== '/') return baseUrl;
+  } catch {
+    // ignore — Fallback unten
+  }
+  return `${baseUrl}${MCP_ENDPOINT_PATH}`;
+}
+
+/**
  * Refresh-Hook. Iteriert alle aktiven Sub-MCPs, ruft `tools/list` ab,
  * schreibt in `tools_cache`. Errors pro Server werden gesammelt, nicht
  * thrown — wir wollen, dass ein einzelner kaputter Sub-MCP nicht den
@@ -157,7 +172,7 @@ async function fetchToolsList(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
   try {
-    response = await fetchImpl(`${cfg.baseUrl}${MCP_ENDPOINT_PATH}`, {
+    response = await fetchImpl(buildMcpUrl(cfg.baseUrl), {
       method: 'POST',
       headers,
       body: JSON.stringify({

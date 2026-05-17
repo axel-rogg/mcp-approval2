@@ -225,12 +225,14 @@ export async function seedSatelliteWorkers(args: SeedSatelliteWorkersArgs): Prom
       registeredWithoutToken.push(gw.name);
     }
 
-    // config_schema._meta-Block — wird von UserServerOAuthService (fuer
-    // /v1/me/servers/:name/oauth/start) und vom PWA-Drawer (fuer
-    // config_fields) gelesen.
-    const meta: Record<string, unknown> = {};
+    // config_schema-Top-Level-Layout — wird von UserServerOAuthService
+    // (registry.getByName().configSchema.oauth) und der PWA gelesen.
+    // ACHTUNG: NICHT in `_meta`-Subkey ablegen — sowohl getOAuthSchema()
+    // in user-server-oauth.ts als auch die PWA erwarten top-level `oauth`
+    // + top-level `config_fields`. Aligned mit seed_oauth_catalog.ts.
+    const cfg: Record<string, unknown> = {};
     if (gw.innerOAuth) {
-      meta['oauth'] = {
+      cfg['oauth'] = {
         kind: gw.innerOAuth.kind,
         provider: gw.innerOAuth.provider,
         authorize_url: gw.innerOAuth.authorize_url,
@@ -243,7 +245,7 @@ export async function seedSatelliteWorkers(args: SeedSatelliteWorkersArgs): Prom
       };
     }
     if (gw.configFields && gw.configFields.length > 0) {
-      meta['config_fields'] = gw.configFields.map((f) => ({
+      cfg['config_fields'] = gw.configFields.map((f) => ({
         key: f.key,
         label: f.label,
         type: f.type,
@@ -252,7 +254,7 @@ export async function seedSatelliteWorkers(args: SeedSatelliteWorkersArgs): Prom
       }));
     }
     const configSchemaJson =
-      Object.keys(meta).length > 0 ? JSON.stringify({ _meta: meta }) : null;
+      Object.keys(cfg).length > 0 ? JSON.stringify(cfg) : null;
 
     const ts = now();
     // INSERT ON CONFLICT UPDATE — idempotent. Bringt Hash + URL + config_schema
