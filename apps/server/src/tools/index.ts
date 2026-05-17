@@ -80,6 +80,16 @@ export interface ToolDeps {
   readonly capabilitySearch?: CapabilitySearchService;
   readonly federatedSearch?: FederatedSearchService;
   readonly subMcpRegistry?: SubMcpRegistry;
+  /**
+   * Live-Refresh-Deps fuer gateway_server_rediscover. Wenn vorhanden,
+   * aktualisiert das Tool auch die in-memory Registry; sonst nur DB-Cache.
+   */
+  readonly subMcpLiveRefresh?: {
+    readonly toolRegistry: ToolRegistry;
+    readonly forwarder: import('../mcp/gateway/forwarder.js').SubMcpForwarder;
+    readonly config: Pick<AppConfig, 'JWT_SECRET' | 'JWT_ISSUER'>;
+    readonly cache: import('../mcp/gateway/refresh.js').SubMcpWrappersCache;
+  };
   readonly config?: AppConfig;
   readonly db?: DbAdapter;
 }
@@ -159,6 +169,7 @@ export function registerCoreTools(registry: ToolRegistry, deps: ToolDeps): void 
     registerGatewayMgmtTools(registry, {
       registry: deps.subMcpRegistry,
       db: deps.db,
+      ...(deps.subMcpLiveRefresh ? { liveRefresh: deps.subMcpLiveRefresh } : {}),
     });
   }
 }

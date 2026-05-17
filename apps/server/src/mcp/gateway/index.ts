@@ -66,3 +66,10 @@ export {
   type SeedCfGatewaysArgs,
   type SeedResult,
 } from './seed.js';
+
+export {
+  applyGatewayDiscovery,
+  SubMcpWrappersCache,
+  type ApplyGatewayDiscoveryArgs,
+  type ApplyGatewayDiscoveryResult,
+} from './refresh.js';

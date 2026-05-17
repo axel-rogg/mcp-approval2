@@ -108,8 +108,10 @@ import {
   seedCfGateways,
   subMcpDiscoverRoutes,
   SubMcpForwarder,
+  SubMcpWrappersCache,
   type SubMcpRegistry,
 } from './mcp/gateway/index.js';
+import { adminGatewayRoutes } from './routes/admin/gateways.js';
 
 // Services
 import {
@@ -400,6 +402,15 @@ export async function createApp(
   const registry = deps.toolRegistry ?? new ToolRegistry();
 
   // ─────────────────────────────────────────────────────────────────────
+  // Sub-MCP-Registry + Forwarder werden HIER zentral instanziert, damit
+  // die Boot-Sequenz, der Cron-Task, das gateway_server_rediscover-Tool
+  // und die Admin-HTTP-Route alle denselben Cache + Forwarder teilen.
+  // ─────────────────────────────────────────────────────────────────────
+  const subMcpReg: SubMcpRegistry =
+    deps.subMcpRegistry ?? createSubMcpRegistry({ db: server.db });
+  const subMcpForwarder = new SubMcpForwarder({ registry: subMcpReg });
+
+  // ─────────────────────────────────────────────────────────────────────
   // Burst-7: Optional Services (Apps / Prefs / Push / OutputRefs / Search).
   // Capability-Search needs the live tool-registry, so we build services
   // AFTER the registry is allocated but BEFORE we register tools into it.
@@ -417,7 +428,13 @@ export async function createApp(
       ...(optionalServices.apps ? { apps: optionalServices.apps } : {}),
       ...(optionalServices.prefs ? { prefs: optionalServices.prefs } : {}),
       ...(optionalServices.push ? { pushService: optionalServices.push } : {}),
-      ...(deps.subMcpRegistry ? { subMcpRegistry: deps.subMcpRegistry } : {}),
+      subMcpRegistry: subMcpReg,
+      subMcpLiveRefresh: {
+        toolRegistry: registry,
+        forwarder: subMcpForwarder,
+        config: server.config,
+        cache: subMcpWrappersCache,
+      },
       ...(optionalServices.capabilitySearch
         ? { capabilitySearch: optionalServices.capabilitySearch }
         : {}),
@@ -479,8 +496,6 @@ export async function createApp(
     // Errors pro Phase werden geloggt + non-fatal — ein nicht-erreichbarer
     // gws darf approval2-Boot nicht stoppen.
     try {
-      const subMcpRegistryForBoot =
-        deps.subMcpRegistry ?? createSubMcpRegistry({ db: server.db });
       const seedResult = await seedCfGateways({ db: server.db });
       if (
         seedResult.registered.length > 0 ||
@@ -494,13 +509,13 @@ export async function createApp(
             `skipped(no-token)=${seedResult.skipped.map((s) => s.name).join(',') || '-'}`,
         );
       }
-      subMcpRegistryForBoot.invalidate();
+      subMcpReg.invalidate();
 
       // Initialer Discovery-Pass — sonst sind tools_cache=NULL und wrapper-build
       // ergibt 0 Tools. Pro-Server fail-soft: ein offline-gws blockt nicht den
       // ganzen Boot.
       const discoverResults = await refreshSubMcpToolCache({
-        registry: subMcpRegistryForBoot,
+        registry: subMcpReg,
       });
       for (const r of discoverResults) {
         if (r.error) {
@@ -516,19 +531,29 @@ export async function createApp(
         }
       }
 
-      // Wrapper-Tools registrieren.
-      const forwarder = new SubMcpForwarder({ registry: subMcpRegistryForBoot });
+      // Wrapper-Tools registrieren + Cache befuellen (per-server Tool-Namen
+      // damit applyGatewayDiscovery spaeter de-/re-registern kann).
       const wrappers = await buildSubMcpWrapperTools({
-        registry: subMcpRegistryForBoot,
-        forwarder,
+        registry: subMcpReg,
+        forwarder: subMcpForwarder,
         config: server.config,
       });
       let registered = 0;
+      const perServerToolNames = new Map<string, string[]>();
       for (const t of wrappers.tools) {
         if (!registry.has(t.name)) {
           registry.register(t);
           registered += 1;
         }
+        // Tool-Name follows pattern `<subMcpName>.<remoteName>`.
+        const dotIdx = t.name.indexOf('.');
+        const srvName = dotIdx > 0 ? t.name.slice(0, dotIdx) : t.name;
+        const arr = perServerToolNames.get(srvName) ?? [];
+        arr.push(t.name);
+        perServerToolNames.set(srvName, arr);
+      }
+      for (const [srvName, names] of perServerToolNames) {
+        subMcpWrappersCache.setForServer(srvName, names);
       }
       if (wrappers.skipped.length > 0) {
         // eslint-disable-next-line no-console
@@ -550,6 +575,20 @@ export async function createApp(
       );
     }
   }
+
+  // Admin-HTTP-Route fuer PWA-Tools-Tab Refresh-Button. Re-registriert
+  // Sub-MCP-Wrapper-Tools live ohne approval2-Restart.
+  app.route(
+    '/',
+    adminGatewayRoutes({
+      server,
+      registry: subMcpReg,
+      toolRegistry: registry,
+      forwarder: subMcpForwarder,
+      cache: subMcpWrappersCache,
+      config: server.config,
+    }),
+  );
 
   // ─────────────────────────────────────────────────────────────────────
   // Burst-7 HTTP-Route-Mounts (after registry exists so /v1/apps + push
@@ -645,8 +684,9 @@ export async function createApp(
   // ─────────────────────────────────────────────────────────────────────
   const internalToken = deps.internalServiceToken;
   if (internalToken) {
-    const subMcpReg =
-      deps.subMcpRegistry ?? createSubMcpRegistry({ db: server.db });
+    // subMcpReg + subMcpForwarder werden oben (vor populateToolRegistry)
+    // bereits zentral instanziiert — wir reuse sie hier statt eine zweite
+    // Instanz mit eigenem Cache anzulegen.
     const internalTokenHash = hashInternalToken(internalToken);
     const serviceTokenGuard = makeServiceTokenGuard(internalTokenHash);
 
@@ -699,6 +739,12 @@ export async function createApp(
       approvals: approvalService,
       prfSessions,
       subMcpRegistry: subMcpReg,
+      subMcpWrappers: {
+        toolRegistry: registry,
+        forwarder: subMcpForwarder,
+        config: server.config,
+        cache: subMcpWrappersCache,
+      },
       ...(optionalServices.push ? { push: optionalServices.push } : {}),
       // AS-3 (A9): kc-manifest-refresh erhaelt registry + previous-snapshot
       // wenn das Boot-Build erfolgreich war. Cache-getter laeuft jedes Mal —
@@ -801,6 +847,12 @@ interface PopulateDeps {
   readonly prefs?: PrefsService;
   readonly pushService?: PushService;
   readonly subMcpRegistry?: SubMcpRegistry;
+  readonly subMcpLiveRefresh?: {
+    readonly toolRegistry: ToolRegistry;
+    readonly forwarder: SubMcpForwarder;
+    readonly config: Pick<import('./lib/config.js').AppConfig, 'JWT_SECRET' | 'JWT_ISSUER'>;
+    readonly cache: SubMcpWrappersCache;
+  };
   readonly capabilitySearch?: CapabilitySearchService;
   readonly federatedSearch?: FederatedSearchService;
 }
@@ -829,6 +881,7 @@ function populateToolRegistry(registry: ToolRegistry, deps: PopulateDeps): void 
         ...(deps.prefs ? { prefs: deps.prefs } : {}),
         ...(deps.pushService ? { pushService: deps.pushService } : {}),
         ...(deps.subMcpRegistry ? { subMcpRegistry: deps.subMcpRegistry } : {}),
+        ...(deps.subMcpLiveRefresh ? { subMcpLiveRefresh: deps.subMcpLiveRefresh } : {}),
         ...(deps.capabilitySearch
           ? { capabilitySearch: deps.capabilitySearch }
           : {}),
@@ -997,6 +1050,14 @@ class KcWrappersCache {
 }
 
 export const kcWrappersCache = new KcWrappersCache();
+
+/**
+ * Module-scoped Sub-MCP-Wrapper-Cache. Haelt pro registriertem Sub-MCP die
+ * Set der in-memory ToolRegistry-Eintraege. Wird bei Boot durch buildSubMcp-
+ * WrapperTools gefuellt und bei `applyGatewayDiscovery` (Cron + admin tool +
+ * admin HTTP-route) mutiert.
+ */
+export const subMcpWrappersCache = new SubMcpWrappersCache();
 
 async function buildBootKcSigner(
   server: ServerContext,

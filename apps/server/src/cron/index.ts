@@ -85,6 +85,25 @@ export interface CronDeps {
    * noop + audit (siehe runKcManifestRefresh).
    */
   readonly kcManifest?: KcManifestRefreshDeps;
+  /**
+   * Sub-MCP-Wrapper-Live-Refresh-Deps. Wenn gesetzt, aktualisiert
+   * `gateway-discovery` die in-memory ToolRegistry zusaetzlich zum
+   * DB-`tools_cache` (analog kcManifest-Pattern). Ohne diese Deps macht
+   * der Task nur den DB-Refresh — neue Tools sind erst nach approval2-
+   * Restart sichtbar. App-Factory verkabelt das standardmaessig.
+   */
+  readonly subMcpWrappers?: SubMcpWrappersRefreshDeps;
+}
+
+/**
+ * Deps fuer den Live-Refresh-Hook. Werden in app-factory.ts gefuellt sobald
+ * Sub-MCP-Gateway-Boot durchgelaufen ist.
+ */
+export interface SubMcpWrappersRefreshDeps {
+  readonly toolRegistry: import('../mcp/protocol/registry.js').ToolRegistry;
+  readonly forwarder: import('../mcp/gateway/forwarder.js').SubMcpForwarder;
+  readonly config: Pick<import('../lib/config.js').AppConfig, 'JWT_SECRET' | 'JWT_ISSUER'>;
+  readonly cache: import('../mcp/gateway/refresh.js').SubMcpWrappersCache;
 }
 
 /**

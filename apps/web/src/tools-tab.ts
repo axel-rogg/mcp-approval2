@@ -1,17 +1,24 @@
 /**
- * Tools-Tab — Read-only Inventur aller registrierten Tools + Sub-MCP-Gateways.
+ * Tools-Tab — Inventur aller registrierten Tools + Sub-MCP-Gateways.
  *
  * Routes:
  *   #/tools  → Hub-View mit Server-Cards (native + Gateways)
  *
  * Pattern aus v1-mcp-approval `#/servers` portiert: Server-Liste mit Expand/
  * Collapse, pro Tool Sensitivity-Badge (read/write/danger).
+ *
+ * Gateway-Refresh (2026-05-17): admin sieht zusaetzlich einen "Gateways neu
+ * entdecken"-Button (global) sowie pro-Gateway-Card einen kleinen Refresh-
+ * Trigger. Ruft `POST /v1/admin/gateways/rediscover`, das den Tool-Cache
+ * aktualisiert UND die in-memory Registry live re-registriert (analog
+ * kc-manifest-refresh). Keine approval2-Restart noetig.
  */
 import type {
   ApiClient,
   InventoryGatewayTool,
   InventoryNativeTool,
   InventoryResponse,
+  RediscoverGatewaysResponse,
   Session,
 } from './api.js';
 import { ApiError } from './api.js';
@@ -79,9 +86,20 @@ interface ServerSection {
   readonly subtitle: string;
   readonly tools: ReadonlyArray<InventoryNativeTool | InventoryGatewayTool>;
   readonly enabled: boolean;
+  /** Only true for sub-MCP gateways — they get a refresh affordance. */
+  readonly isGateway: boolean;
 }
 
-function renderServerCard(s: ServerSection): HTMLElement {
+interface ServerCardCallbacks {
+  /**
+   * Triggered by per-gateway refresh button. `name` ist der Gateway-Slug.
+   * `null` heisst alle (vom Toolbar-Button). Callback ist optional fuer
+   * non-admin renders.
+   */
+  readonly onRefresh?: (name: string | null) => Promise<void>;
+}
+
+function renderServerCard(s: ServerSection, cb: ServerCardCallbacks): HTMLElement {
   const details = document.createElement('details');
   details.className = 'server-card card';
   // Alle Server-Cards default eingeklappt — User-Wunsch (Inventur ist
@@ -108,6 +126,21 @@ function renderServerCard(s: ServerSection): HTMLElement {
     disabled.className = 'pill pill-danger';
     disabled.textContent = 'disabled';
     titleRow.appendChild(disabled);
+  }
+
+  if (s.isGateway && cb.onRefresh) {
+    const refreshBtn = document.createElement('button');
+    refreshBtn.type = 'button';
+    refreshBtn.className = 'btn btn-secondary btn-small server-card-refresh';
+    refreshBtn.textContent = '🔄';
+    refreshBtn.title = `Tools von ${s.displayName} neu entdecken`;
+    refreshBtn.addEventListener('click', (ev) => {
+      // Klick auf den Refresh-Button soll das <details>-Toggle nicht triggern.
+      ev.preventDefault();
+      ev.stopPropagation();
+      void cb.onRefresh?.(s.name);
+    });
+    titleRow.appendChild(refreshBtn);
   }
 
   summary.appendChild(titleRow);
@@ -142,6 +175,7 @@ function sectionsFromInventory(inv: InventoryResponse): ServerSection[] {
     subtitle: `Hub-eigene Tools, inkl. KC-Wrappers wenn KC2 erreichbar`,
     tools: inv.native,
     enabled: true,
+    isGateway: false,
   });
   for (const g of inv.gateways) {
     sections.push({
@@ -150,9 +184,20 @@ function sectionsFromInventory(inv: InventoryResponse): ServerSection[] {
       subtitle: `Gateway · Tool-Cache ${fmtCachedAt(g.toolsCachedAt)}`,
       tools: g.tools,
       enabled: g.enabled,
+      isGateway: true,
     });
   }
   return sections;
+}
+
+function renderRediscoverResult(r: RediscoverGatewaysResponse): string {
+  const errors = r.results.filter((x) => x.error);
+  const ok = r.results.filter((x) => !x.error);
+  const okLabel = ok.map((x) => `${x.subMcpName}=${x.count}`).join(', ') || '-';
+  const errLabel = errors.length > 0
+    ? ` · ${errors.length} Fehler: ${errors.map((e) => `${e.subMcpName} (${e.error ?? 'unbekannt'})`).join(', ')}`
+    : '';
+  return `+${r.registered} −${r.deregistered} (${okLabel})${errLabel}`;
 }
 
 export async function renderToolsTab(
@@ -173,50 +218,125 @@ export async function renderToolsTab(
   const desc = document.createElement('p');
   desc.className = 'muted';
   desc.textContent =
-    'Read-only Inventur aller registrierten Tools. Native Hub-Tools plus angebundene Sub-MCP-Gateways. ' +
+    'Inventur aller registrierten Tools. Native Hub-Tools plus angebundene Sub-MCP-Gateways. ' +
     'Sensitivity-Badge zeigt Approval-Anforderung: READ direkt, WRITE/DANGER per Approval-Gate.';
   main.appendChild(desc);
+
+  // Toolbar mit globalem Refresh-Button. Nur admins koennen das HTTP-Endpoint
+  // erfolgreich aufrufen (Server-side check). Wir blenden den Knopf fuer
+  // members trotzdem aus — keine 403-Verwirrung.
+  const toolbar = document.createElement('div');
+  toolbar.className = 'tools-toolbar';
+  let refreshAllBtn: HTMLButtonElement | null = null;
+  const status = document.createElement('span');
+  status.className = 'muted small tools-toolbar-status';
+  if (session.role === 'admin') {
+    refreshAllBtn = document.createElement('button');
+    refreshAllBtn.type = 'button';
+    refreshAllBtn.className = 'btn btn-secondary btn-small';
+    refreshAllBtn.textContent = '🔄 Gateways neu entdecken';
+    refreshAllBtn.title =
+      'Aktualisiert Sub-MCP-Tool-Cache + registriert live neu in der Tool-Registry. ' +
+      'Kein approval2-Restart noetig.';
+    toolbar.appendChild(refreshAllBtn);
+  }
+  toolbar.appendChild(status);
+  main.appendChild(toolbar);
 
   const listHost = document.createElement('div');
   listHost.className = 'server-list';
   main.appendChild(listHost);
 
+  const footerHost = document.createElement('p');
+  footerHost.className = 'muted small tools-footer';
+  main.appendChild(footerHost);
+
   root.appendChild(main);
 
-  // Loading-Indikator
-  listHost.replaceChildren(
-    Object.assign(document.createElement('p'), {
-      className: 'muted',
-      textContent: 'Lade Inventar…',
-    }),
-  );
-
-  let inv: InventoryResponse;
-  try {
-    inv = await api.listInventory();
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 401) {
-      renderSessionExpired(root);
-      return;
-    }
-    const msg = err instanceof ApiError ? `${err.code}: ${err.message}` : String(err);
+  // -----------------------------------------------------------------
+  // State + Reload-Helper.
+  // -----------------------------------------------------------------
+  async function loadAndRender(): Promise<void> {
     listHost.replaceChildren(
       Object.assign(document.createElement('p'), {
-        className: 'err',
-        textContent: `Inventar laden fehlgeschlagen: ${msg}`,
+        className: 'muted',
+        textContent: 'Lade Inventar…',
       }),
     );
-    return;
+    footerHost.textContent = '';
+
+    let inv: InventoryResponse;
+    try {
+      inv = await api.listInventory();
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        renderSessionExpired(root);
+        return;
+      }
+      const msg = err instanceof ApiError ? `${err.code}: ${err.message}` : String(err);
+      listHost.replaceChildren(
+        Object.assign(document.createElement('p'), {
+          className: 'err',
+          textContent: `Inventar laden fehlgeschlagen: ${msg}`,
+        }),
+      );
+      return;
+    }
+
+    const sections = sectionsFromInventory(inv);
+    listHost.replaceChildren();
+    for (const s of sections) {
+      listHost.appendChild(renderServerCard(s, { onRefresh: handleRefresh }));
+    }
+
+    const total = inv.native.length + inv.gateways.reduce((a, g) => a + g.tools.length, 0);
+    footerHost.textContent = `Gesamt: ${total} Tools über ${1 + inv.gateways.length} Server`;
   }
 
-  const sections = sectionsFromInventory(inv);
-  listHost.replaceChildren();
-  for (const s of sections) listHost.appendChild(renderServerCard(s));
+  async function handleRefresh(name: string | null): Promise<void> {
+    // Lock alle relevanten Buttons + Status zeigen.
+    if (refreshAllBtn) refreshAllBtn.disabled = true;
+    const perCardBtns = Array.from(
+      listHost.querySelectorAll<HTMLButtonElement>('.server-card-refresh'),
+    );
+    for (const b of perCardBtns) b.disabled = true;
+    status.classList.remove('err');
+    status.textContent = name
+      ? `Aktualisiere ${name}…`
+      : 'Aktualisiere alle Gateways…';
 
-  // Footer mit Gesamt-Counts
-  const total = inv.native.length + inv.gateways.reduce((a, g) => a + g.tools.length, 0);
-  const footer = document.createElement('p');
-  footer.className = 'muted small tools-footer';
-  footer.textContent = `Gesamt: ${total} Tools über ${1 + inv.gateways.length} Server`;
-  main.appendChild(footer);
+    try {
+      const result = await api.rediscoverGateways(name ?? undefined);
+      status.textContent = renderRediscoverResult(result);
+      // Inventar neu laden damit Tool-Cache-Timestamps + Counts stimmen.
+      await loadAndRender();
+      // re-bind buttons (loadAndRender hat sie neu gemalt) — disabled-State
+      // wird durch das Re-Render auto-reset.
+    } catch (err) {
+      status.classList.add('err');
+      if (err instanceof ApiError) {
+        if (err.status === 401) {
+          renderSessionExpired(root);
+          return;
+        }
+        if (err.status === 403) {
+          status.textContent = 'Refresh erlaubt nur admin-Rolle (403).';
+        } else {
+          status.textContent = `Refresh fehlgeschlagen: ${err.code}: ${err.message}`;
+        }
+      } else {
+        status.textContent = `Refresh fehlgeschlagen: ${String(err)}`;
+      }
+    } finally {
+      if (refreshAllBtn) refreshAllBtn.disabled = false;
+    }
+  }
+
+  if (refreshAllBtn) {
+    refreshAllBtn.addEventListener('click', () => {
+      void handleRefresh(null);
+    });
+  }
+
+  await loadAndRender();
 }

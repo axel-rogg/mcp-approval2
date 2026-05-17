@@ -26,14 +26,19 @@
  */
 import { z } from 'zod';
 import type { DbAdapter } from '@mcp-approval2/adapters';
+import type { AppConfig } from '../lib/config.js';
 import type { Tool, ToolContext } from '../mcp/protocol/tool.js';
+import type { ToolRegistry } from '../mcp/protocol/registry.js';
 import type { SubMcpRegistry, RegisterSubMcpArgs } from '../mcp/gateway/registry.js';
 import { refreshSubMcpToolCache } from '../mcp/gateway/discovery.js';
 import {
+  applyGatewayDiscovery,
   buildForwardedToolDefs,
+  SubMcpForwarder,
   type SubMcpAuthMode,
   type SubMcpAuthConfig,
   type SubMcpServerConfig,
+  type SubMcpWrappersCache,
 } from '../mcp/gateway/index.js';
 
 // ---------------------------------------------------------------------------
@@ -63,6 +68,17 @@ export interface GatewayMgmtToolsDeps {
   readonly fetchImpl?: typeof fetch;
   /** DB-Handle, fuer Tool-Override-Storage (key/value config rows). */
   readonly db: DbAdapter;
+  /**
+   * Live-Refresh-Deps. Wenn gesetzt, aktualisiert gateway_server_rediscover
+   * die in-memory ToolRegistry zusaetzlich zum DB-Cache. Ohne diese Deps
+   * werden neue Tools erst nach approval2-Restart sichtbar.
+   */
+  readonly liveRefresh?: {
+    readonly toolRegistry: ToolRegistry;
+    readonly forwarder: SubMcpForwarder;
+    readonly config: Pick<AppConfig, 'JWT_SECRET' | 'JWT_ISSUER'>;
+    readonly cache: SubMcpWrappersCache;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -282,16 +298,49 @@ const GatewayServerRediscoverInput = z
   .strict();
 type GatewayServerRediscoverInputT = z.infer<typeof GatewayServerRediscoverInput>;
 
+export interface GatewayServerRediscoverResult {
+  readonly results: ReadonlyArray<Record<string, unknown>>;
+  readonly registered: number;
+  readonly deregistered: number;
+  readonly live_refresh: boolean;
+}
+
 export function makeGatewayServerRediscoverTool(
   deps: GatewayMgmtToolsDeps,
-): Tool<GatewayServerRediscoverInputT, { results: ReadonlyArray<Record<string, unknown>> }> {
+): Tool<GatewayServerRediscoverInputT, GatewayServerRediscoverResult> {
   return {
     name: 'gateway_server_rediscover',
-    description: 'Trigger tool-cache refresh for one or all Sub-MCP servers.',
+    description:
+      'Trigger tool-cache refresh + live in-memory re-register for one or all Sub-MCP servers. ' +
+      'Tools are immediately visible after refresh (no approval2-restart needed).',
     sensitivity: 'read',
     inputSchema: GatewayServerRediscoverInput,
-    async execute(ctx, input) {
+    async execute(ctx, input): Promise<GatewayServerRediscoverResult> {
       requireAdmin(ctx, 'gateway_server_rediscover');
+      // Live-refresh-Pfad wenn die Deps verkabelt sind (Standard in
+      // app-factory.ts). Andernfalls DB-only-Fallback.
+      if (deps.liveRefresh) {
+        const applyArgs: Parameters<typeof applyGatewayDiscovery>[0] = {
+          registry: deps.registry,
+          toolRegistry: deps.liveRefresh.toolRegistry,
+          forwarder: deps.liveRefresh.forwarder,
+          config: deps.liveRefresh.config,
+          cache: deps.liveRefresh.cache,
+          ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
+          ...(input.name ? { only: [input.name] } : {}),
+        };
+        const out = await applyGatewayDiscovery(applyArgs);
+        return {
+          results: out.results.map((r) => ({
+            subMcpName: r.subMcpName,
+            count: r.count,
+            ...(r.error !== undefined ? { error: r.error } : {}),
+          })),
+          registered: out.registered,
+          deregistered: out.deregistered,
+          live_refresh: true,
+        };
+      }
       const refreshArgs: Parameters<typeof refreshSubMcpToolCache>[0] = {
         registry: deps.registry,
         ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
@@ -304,6 +353,9 @@ export function makeGatewayServerRediscoverTool(
           count: r.count,
           ...(r.error !== undefined ? { error: r.error } : {}),
         })),
+        registered: 0,
+        deregistered: 0,
+        live_refresh: false,
       };
     },
   };

@@ -76,6 +76,21 @@ export interface InventoryResponse {
   readonly gateways: ReadonlyArray<InventoryGateway>;
 }
 
+export interface RediscoverGatewayResult {
+  readonly subMcpName: string;
+  readonly count: number;
+  readonly error?: string;
+}
+
+export interface RediscoverGatewaysResponse {
+  readonly results: ReadonlyArray<RediscoverGatewayResult>;
+  readonly registered: number;
+  readonly deregistered: number;
+  readonly total_tools: number;
+  readonly per_sub_mcp: Record<string, number>;
+  readonly skipped: ReadonlyArray<string>;
+}
+
 export interface ApiClient {
   // Auth
   getSession(): Promise<Session | null>;
@@ -100,6 +115,7 @@ export interface ApiClient {
 
   // Inventory (Tools/Servers)
   listInventory(): Promise<InventoryResponse>;
+  rediscoverGateways(name?: string): Promise<RediscoverGatewaysResponse>;
 
   // Credentials
   listCredentials(): Promise<CredentialMeta[]>;
@@ -340,6 +356,16 @@ export function createApiClient(baseUrl?: string): ApiClient {
 
     async listInventory() {
       return await request<InventoryResponse>('/v1/inventory');
+    },
+
+    async rediscoverGateways(name?: string) {
+      return await request<RediscoverGatewaysResponse>(
+        '/v1/admin/gateways/rediscover',
+        {
+          method: 'POST',
+          body: name ? { name } : {},
+        },
+      );
     },
 
     async listCredentials() {
