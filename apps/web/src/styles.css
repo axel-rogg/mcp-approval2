@@ -961,7 +961,13 @@ code {
   gap: 0.75rem;
 }
 
-.storage-summary-textarea {
+.storage-modal.storage-modal-large {
+  max-width: 900px;
+  max-height: 90vh;
+}
+
+.storage-summary-textarea,
+.storage-body-textarea {
   width: 100%;
   background: var(--bg-input);
   color: var(--fg);
@@ -972,9 +978,58 @@ code {
   resize: vertical;
 }
 
-.storage-summary-textarea:focus {
+.storage-body-textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  min-height: 50vh;
+}
+
+.storage-summary-textarea:focus,
+.storage-body-textarea:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+/* Body-Card Floating Buttons (PLAN 2026-05-17 User-Wunsch).
+   .storage-body-section ist position:relative damit Buttons absolute
+   im Card-Eck schweben können. Transparent + opacity:0.5, hover-reveal. */
+.storage-body {
+  position: relative;
+}
+
+.body-copy-btn,
+.body-edit-pencil {
+  position: absolute;
+  top: 0.5rem;
+  background: transparent;
+  border: 0;
+  padding: 0.3rem;
+  border-radius: var(--radius);
+  cursor: pointer;
+  color: var(--fg-muted);
+  opacity: 0.45;
+  z-index: 1;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+
+.body-copy-btn {
+  left: 0.5rem;
+}
+
+.body-edit-pencil {
+  right: 0.5rem;
+}
+
+.body-copy-btn:hover,
+.body-edit-pencil:hover {
+  opacity: 1;
+  background: rgba(127, 127, 127, 0.15);
+}
+
+.storage-summary-text.placeholder {
+  font-style: italic;
+  opacity: 0.7;
 }
 
 /* Toast -------------------------------------------------------------- */

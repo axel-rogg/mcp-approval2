@@ -51,6 +51,37 @@ function showToast(msg: string): void {
   setTimeout(() => t.remove(), 3500);
 }
 
+/** Force-reload current hash-route ohne Full-Page-Reload. */
+function reloadCurrentView(): void {
+  const cur = window.location.hash;
+  // toggle via tmp hash dann zurueck — triggert hashchange-listener.
+  window.location.hash = '#/__reload__';
+  setTimeout(() => {
+    window.location.hash = cur;
+  }, 0);
+}
+
+/**
+ * Ob der Body eines Objekts textuell editierbar ist.
+ * Conservative — Apps haben eigene Pipeline, skill_manifest hat hidden
+ * Frontmatter-State, list hat schon checkbox-ticks, binary/image kann
+ * man im Browser nicht text-edit.
+ */
+function isBodyTextEditable(obj: KnowledgeObject): boolean {
+  const subtype = obj.subtype ?? '';
+  if (subtype.startsWith('app:')) return false;
+  if (subtype === 'skill_manifest') return false;
+  if (subtype === 'list') return false;
+  if (subtype === 'note' || subtype === 'memo') return true;
+  if (subtype === 'doc') {
+    const mime = obj.mimeType ?? obj.contentType ?? '';
+    if (mime.startsWith('image/')) return false;
+    if (mime.startsWith('application/octet-stream')) return false;
+    return true;
+  }
+  return true; // Default: editable für unknown subtypes
+}
+
 /**
  * Render compact refs section as collapsible `<details>` with chip-style
  * link buttons. Default-collapsed (User-Wunsch). Returns null when both
@@ -346,6 +377,39 @@ export async function renderStorageDetail(
     const bodySection = document.createElement('section');
     bodySection.className = 'storage-body card';
 
+    // ─── Floating Action-Buttons über dem Body (User-Wunsch 2026-05-17):
+    //   - top-left: Copy-Content-Button (transparent, hover-reveal)
+    //   - top-right: Edit-Pencil (conditional auf isBodyTextEditable)
+    const copyBodyBtn = document.createElement('button');
+    copyBodyBtn.type = 'button';
+    copyBodyBtn.className = 'icon-btn body-copy-btn';
+    copyBodyBtn.title = 'Inhalt kopieren';
+    copyBodyBtn.setAttribute('aria-label', 'Inhalt kopieren');
+    copyBodyBtn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+    copyBodyBtn.addEventListener('click', async () => {
+      try {
+        const text = stripIpiWrappers(decodeBody(obj));
+        await navigator.clipboard.writeText(text);
+        showToast('Inhalt kopiert');
+      } catch {
+        showToast('Kopieren fehlgeschlagen');
+      }
+    });
+    bodySection.appendChild(copyBodyBtn);
+
+    if (isBodyTextEditable(obj)) {
+      const editBodyBtn = document.createElement('button');
+      editBodyBtn.type = 'button';
+      editBodyBtn.className = 'edit-pencil body-edit-pencil';
+      editBodyBtn.textContent = '✏️';
+      editBodyBtn.title = 'Body bearbeiten';
+      editBodyBtn.setAttribute('aria-label', 'Body bearbeiten');
+      editBodyBtn.addEventListener('click', () => {
+        openBodyModal(api, obj);
+      });
+      bodySection.appendChild(editBodyBtn);
+    }
+
     // Interaktiver List-Toggle (PLAN 2026-05-17 User-Wunsch): wenn der
     // body-renderer eine Liste ist, persistieren wir Checkbox-Ticks direkt
     // via PATCH /v1/knowledge/objects/:id mit neuem body. Optimistic UI:
@@ -376,6 +440,87 @@ export async function renderStorageDetail(
     }
     main.appendChild(bodySection);
   }
+}
+
+/**
+ * Modal zum Editieren des Body-Inhalts. Bigger textarea als Summary,
+ * keine Length-Constraints (Body kann lang sein). Speichert via
+ * api.updateBody und triggert reload damit der gerenderte Markdown/Code
+ * neu rendert.
+ */
+function openBodyModal(api: ApiStorageClient, obj: KnowledgeObject): void {
+  const backdrop = document.createElement('div');
+  backdrop.className = 'storage-modal-backdrop';
+
+  const modal = document.createElement('div');
+  modal.className = 'storage-modal storage-modal-large card';
+
+  const h = document.createElement('h2');
+  h.textContent = 'Inhalt bearbeiten';
+  modal.appendChild(h);
+
+  const hint = document.createElement('p');
+  hint.className = 'muted small';
+  const mime = obj.mimeType ?? obj.contentType ?? '';
+  if (
+    mime.startsWith('text/markdown') ||
+    obj.subtype === 'note' ||
+    obj.subtype === 'memo'
+  ) {
+    hint.textContent = 'Markdown — # Headings, **bold**, fenced ```code```, [Links](url).';
+  } else if (mime) {
+    hint.textContent = `Format: ${mime} — wird unverändert gespeichert.`;
+  } else {
+    hint.textContent = 'Plain text — wird unverändert gespeichert.';
+  }
+  modal.appendChild(hint);
+
+  const textarea = document.createElement('textarea');
+  const currentBody = stripIpiWrappers(decodeBody(obj));
+  textarea.value = currentBody;
+  textarea.rows = 22;
+  textarea.className = 'storage-body-textarea';
+  modal.appendChild(textarea);
+
+  const actions = document.createElement('div');
+  actions.className = 'row form-actions';
+
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'btn btn-secondary';
+  cancel.textContent = 'Abbrechen';
+  cancel.addEventListener('click', () => backdrop.remove());
+  actions.appendChild(cancel);
+
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'btn';
+  save.textContent = 'Speichern';
+  save.addEventListener('click', () => {
+    void (async () => {
+      save.disabled = true;
+      save.textContent = 'Sending…';
+      try {
+        await api.updateBody(obj.id, textarea.value);
+        backdrop.remove();
+        showToast('Gespeichert');
+        reloadCurrentView();
+      } catch (err) {
+        save.disabled = false;
+        save.textContent = 'Speichern';
+        window.alert(`Update failed: ${(err as Error).message}`);
+      }
+    })();
+  });
+  actions.appendChild(save);
+
+  modal.appendChild(actions);
+  backdrop.appendChild(modal);
+  backdrop.addEventListener('click', (ev) => {
+    if (ev.target === backdrop) backdrop.remove();
+  });
+  document.body.appendChild(backdrop);
+  textarea.focus();
 }
 
 /**
@@ -486,7 +631,7 @@ function openSummaryModal(api: ApiStorageClient, obj: KnowledgeObject): void {
   const save = document.createElement('button');
   save.type = 'button';
   save.className = 'btn';
-  save.textContent = 'Speichern (Approval)';
+  save.textContent = 'Speichern';
   save.addEventListener('click', () => {
     void (async () => {
       const summary = textarea.value.trim();
@@ -499,11 +644,12 @@ function openSummaryModal(api: ApiStorageClient, obj: KnowledgeObject): void {
       try {
         await api.updateSummary(obj.id, summary);
         backdrop.remove();
-        showToast('Approval-Request erstellt. Check Approval-Queue.');
-        window.location.hash = '#/approvals';
+        showToast('Gespeichert');
+        // Reload aktuelle Detail-View damit neue Summary sichtbar wird.
+        reloadCurrentView();
       } catch (err) {
         save.disabled = false;
-        save.textContent = 'Speichern (Approval)';
+        save.textContent = 'Speichern';
         window.alert(`Update failed: ${(err as Error).message}`);
       }
     })();
