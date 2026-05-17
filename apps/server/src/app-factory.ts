@@ -83,6 +83,7 @@ import { internalCredentialsRoutes } from './routes/internal/credentials.js';
 import { internalDekRoutes } from './routes/internal/dek.js';
 import { internalCronRoutes } from './routes/internal/cron.js';
 import { internalAppsImportRoutes } from './routes/internal/apps-import.js';
+import { internalServersImportRoutes } from './routes/internal/servers-import.js';
 import { internalObjectsImportRoutes } from './routes/internal/objects-import.js';
 import { createDekService } from './services/dek.js';
 import { createAdminService } from './services/admin.js';
@@ -920,6 +921,19 @@ export async function createApp(
         }),
       );
     }
+
+    // POST /internal/v1/servers/import — Sub-MCP-Server-Defs (cf, github)
+    // v1 → v2 Migration. Refresh-Tokens NICHT migriert (KMS-cross-runtime).
+    app.use('/internal/v1/servers/*', serviceTokenGuard);
+    app.route(
+      '/',
+      internalServersImportRoutes({
+        server,
+        registry: subMcpReg,
+        subscriptions: userSubscriptionsService,
+        ...(userServerConfigService ? { config: userServerConfigService } : {}),
+      }),
+    );
   } else {
     // eslint-disable-next-line no-console
     console.warn(
