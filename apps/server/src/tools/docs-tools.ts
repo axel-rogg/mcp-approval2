@@ -255,6 +255,8 @@ export function makeDocsAttachToTool(
     async execute(ctx: ToolContext, input) {
       return deps.knowledge.attachDocToSkills({
         userId: ctx.userId,
+        userEmail: ctx.email,
+        ...(ctx.approvalId !== undefined ? { approvalId: ctx.approvalId } : {}),
         docId: input.doc_id,
         skillIds: input.skill_ids,
       });

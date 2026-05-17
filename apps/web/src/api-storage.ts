@@ -28,6 +28,10 @@ export interface RefView {
   readonly title: string | null;
   readonly summary: string | null;
   readonly uri: string;
+  /** PLAN-doc-linking §9 P9: eager-embedded body when includeRefBodies set. */
+  readonly body?: string;
+  readonly bodyEncoding?: 'base64';
+  readonly truncatedReason?: 'oversized' | 'budget';
 }
 
 export interface KnowledgeObjectRefs {
@@ -84,7 +88,7 @@ export interface ListObjectsResult {
 
 export interface ApiStorageClient {
   listObjects(args: ListObjectsArgs): Promise<ListObjectsResult>;
-  getObject(id: string, opts?: { expandBody?: boolean }): Promise<KnowledgeObject>;
+  getObject(id: string, opts?: { expandBody?: boolean; includeRefBodies?: ReadonlyArray<string> }): Promise<KnowledgeObject>;
   deleteObject(id: string, opts?: { force?: boolean }): Promise<{ approvalId: string }>;
   updateSummary(id: string, summary: string): Promise<{ approvalId: string }>;
 }
@@ -196,6 +200,9 @@ export function createApiStorageClient(baseUrl?: string): ApiStorageClient {
     async getObject(id, opts) {
       const query: Record<string, string | undefined> = {};
       if (opts?.expandBody) query['expand'] = 'body,refs,tags,summary';
+      if (opts?.includeRefBodies && opts.includeRefBodies.length > 0) {
+        query['include_bodies'] = opts.includeRefBodies.join(',');
+      }
       const raw = await request<{ item?: KnowledgeObject } | KnowledgeObject>(
         `/v1/knowledge/objects/${encodeURIComponent(id)}`,
         { query },

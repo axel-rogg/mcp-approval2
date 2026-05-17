@@ -365,7 +365,7 @@ async function renderAppsSafe(root: HTMLElement, s: Session): Promise<void> {
 
 async function renderAppDetailSafe(root: HTMLElement, id: string): Promise<void> {
   try {
-    await renderAppDetail(root, apiApps, id);
+    await renderAppDetail(root, apiApps, apiStorage, id);
   } catch (err) {
     console.error('apps-detail render failed', err);
     renderSessionExpired(root);

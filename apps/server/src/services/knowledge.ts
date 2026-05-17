@@ -311,30 +311,41 @@ export class KnowledgeService {
   }
 
   /**
-   * Batch-attach: ein doc an N skills haengen (ein Audit-Event pro skill —
-   * Approval-Tooling buendelt das in einen einzigen Approval-Click).
+   * Batch-attach: ein doc an N skills haengen.
+   *
+   * PLAN-doc-linking §10.5 D4 + P7: native `addRef(role='resource')` statt
+   * legacy `meta.resource_ids[]`. KC2 ON CONFLICT DO NOTHING → idempotent.
+   * KC2 setzt is_subdoc=true (auch M:N-safe).
+   *
+   * `alreadyPresent` ist nach dem Switch nicht mehr akkurat ermittelbar
+   * ohne pro-Skill-GET (KC2 würde uns das per Warning melden müssen). Wir
+   * geben den Caller weiterhin den Vertrag aus dem alten API — `attached`
+   * enthält alle target-Skills (auch wenn KC2-side ein Ref schon existierte,
+   * das ist semantisch ein no-op). `alreadyPresent` bleibt leeres Array
+   * solange wir keinen Per-Skill-Pre-Check zurückhaben.
    */
   async attachDocToSkills(args: {
     userId: string;
+    userEmail?: string;
+    approvalId?: string;
     docId: string;
     skillIds: ReadonlyArray<string>;
   }): Promise<{ attached: ReadonlyArray<string>; alreadyPresent: ReadonlyArray<string> }> {
     const attached: string[] = [];
-    const alreadyPresent: string[] = [];
     for (const skillId of args.skillIds) {
-      const skill = await this.adapter.getObject({ id: skillId, userId: args.userId });
-      const current = readResourceIds(skill.meta);
-      if (current.includes(args.docId)) {
-        alreadyPresent.push(skillId);
-        continue;
+      try {
+        await this.adapter.addRef({
+          userId: args.userId,
+          ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+          ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
+          fromId: skillId,
+          toId: args.docId,
+          role: 'resource',
+        });
+        attached.push(skillId);
+      } catch {
+        // continue — Single-Skill-Fail killt nicht den ganzen Batch
       }
-      const next = [...current, args.docId];
-      await this.adapter.updateObject({
-        id: skillId,
-        userId: args.userId,
-        patch: { meta: mergeMeta(skill.meta, { resource_ids: next }) },
-      });
-      attached.push(skillId);
     }
     await this.audit.emit({
       action: 'knowledge.doc.attach_to',
@@ -344,11 +355,10 @@ export class KnowledgeService {
       resourceId: args.docId,
       details: {
         attached: attached.length,
-        alreadyPresent: alreadyPresent.length,
         targets: args.skillIds.length,
       },
     });
-    return { attached, alreadyPresent };
+    return { attached, alreadyPresent: [] };
   }
 
   /**

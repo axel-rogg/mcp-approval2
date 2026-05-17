@@ -786,6 +786,43 @@ code {
   font-style: italic;
 }
 
+/* Skill-Bundle (PLAN-doc-linking §9 P9) — Resource-Eager-Load card. */
+.storage-bundle {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.storage-bundle-resource {
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+}
+
+.storage-bundle-resource > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+  padding: 0.125rem 0;
+  list-style: none;
+  user-select: none;
+}
+
+.storage-bundle-resource > summary::-webkit-details-marker {
+  display: none;
+}
+
+.storage-bundle-resource > summary::before {
+  content: '▸ ';
+  color: var(--fg-muted);
+  transition: transform 0.15s ease;
+  display: inline-block;
+}
+
+.storage-bundle-resource[open] > summary::before {
+  transform: rotate(90deg);
+}
+
 .edit-pencil {
   appearance: none;
   background: transparent;

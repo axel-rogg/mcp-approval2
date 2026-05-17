@@ -20,6 +20,7 @@ import type {
   InvokeResult,
   LayoutDoc,
 } from './api-apps.js';
+import type { ApiStorageClient, KnowledgeObjectRefs, RefView } from './api-storage.js';
 import { getRenderer } from './blocks/registry.js';
 import { el } from './blocks/types.js';
 
@@ -55,6 +56,55 @@ function buildAppTopbar(opts: {
       titleEl.textContent = t;
     },
   };
+}
+
+/**
+ * Render compact refs section for the app-detail view (PLAN-doc-linking §10.5).
+ * Identical chip-style + collapsible-details semantics as storage-detail,
+ * but lives in the app's main-container above the block-layout.
+ * Returns null when both directions empty.
+ */
+function renderAppRefs(refs: KnowledgeObjectRefs | undefined): HTMLElement | null {
+  const outgoing = refs?.outgoing ?? [];
+  const incoming = refs?.incoming ?? [];
+  if (outgoing.length === 0 && incoming.length === 0) return null;
+  const details = document.createElement('details');
+  details.className = 'storage-refs card';
+  details.open = false;
+  const sum = document.createElement('summary');
+  sum.className = 'storage-refs-summary-row';
+  sum.textContent = `🔗 Verknüpfungen (${outgoing.length + incoming.length})`;
+  details.appendChild(sum);
+  const body = document.createElement('div');
+  body.className = 'storage-refs-body';
+  for (const dir of ['outgoing', 'incoming'] as const) {
+    const refsForDir = refs?.[dir] ?? [];
+    if (refsForDir.length === 0) continue;
+    const row = document.createElement('div');
+    row.className = 'storage-refs-chip-row';
+    for (const r of refsForDir) {
+      row.appendChild(buildChip(r, dir));
+    }
+    body.appendChild(row);
+  }
+  details.appendChild(body);
+  return details;
+}
+
+function buildChip(ref: RefView, dir: 'outgoing' | 'incoming'): HTMLAnchorElement {
+  const a = document.createElement('a');
+  a.className = 'storage-refs-chip';
+  a.href = `#/storage/${ref.id}`;
+  const iconMap: Record<string, [string, string]> = {
+    resource: ['📎', '↩ Teil von'],
+    references: ['↗', '↩ ref von'],
+    depends_on: ['⚙', '↩ benutzt von'],
+  };
+  const labels = iconMap[ref.role] ?? ['·', '↩'];
+  const prefix = dir === 'outgoing' ? labels[0] : labels[1];
+  a.textContent = `${prefix} ${ref.title ?? ref.id}`;
+  if (ref.summary) a.title = ref.summary;
+  return a;
 }
 
 function renderEmptyLayout(): HTMLElement {
@@ -221,6 +271,7 @@ function buildBlockNode(
 export async function renderAppDetail(
   root: HTMLElement,
   api: ApiAppsClient,
+  storage: ApiStorageClient,
   appId: string,
 ): Promise<void> {
   const main = el('main', { class: 'app-detail' });
@@ -274,6 +325,19 @@ export async function renderAppDetail(
     setTitle(read.app.title || read.app.id);
     ctx.app = read.app;
     main.replaceChildren();
+
+    // PLAN-doc-linking §10.5 D1: Apps haben auch Refs (sind subtype=app:*).
+    // Storage-API liefert die mit. Best-effort — wenn fail, App-Render
+    // läuft trotzdem durch.
+    storage
+      .getObject(appId)
+      .then((obj) => {
+        const refsEl = renderAppRefs(obj.refs);
+        if (refsEl) main.insertBefore(refsEl, main.firstChild);
+      })
+      .catch(() => {
+        // silent — Refs sind optional
+      });
 
     if (!isLayoutDoc(read.state)) {
       main.appendChild(renderEmptyLayout());
