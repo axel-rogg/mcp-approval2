@@ -103,6 +103,12 @@ function parseRoute(): Route {
     window.location.replace('#/tools/credentials');
     return 'tools';
   }
+  // Phase E UX-Refactor: #/defaults ist jetzt Tool-Defaults-Tab im
+  // Server-Detail. Legacy-Route redirected auf den Native-Server-Tab.
+  if (hash === 'defaults' || hash.startsWith('defaults?') || hash.startsWith('defaults/')) {
+    window.location.replace('#/tools/servers/native/defaults');
+    return 'tools-server-detail';
+  }
   if (hash.startsWith('admin')) return 'admin';
   if (hash.startsWith('settings')) return 'settings';
   // #/tools/servers/new — User-Added-Server Add-Form (Phase 4)

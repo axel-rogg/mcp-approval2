@@ -106,8 +106,54 @@ export async function renderServerNew(
   tokenWrap.appendChild(tokenInput);
   form.appendChild(tokenWrap);
 
+  // Phase F UX-Refactor: OAuth-Felder (nur bei authMode=oauth sichtbar).
+  // Diese werden als configSchema._meta.oauth persistiert, damit der Auth-Tab
+  // sie spaeter findet — fuer Server die kein _meta in tools/list deklarieren
+  // (z.B. GitHub-MCP, Drittpartei).
+  const oauthBlock = document.createElement('div');
+  oauthBlock.className = 'oauth-fields-block';
+  oauthBlock.style.display = 'none';
+
+  const oauthHelp = document.createElement('p');
+  oauthHelp.className = 'muted small';
+  oauthHelp.textContent =
+    'Pre-registered OAuth 2.0 — du musst eine OAuth-App beim Provider anlegen (z.B. github.com/settings/applications/new). ' +
+    'Trage hier die URLs aus der Provider-Docs ein. Client-ID + Client-Secret folgen nach dem Anlegen unter "Auth".';
+  oauthBlock.appendChild(oauthHelp);
+
+  const authzWrap = field('oauth_authorize_url', 'OAuth Authorize-URL');
+  const authzInput = document.createElement('input');
+  authzInput.type = 'url';
+  authzInput.placeholder = 'https://github.com/login/oauth/authorize';
+  authzWrap.appendChild(authzInput);
+  oauthBlock.appendChild(authzWrap);
+
+  const tokenUrlWrap = field('oauth_token_url', 'OAuth Token-URL');
+  const tokenUrlInput = document.createElement('input');
+  tokenUrlInput.type = 'url';
+  tokenUrlInput.placeholder = 'https://github.com/login/oauth/access_token';
+  tokenUrlWrap.appendChild(tokenUrlInput);
+  oauthBlock.appendChild(tokenUrlWrap);
+
+  const scopesWrap = field('oauth_scopes', 'OAuth Scopes (komma-getrennt)');
+  const scopesInput = document.createElement('input');
+  scopesInput.type = 'text';
+  scopesInput.placeholder = 'repo,user';
+  scopesWrap.appendChild(scopesInput);
+  oauthBlock.appendChild(scopesWrap);
+
+  const providerWrap = field('oauth_provider', 'OAuth-Provider-Name (display)');
+  const providerInput = document.createElement('input');
+  providerInput.type = 'text';
+  providerInput.placeholder = 'github';
+  providerWrap.appendChild(providerInput);
+  oauthBlock.appendChild(providerWrap);
+
+  form.appendChild(oauthBlock);
+
   modeSelect.addEventListener('change', () => {
     tokenWrap.style.display = modeSelect.value === 'service_bearer' ? '' : 'none';
+    oauthBlock.style.display = modeSelect.value === 'oauth' ? '' : 'none';
   });
 
   // submit + cancel
@@ -137,6 +183,24 @@ export async function renderServerNew(
     status.textContent = 'Lege Server an…';
     status.className = 'muted small form-status';
     try {
+      // OAuth-configSchema bauen wenn authMode=oauth + URLs gefuellt
+      let configSchema: Record<string, unknown> | undefined;
+      if (modeSelect.value === 'oauth' && (authzInput.value || tokenUrlInput.value)) {
+        const scopes = scopesInput.value
+          .split(/[,\s]+/)
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+        configSchema = {
+          oauth: {
+            provider: providerInput.value.trim() || 'custom',
+            kind: 'pre',
+            ...(authzInput.value ? { authorize_url: authzInput.value.trim() } : {}),
+            ...(tokenUrlInput.value ? { token_url: tokenUrlInput.value.trim() } : {}),
+            ...(scopes.length > 0 ? { scopes } : {}),
+          },
+        };
+      }
+
       const args = {
         name: nameInput.value.trim().toLowerCase(),
         displayName: dispInput.value.trim(),
@@ -146,12 +210,14 @@ export async function renderServerNew(
         ...(tokenInput.value && modeSelect.value === 'service_bearer'
           ? { serviceTokenPlain: tokenInput.value }
           : {}),
+        ...(configSchema ? { configSchema } : {}),
       };
       await api.addUserServer(args);
       status.textContent = `${args.name} angelegt. Weiterleitung…`;
       status.className = 'ok small form-status';
       window.setTimeout(() => {
-        window.location.hash = `#/tools/servers/${encodeURIComponent(args.name)}/config`;
+        // Phase B/C: nach Anlage direkt in den Auth-Tab fuer Token/OAuth-Setup
+        window.location.hash = `#/tools/servers/${encodeURIComponent(args.name)}/auth`;
       }, 700);
     } catch (err) {
       submitBtn.disabled = false;

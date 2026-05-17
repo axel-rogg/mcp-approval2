@@ -1,12 +1,50 @@
 # PLAN: Tools-Tab UX-Refactor
 
-> **Status:** ⚠️ Approved 2026-05-17 — Build sequenziell A→F läuft.
+> **Status:** ✅ Phase A-F LIVE 2026-05-17 (commits f5107af, a0ca79a, 3883e52, 0983cb7, dieser).
 > **Datum:** 2026-05-17
 > **Trigger:** User-Feedback: "ICh bin überfordert auf der Seite. Wo kann ich überhaupt OAUTHS hinterlegen? Tool-Defaults ist an einem falschen Platz. Auch das Setzen der Credentials ist verwirrend. Am besten alles pro Tool damit man hier nicht irgendwie raus kommt. Plan alles gründlich."
 >
 > **User-Entscheidungen 2026-05-17:**
 > 1. Build-Strategie: **sequenziell A→F**, alle 6 Phasen in Reihenfolge, ~17h
 > 2. Tool-Defaults-Storage: **neue per-Server-Tabelle `user_server_tool_defaults`** mit FK auf `sub_mcp_servers(name)` ON DELETE CASCADE. Migration + Code-Refactor in Phase D.
+>
+> **Phasen-Status:**
+> - **Phase A** (Card-Polish) ✅ commit f5107af
+> - **Phase B** (Detail-Page Skeleton) ✅ commit a0ca79a
+> - **Phase C** (Auth-Tab konsolidiert) ✅ commit 3883e52
+> - **Phase D** (Tool-Defaults pro Server) ✅ commit 0983cb7 + Migration 0024
+> - **Phase E** (Cleanup) ✅ dieser commit — `#/defaults` redirected zu `#/tools/servers/native/defaults`
+> - **Phase F** (External-OAuth) ✅ dieser commit — Add-Server-Form um oauth_authorize_url/token_url/scopes erweitert
+
+## Wie man jetzt einen externen MCP-Server mit OAuth anbindet (Beispiel: GitHub)
+
+1. **OAuth-App beim Provider anlegen** — z.B. https://github.com/settings/applications/new
+   - Application name: `mcp-approval2 (privat)`
+   - Homepage URL: `https://app2.ai-toolhub.org`
+   - Authorization callback URL: `https://app2.ai-toolhub.org/#/tools/servers/github/oauth/callback`
+   - Provider gibt `Client ID` + `Client Secret` zurück — beide kopieren
+
+2. **In der PWA: `+ Server hinzufügen`**
+   - name: `github` (slug, lowercase)
+   - displayName: `GitHub`
+   - baseUrl: `<deine GitHub-MCP-Server-URL>` (z.B. wenn Du einen GitHub-MCP-Worker hostest)
+   - **authMode: `oauth`** — Form klappt OAuth-Felder auf
+   - oauth_authorize_url: `https://github.com/login/oauth/authorize`
+   - oauth_token_url: `https://github.com/login/oauth/access_token`
+   - oauth_scopes: `repo,user` (komma-getrennt)
+   - oauth_provider: `github`
+   - **Service-Token leer lassen**
+
+3. **Anlegen** — Server wird mit `configSchema._meta.oauth` persistiert.
+
+4. **Auth-Tab öffnet sich automatisch:**
+   - Trage `Client ID` + `Client Secret` (aus Schritt 1) ein
+   - **▶ Authorize** klicken → leitet zu GitHub-Consent → Callback → Refresh-Token KMS-encrypted gespeichert
+   - Status: `✓ Refresh-Token gespeichert`
+
+5. **Tools neu entdecken** (in der Übersicht) — sub-mcp-Worker antwortet jetzt mit den Tools.
+
+6. **Tool-Defaults** (optional) — pro Tool Default-Werte hinterlegen.
 
 ## 1. Ist-Zustand: was heute wo lebt
 
