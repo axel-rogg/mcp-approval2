@@ -51,6 +51,14 @@ export interface SubMcpServerConfig {
    * Config-Drawer pro Server.
    */
   readonly configSchema: Record<string, unknown> | null;
+  /**
+   * Phase 4 PLAN-per-user-server-store: User-Owner-ID. NULL = catalog-default
+   * (operator-managed, fuer alle User sichtbar via RLS). Non-NULL = user-added,
+   * nur der Owner sieht den Server.
+   */
+  readonly ownerUserId: string | null;
+  /** TRUE wenn der Server ein operator-managed Catalog-Default ist. */
+  readonly isCatalogDefault: boolean;
   readonly createdAt: number;
   readonly updatedAt: number;
 }

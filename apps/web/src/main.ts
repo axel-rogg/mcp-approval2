@@ -43,6 +43,7 @@ import { renderWritemodeTab } from './writemode-tab.js';
 import { renderSettings } from './settings-tab.js';
 import { renderToolsTab } from './tools-tab.js';
 import { renderServerConfig, renderServerOAuthCallback } from './server-config.js';
+import { renderServerNew } from './server-new.js';
 import { renderAdminTab } from './admin-tab.js';
 import { subscribePush } from './push.js';
 import { renderDebugLog, debug } from './debug-log.js';
@@ -79,6 +80,7 @@ type Route =
   | 'apps'
   | 'apps-detail'
   | 'tools'
+  | 'tools-server-new'
   | 'tools-server-config'
   | 'tools-server-oauth-callback'
   | 'writemode'
@@ -101,6 +103,10 @@ function parseRoute(): Route {
   }
   if (hash.startsWith('admin')) return 'admin';
   if (hash.startsWith('settings')) return 'settings';
+  // #/tools/servers/new — User-Added-Server Add-Form (Phase 4)
+  if (hash === 'tools/servers/new' || hash.startsWith('tools/servers/new?')) {
+    return 'tools-server-new';
+  }
   // #/tools/servers/<name>/oauth/callback?state=...&code=... (Phase 3)
   if (/^tools\/servers\/[^/?]+\/oauth\/callback/.test(hash)) {
     return 'tools-server-oauth-callback';
@@ -211,6 +217,9 @@ async function boot(): Promise<void> {
       return;
     case 'tools':
       await renderToolsSafe(root, session);
+      return;
+    case 'tools-server-new':
+      await renderServerNewSafe(root, session);
       return;
     case 'tools-server-config': {
       const name = parseServerConfigName();
@@ -386,6 +395,15 @@ async function renderServerConfigSafe(
     await renderServerConfig(root, api, s, serverName);
   } catch (err) {
     console.error('server-config render failed', err);
+    renderSessionExpired(root);
+  }
+}
+
+async function renderServerNewSafe(root: HTMLElement, s: Session): Promise<void> {
+  try {
+    await renderServerNew(root, api, s);
+  } catch (err) {
+    console.error('server-new render failed', err);
     renderSessionExpired(root);
   }
 }

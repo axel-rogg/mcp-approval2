@@ -97,6 +97,11 @@ interface GatewayEntry {
    * im Config-Drawer. null = kein Schema deklariert.
    */
   readonly configSchema: Record<string, unknown> | null;
+  /**
+   * Phase 4: TRUE wenn dieser Server vom aktuellen User selbst angelegt wurde
+   * (owner_user_id = userId). PWA zeigt Delete-Button nur fuer user-owned.
+   */
+  readonly isUserOwned: boolean;
 }
 
 interface AvailableServerEntry {
@@ -263,12 +268,14 @@ function mapKnowledge2Gateway(
     tools,
     requiredCredentials: aggregateRequiredCredentials(annotationsForAgg),
     configSchema: null,
+    isUserOwned: false,
   };
   return { gateway, kcToolNames };
 }
 
 async function mapGateways(
   subMcpRegistry: SubMcpRegistry,
+  userId: string,
 ): Promise<GatewayEntry[]> {
   const servers = await subMcpRegistry.listAll();
   return servers.map((s) => {
@@ -290,6 +297,7 @@ async function mapGateways(
         toolsCache.map((t) => ({ annotations: t.annotations })),
       ),
       configSchema: s.configSchema,
+      isUserOwned: s.ownerUserId === userId,
     };
   });
 }
@@ -310,7 +318,16 @@ export function inventoryRoutes(deps: InventoryRouteDeps): Hono<AppBindings> {
     // native haben (Pattern-basiert + kcWrappersCache-Union).
     const { gateway: knowledge2Entry, kcToolNames } = mapKnowledge2Gateway(registry, kc);
     const native = mapNative(registry, kcToolNames);
-    const allSubMcpGateways = subMcpRegistry ? await mapGateways(subMcpRegistry) : [];
+    const allRaw = subMcpRegistry ? await subMcpRegistry.listAll() : [];
+    // Filter: catalog-defaults (owner NULL) ODER vom aktuellen User selbst.
+    const allFiltered = allRaw.filter(
+      (s) => s.ownerUserId === null || s.ownerUserId === user.userId,
+    );
+    const allSubMcpGateways = subMcpRegistry
+      ? (await mapGateways(subMcpRegistry, user.userId)).filter((g) =>
+          allFiltered.some((f) => f.name === g.name),
+        )
+      : [];
 
     // Per-User-Subscription-Filter (Phase 1). Wenn subscriptions verkabelt:
     // - seed catalog-rows lazy beim first read

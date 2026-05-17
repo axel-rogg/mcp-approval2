@@ -55,6 +55,8 @@ interface SubMcpRowRaw {
   readonly tools_cache: SubMcpToolCacheEntry[] | string | null;
   readonly tools_cached_at: number | string | null;
   readonly config_schema: Record<string, unknown> | string | null;
+  readonly owner_user_id: string | null;
+  readonly is_catalog_default: boolean | null;
   readonly created_at: number | string;
   readonly updated_at: number | string;
 }
@@ -62,6 +64,7 @@ interface SubMcpRowRaw {
 const SELECT_COLS = `
   id, name, display_name, base_url, auth_mode, auth_config,
   enabled, tools_cache, tools_cached_at, config_schema,
+  owner_user_id, is_catalog_default,
   created_at, updated_at
 `;
 
@@ -98,6 +101,12 @@ export interface RegisterSubMcpArgs {
    * werden.
    */
   readonly serviceTokenPlain?: string;
+  /**
+   * User-added server (Phase 4 PLAN-per-user-server-store). Wenn gesetzt:
+   * sub_mcp_servers.owner_user_id = userId, is_catalog_default = FALSE.
+   * Nur dieser User sieht den Server (RLS-Policy submcp_owner_or_catalog).
+   */
+  readonly ownerUserId?: string;
 }
 
 export interface SubMcpRegistry {
@@ -119,6 +128,12 @@ export interface SubMcpRegistry {
   verifyServiceToken(name: string, presentedToken: string): Promise<SubMcpServerConfig | null>;
   /** Sub-MCP eintragen (admin-Operation, hier ohne Auth — Caller schuetzt). */
   register(args: RegisterSubMcpArgs): Promise<SubMcpServerConfig>;
+  /**
+   * User-owned Sub-MCP-Server entfernen (Phase 4). Nur Rows mit
+   * owner_user_id = ownerUserId werden geloescht. Catalog-Defaults
+   * (owner_user_id IS NULL) sind tabu. Returns true wenn Row geloescht.
+   */
+  unregisterByOwner?(name: string, ownerUserId: string): Promise<boolean>;
   /** Cache invalidieren — Tests, Hot-Reload. */
   invalidate(): void;
 }
@@ -162,6 +177,8 @@ export function createSubMcpRegistry(opts: SubMcpRegistryOptions): SubMcpRegistr
       toolsCache,
       toolsCachedAt: toNumber(row.tools_cached_at),
       configSchema,
+      ownerUserId: row.owner_user_id,
+      isCatalogDefault: row.is_catalog_default ?? false,
       createdAt: toNumber(row.created_at) ?? 0,
       updatedAt: toNumber(row.updated_at) ?? 0,
     };
@@ -256,11 +273,14 @@ export function createSubMcpRegistry(opts: SubMcpRegistryOptions): SubMcpRegistr
       }
       const raw = db.unsafe('sub_mcp_register');
       const ts = now();
+      const ownerUserId = args.ownerUserId ?? null;
+      const isCatalogDefault = ownerUserId === null;
       const rows = await raw.query<SubMcpRowRaw>(
         `INSERT INTO sub_mcp_servers
            (name, display_name, base_url, auth_mode, auth_config,
-            enabled, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$7)
+            enabled, owner_user_id, is_catalog_default,
+            created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
          RETURNING ${SELECT_COLS}`,
         [
           args.name,
@@ -269,6 +289,8 @@ export function createSubMcpRegistry(opts: SubMcpRegistryOptions): SubMcpRegistr
           args.authMode,
           JSON.stringify(authConfig),
           args.enabled ?? true,
+          ownerUserId,
+          isCatalogDefault,
           ts,
         ],
       );
@@ -276,6 +298,21 @@ export function createSubMcpRegistry(opts: SubMcpRegistryOptions): SubMcpRegistr
       if (!row) throw new Error('sub_mcp_servers insert returned no row');
       cache = null;
       return rowToConfig(row);
+    },
+
+    async unregisterByOwner(name, ownerUserId) {
+      const raw = db.unsafe('sub_mcp_unregister_by_owner');
+      // Strict: nur user-owned. Catalog-Defaults (owner_user_id IS NULL)
+      // sind hier nicht loeschbar — die werden via Operator-Tool / TF
+      // entfernt.
+      const rows = await raw.query<{ id: string }>(
+        `DELETE FROM sub_mcp_servers
+          WHERE name = $1 AND owner_user_id = $2
+          RETURNING id`,
+        [name, ownerUserId],
+      );
+      cache = null;
+      return rows.length > 0;
     },
 
     invalidate() {

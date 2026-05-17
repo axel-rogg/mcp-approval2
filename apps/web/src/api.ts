@@ -77,10 +77,31 @@ export interface InventoryGateway {
   readonly requiredCredentials: ReadonlyArray<InventoryRequiredCredential>;
   /** Phase 2: pro-Server config-schema vom Worker via tools/list._meta. */
   readonly configSchema?: Record<string, unknown> | null;
+  /** Phase 4: TRUE wenn dieser Server vom aktuellen User selbst angelegt wurde. */
+  readonly isUserOwned?: boolean;
 }
 
 export interface ServerConfigResponse {
   readonly fields: Record<string, { value: string; isSecret: boolean; updatedAt: number }>;
+}
+
+export interface AddUserServerArgs {
+  readonly name: string;
+  readonly displayName: string;
+  readonly baseUrl: string;
+  readonly authMode?: 'service_bearer' | 'oauth';
+  readonly serviceTokenPlain?: string;
+  readonly configSchema?: Record<string, unknown>;
+  readonly enableSubscription?: boolean;
+}
+
+export interface AddUserServerResult {
+  readonly name: string;
+  readonly displayName: string;
+  readonly baseUrl: string;
+  readonly authMode: string;
+  readonly ownerUserId: string;
+  readonly subscribed: boolean;
 }
 
 export interface InventoryAvailableServer {
@@ -152,6 +173,10 @@ export interface ApiClient {
   startServerOAuth(name: string, redirectUri: string): Promise<{ authorizeUrl: string; state: string }>;
   /** Phase 3: OAuth-Callback (state + code aus dem Provider-Redirect). */
   completeServerOAuth(name: string, state: string, code: string): Promise<void>;
+  /** Phase 4: User-Added-Server registrieren. */
+  addUserServer(args: AddUserServerArgs): Promise<AddUserServerResult>;
+  /** Phase 4: User-Added-Server entfernen (catalog-defaults werden 404). */
+  deleteUserServer(name: string): Promise<void>;
 
   // Credentials
   listCredentials(): Promise<CredentialMeta[]>;
@@ -443,6 +468,19 @@ export function createApiClient(baseUrl?: string): ApiClient {
         `/v1/me/servers/${encodeURIComponent(name)}/oauth/callback`,
         { method: 'POST', body: { state, code } },
       );
+    },
+
+    async addUserServer(args: AddUserServerArgs) {
+      return await request<AddUserServerResult>('/v1/me/servers', {
+        method: 'POST',
+        body: args,
+      });
+    },
+
+    async deleteUserServer(name: string) {
+      await request<void>(`/v1/me/servers/${encodeURIComponent(name)}`, {
+        method: 'DELETE',
+      });
     },
 
     async listCredentials() {

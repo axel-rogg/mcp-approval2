@@ -73,6 +73,51 @@ const ConfigPutBody = z
   .strict();
 
 const CONFIG_KEY_RE = /^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/;
+const SERVER_NAME_RE = /^[a-z][a-z0-9_-]{0,63}$/;
+
+/**
+ * Phase 4: POST /v1/me/servers — User legt eigenen MCP-Server an.
+ *
+ * Pre-registered OAuth-Mode (User-Decision 3 in PLAN-per-user-server-store):
+ * User traegt baseUrl + display_name + service-token (optional, falls Bearer-
+ * Auth genutzt wird) ein. OAuth-client_id + client_secret werden via
+ * user_sub_mcp_config gesetzt nach Server-Anlage.
+ *
+ * auth_mode-Schema:
+ *   - 'service_bearer' (Default): Shared Service-Token zwischen approval2 und
+ *     Sub-MCP-Worker. Falls Token leer → forward fail's bis User Token via
+ *     /v1/me/servers/:name/config/<key> mit `_`-Prefix nachpflegt.
+ *   - 'oauth': Wird in Phase 3 (UserServerOAuthService) gehandelt — pre-
+ *     registered Client-ID/Secret aus user_sub_mcp_config.
+ */
+const AddServerBody = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(
+        SERVER_NAME_RE,
+        'name muss lowercase alphanumerisch (+ _-) sein, mit Buchstabe anfangen',
+      ),
+    displayName: z.string().min(1).max(128),
+    baseUrl: z
+      .string()
+      .url()
+      .refine((v) => v.startsWith('https://'), 'baseUrl muss https:// sein'),
+    authMode: z.enum(['service_bearer', 'oauth']).default('service_bearer'),
+    /** Optional. Wird gehasht + in auth_config.service_token_hash gespeichert. */
+    serviceTokenPlain: z.string().max(512).optional(),
+    /**
+     * Optional: config_fields-Hinweis fuer den Drawer. Format wie
+     * tools/list._meta.config_fields. Wird auch automatisch refreshed
+     * sobald der Worker live geht.
+     */
+    configSchema: z.record(z.unknown()).optional(),
+    /** Default true — Server soll direkt nach Anlage sichtbar+aktiv sein. */
+    enableSubscription: z.boolean().default(true),
+  })
+  .strict();
 
 export function myServersRoutes(deps: MyServersRouteDeps): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
@@ -98,17 +143,17 @@ export function myServersRoutes(deps: MyServersRouteDeps): Hono<AppBindings> {
     const subscribed: MyServerEntry[] = [];
     const available: MyServerEntry[] = [];
     for (const cfg of all) {
-      // Filter: nur catalog-defaults oder user-owned. (Registry liefert
-      // u.U. mehr — RLS faengt's ab, aber wir filtern auch app-side.)
-      // Wir wissen nicht ob cfg.ownerUserId existiert — fallback auf
-      // catalog-only fuer Phase 1.
+      // Filter: nur catalog-defaults oder user-owned. RLS-Policy auf
+      // sub_mcp_servers macht das auf der DB-Seite — die Registry sieht aber
+      // alles (unsafe-handle). Wir filtern hier app-side via ownerUserId.
+      if (cfg.ownerUserId !== null && cfg.ownerUserId !== user.userId) continue;
       const entry: MyServerEntry = {
         name: cfg.name,
         displayName: cfg.displayName,
         baseUrl: cfg.baseUrl,
         enabled: enabledNames.has(cfg.name),
-        isCatalogDefault: true, // Phase 1: alle aus dem registry sind Defaults
-        isOwnedByMe: false,
+        isCatalogDefault: cfg.isCatalogDefault,
+        isOwnedByMe: cfg.ownerUserId === user.userId,
         toolsCachedAt: cfg.toolsCachedAt,
         toolsCount: cfg.toolsCache?.length ?? 0,
       };
@@ -128,6 +173,79 @@ export function myServersRoutes(deps: MyServersRouteDeps): Hono<AppBindings> {
 
     const body: MyServersResponse = { subscribed, available };
     return c.json(body);
+  });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Phase 4: User-Added-Server (own MCP-Server hinzufuegen / loeschen)
+  // ─────────────────────────────────────────────────────────────────────
+  // POST   /v1/me/servers           — eigenen Sub-MCP-Server registrieren
+  // DELETE /v1/me/servers/:name     — eigenen Server entfernen
+  //
+  // Catalog-Defaults (operator-managed via Doppler/TF) sind hier nicht
+  // erreichbar — DELETE matched nur owner_user_id = userId.
+  app.post('/v1/me/servers', guard, zValidator('json', AddServerBody), async (c) => {
+    const user = c.get('user');
+    if (!user) throw HttpError.unauthorized('authentication required');
+    const body = c.req.valid('json');
+
+    // Name-Konflikt-Check (global-uniq via idx_sub_mcp_name aus Mig 0003).
+    const existing = await deps.registry.getByName(body.name).catch(() => null);
+    if (existing) {
+      throw HttpError.badRequest(
+        'invalid_request',
+        `server name '${body.name}' bereits vergeben (catalog oder anderer User)`,
+      );
+    }
+
+    // Registrieren mit owner_user_id = user.userId. is_catalog_default
+    // automatisch FALSE (siehe registry.register).
+    const cfg = await deps.registry.register({
+      name: body.name,
+      displayName: body.displayName,
+      baseUrl: body.baseUrl,
+      authMode: body.authMode,
+      authConfig: {},
+      enabled: true,
+      ownerUserId: user.userId,
+      ...(body.serviceTokenPlain ? { serviceTokenPlain: body.serviceTokenPlain } : {}),
+    });
+
+    // Optional: configSchema persistieren falls vom User mitgegeben.
+    if (body.configSchema && deps.registry.updateConfigSchema) {
+      await deps.registry.updateConfigSchema(cfg.id, body.configSchema);
+    }
+
+    // Subscription direkt aktiv setzen damit der User die Tools sofort
+    // sieht (default true).
+    if (body.enableSubscription) {
+      await deps.subscriptions.setEnabled(user.userId, body.name, true);
+    }
+
+    return c.json({
+      name: cfg.name,
+      displayName: cfg.displayName,
+      baseUrl: cfg.baseUrl,
+      authMode: cfg.authMode,
+      ownerUserId: user.userId,
+      subscribed: body.enableSubscription,
+    });
+  });
+
+  app.delete('/v1/me/servers/:name', guard, async (c) => {
+    const user = c.get('user');
+    if (!user) throw HttpError.unauthorized('authentication required');
+    const name = c.req.param('name');
+
+    if (!deps.registry.unregisterByOwner) {
+      throw new HttpError(500, 'internal', 'registry does not support unregisterByOwner');
+    }
+    const deleted = await deps.registry.unregisterByOwner(name, user.userId);
+    if (!deleted) {
+      throw HttpError.notFound(
+        `server '${name}' not found or not owned by you (catalog defaults sind nicht loeschbar)`,
+      );
+    }
+    return c.body(null, 204);
   });
 
   app.patch(

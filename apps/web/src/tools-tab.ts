@@ -162,6 +162,8 @@ interface ServerSection {
   readonly enabled: boolean;
   readonly isGateway: boolean;
   readonly requiredCredentials: ReadonlyArray<InventoryRequiredCredential>;
+  /** Phase 4: TRUE wenn user-owned (Delete-Button anbieten). */
+  readonly isUserOwned: boolean;
 }
 
 interface ServerCardCallbacks {
@@ -171,6 +173,8 @@ interface ServerCardCallbacks {
    * 'knowledge2' sind. true = aktivieren, false = deaktivieren.
    */
   readonly onToggleSubscription?: (name: string, enabled: boolean) => Promise<void>;
+  /** Phase 4: User-owned Server endgueltig loeschen. */
+  readonly onDelete?: (name: string) => Promise<void>;
 }
 
 /**
@@ -292,6 +296,27 @@ function renderServerCard(
     titleRow.appendChild(disableBtn);
   }
 
+  // Phase 4: User-owned Server endgueltig loeschen. Nur sichtbar wenn isUserOwned.
+  if (s.isGateway && s.isUserOwned && cb.onDelete) {
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'btn btn-secondary btn-small btn-danger server-card-delete';
+    deleteBtn.textContent = 'Loeschen';
+    deleteBtn.title = `${s.displayName} aus deiner Hub-Instance entfernen (irreversibel)`;
+    deleteBtn.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const ok = window.confirm(
+        `${s.displayName} (${s.name}) wirklich loeschen?\n\n` +
+          `Alle Tokens / OAuth-Refresh / Subscription wird mit-geloescht. ` +
+          `Diese Aktion ist nicht umkehrbar.`,
+      );
+      if (!ok) return;
+      void cb.onDelete?.(s.name);
+    });
+    titleRow.appendChild(deleteBtn);
+  }
+
   summary.appendChild(titleRow);
 
   const sub = document.createElement('div');
@@ -329,16 +354,19 @@ function sectionsFromInventory(inv: InventoryResponse): ServerSection[] {
     enabled: true,
     isGateway: false,
     requiredCredentials: [],
+    isUserOwned: false,
   });
   for (const g of inv.gateways) {
     sections.push({
       name: g.name,
       displayName: g.displayName || g.name,
-      subtitle: `MCP-Server · Tool-Cache ${fmtCachedAt(g.toolsCachedAt)}`,
+      subtitle: `MCP-Server · Tool-Cache ${fmtCachedAt(g.toolsCachedAt)}` +
+        (g.isUserOwned ? ' · eigener Server' : ''),
       tools: g.tools,
       enabled: g.enabled,
       isGateway: true,
       requiredCredentials: g.requiredCredentials ?? [],
+      isUserOwned: g.isUserOwned === true,
     });
   }
   return sections;
@@ -371,12 +399,21 @@ async function renderServersView(
     'Sensitivity-Badge zeigt Approval-Anforderung: READ direkt, WRITE/DANGER per Approval-Gate.';
   main.appendChild(desc);
 
-  // Toolbar mit globalem Refresh-Button (admin-only).
+  // Toolbar mit globalem Refresh-Button (admin-only) + Server-Add.
   const toolbar = document.createElement('div');
   toolbar.className = 'tools-toolbar';
   let refreshAllBtn: HTMLButtonElement | null = null;
   const status = document.createElement('span');
   status.className = 'muted small tools-toolbar-status';
+
+  // Add-Server-Knopf (Phase 4) — jeder User darf eigene MCP-Server anlegen.
+  const addServerLink = document.createElement('a');
+  addServerLink.href = '#/tools/servers/new';
+  addServerLink.className = 'btn btn-primary btn-small';
+  addServerLink.textContent = '+ Server hinzufügen';
+  addServerLink.title = 'Eigenen MCP-Server zur Hub-Instance hinzufuegen';
+  toolbar.appendChild(addServerLink);
+
   if (session.role === 'admin') {
     refreshAllBtn = document.createElement('button');
     refreshAllBtn.type = 'button';
@@ -449,7 +486,11 @@ async function renderServersView(
       listHost.appendChild(
         renderServerCard(
           s,
-          { onRefresh: handleRefresh, onToggleSubscription: handleToggleSubscription },
+          {
+            onRefresh: handleRefresh,
+            onToggleSubscription: handleToggleSubscription,
+            onDelete: handleDelete,
+          },
           haveProviders,
         ),
       );
@@ -521,6 +562,24 @@ async function renderServersView(
           textContent: `Inventar-Rendering fehlgeschlagen: ${(renderErr as Error).message ?? String(renderErr)}`,
         }),
       );
+    }
+  }
+
+  async function handleDelete(name: string): Promise<void> {
+    status.classList.remove('err');
+    status.textContent = `Loesche ${name}…`;
+    try {
+      await api.deleteUserServer(name);
+      status.textContent = `${name} geloescht.`;
+      await loadAndRender();
+    } catch (err) {
+      status.classList.add('err');
+      if (err instanceof ApiError && err.status === 401) {
+        onSessionExpired();
+        return;
+      }
+      const msg = err instanceof ApiError ? `${err.code}: ${err.message}` : String(err);
+      status.textContent = `Loeschen fehlgeschlagen: ${msg}`;
     }
   }
 
