@@ -121,6 +121,42 @@ const ConfigSchema = z.object({
         .map((o) => o.trim())
         .filter(Boolean),
     ),
+
+  // ─────────────────────────────────────────────────────────────────────
+  // OAuth 2.1 DCR (SEC-005)
+  // ─────────────────────────────────────────────────────────────────────
+  //
+  // POST /oauth/register ist per Default geschlossen (fail-closed). Operator
+  // muss EINEN der zwei Gating-Mechanismen oeffnen:
+  //
+  //   DCR_OPEN=true                       — komplett offen (NICHT empfohlen
+  //                                          ausser fuer dev/test).
+  //   DCR_INITIAL_ACCESS_TOKEN=<32+ chars> — Bearer-Token, das DCR-Caller im
+  //                                          `Authorization`-Header mitschicken
+  //                                          muessen (RFC 7591 §3).
+  //
+  // Wenn weder noch + kein logged-in-User-Session: 403. Wenn ein User
+  // eingeloggt ist (Cookie oder Bearer) wird DCR auch ohne Token erlaubt —
+  // damit Claude-Code-PWA-User selber Client registrieren kann.
+  DCR_OPEN: z
+    .string()
+    .default('false')
+    .transform((s) => s.toLowerCase() === 'true' || s === '1'),
+  DCR_INITIAL_ACCESS_TOKEN: z.string().min(32).optional(),
+
+  // Allowlist fuer redirect_uri Hosts. CSV. Leerer Default = beliebige Hosts
+  // erlaubt (nur Scheme-Check via RFC). Setze auf z.B.
+  // `claude.ai,localhost,127.0.0.1` um die Surface auf bekannte MCP-Clients
+  // zu beschraenken.
+  DCR_ALLOWED_REDIRECT_HOSTS: z
+    .string()
+    .default('')
+    .transform((s) =>
+      s
+        .split(',')
+        .map((h) => h.trim().toLowerCase())
+        .filter(Boolean),
+    ),
 });
 
 export type AppConfig = z.infer<typeof ConfigSchema>;

@@ -5,9 +5,28 @@
  *
  * Plan-Ref: PLAN-architecture-v1.md §11 Phase 4, MCP-Spec Nov 2025.
  *
- * Open Registration (kein Initial-Access-Token noetig fuer MCP-Pilot —
- * der MCP-Hub ist single-tenant + invite-gated, der vorgelagerte Auth-
- * Schutz reicht aus). Wir generieren:
+ * SEC-005 (Phase A): /oauth/register ist per Default geschlossen. Operator
+ * muss eines der drei Tore oeffnen:
+ *
+ *   1. `DCR_OPEN=true` — public-open (NICHT empfohlen, nur dev/test).
+ *   2. `Authorization: Bearer <DCR_INITIAL_ACCESS_TOKEN>` — RFC 7591 §3
+ *      Initial-Access-Token. Operator generiert das Token einmalig + verteilt
+ *      es an Whitelist-of-MCP-Clients out-of-band.
+ *   3. Logged-in-User-Session (Cookie ODER Bearer) — die PWA-User registriert
+ *      einen Claude.ai-Client fuer sich selbst.
+ *
+ * Wenn KEINS davon: 403 `dcr_not_authorized`. Erfolgreiche Registrierung
+ * wird audit-logged mit actor-userId (falls bekannt) + IP.
+ *
+ * redirect_uris-Validation:
+ *   - https://... erlaubt (host kann via DCR_ALLOWED_REDIRECT_HOSTS gegated
+ *     werden).
+ *   - http://localhost:* + http://127.0.0.1:* + http://[::1]:* erlaubt
+ *     (Loopback-only fuer Claude-Code-Desktop u.ae.).
+ *   - Andere Schemes (javascript:, data:, file:, vbscript:) wie auch plain
+ *     http:// auf non-loopback-Hosts werden abgelehnt.
+ *
+ * Wir generieren:
  *
  *   - `client_id`              — random UUID
  *   - `client_secret`          — random 32-byte base64url (NULL bei
@@ -15,17 +34,21 @@
  *   - `registration_access_token` — RFC 7592 Update/Delete-Token
  *
  * Validation (RFC 7591 §2.0):
- *   - redirect_uris: Pflicht, mind. 1, alle valid-URL.
+ *   - redirect_uris: Pflicht, mind. 1, alle valid-URL, scheme/host nach
+ *     SEC-005-Regel oben.
  *   - grant_types: optional, default ['authorization_code','refresh_token'].
  *     Allowed: ['authorization_code', 'refresh_token'].
  *   - response_types: optional. Allowed: ['code'].
  *   - token_endpoint_auth_method: 'client_secret_post'|'client_secret_basic'|'none'.
  */
-import { Hono } from 'hono';
-import { randomBytes, createHash, randomUUID } from 'node:crypto';
+import { Hono, type Context } from 'hono';
+import { randomBytes, createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
+import { getCookie } from 'hono/cookie';
 import type { AppBindings, ServerContext } from '../../lib/context.js';
 import { oauthError } from './errors.js';
+import { emitAudit } from '../../services/audit.js';
+import { verifySessionJwt } from '../../auth/session/issuer.js';
 import type {
   ClientRegistrationResponse,
 } from './types.js';
@@ -33,6 +56,33 @@ import type {
 const ALLOWED_GRANT_TYPES = ['authorization_code', 'refresh_token'] as const;
 const ALLOWED_AUTH_METHODS = ['client_secret_post', 'client_secret_basic', 'none'] as const;
 const ALLOWED_RESPONSE_TYPES = ['code'] as const;
+
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+/**
+ * SEC-005: Schema-Level-Validierung der redirect_uris. Bewusst eng:
+ *   - https:// auf beliebigem Host (Host-Allowlist greift in route-Layer).
+ *   - http:// nur auf Loopback (localhost/127.0.0.1/[::1]).
+ *   - alle anderen Schemes (javascript/data/file/vbscript/...) abgelehnt.
+ *   - Fragment-Identifier (`#`) per RFC 6749 §3.1.2 verboten.
+ */
+function isAllowedRedirectUri(raw: string): { ok: true } | { ok: false; reason: string } {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return { ok: false, reason: 'not a valid URL' };
+  }
+  if (u.hash !== '') {
+    return { ok: false, reason: 'fragment identifier not allowed' };
+  }
+  if (u.protocol === 'https:') return { ok: true };
+  if (u.protocol === 'http:') {
+    if (LOOPBACK_HOSTS.has(u.hostname.toLowerCase())) return { ok: true };
+    return { ok: false, reason: 'plain http:// only allowed for loopback hosts' };
+  }
+  return { ok: false, reason: `scheme ${u.protocol} not allowed` };
+}
 
 const RegisterBodySchema = z
   .object({
@@ -57,10 +107,100 @@ const RegisterBodySchema = z
   })
   .strict();
 
+/**
+ * Konstante-Zeit Vergleich fuer den initial_access_token. Beide Strings
+ * werden auf gleiche Laenge gepadded vor dem timingSafeEqual.
+ */
+function tokensMatch(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided, 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+/**
+ * Resolve current user (from session JWT in Authorization-Bearer or
+ * session_jwt cookie). Returns null if no valid session. Wird zum DCR-Gating
+ * benutzt — wenn ein User eingeloggt ist, darf er sich Clients registrieren.
+ */
+async function resolveSessionUser(
+  c: Context<AppBindings>,
+  server: ServerContext,
+): Promise<{ userId: string; email: string } | null> {
+  const header = c.req.header('authorization');
+  let token: string | null = null;
+  if (header && header.toLowerCase().startsWith('bearer ')) {
+    token = header.slice(7).trim();
+  }
+  if (!token) token = getCookie(c, 'session_jwt') ?? null;
+  if (!token) return null;
+  try {
+    const principal = await verifySessionJwt(token, server.config);
+    return { userId: principal.userId, email: principal.email };
+  } catch {
+    return null;
+  }
+}
+
 export function registerRoutes(server: ServerContext): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
 
   app.post('/oauth/register', async (c) => {
+    const config = server.config;
+    const ip =
+      c.req.header('fly-client-ip') ??
+      c.req.header('x-forwarded-for')?.split(',')[0]?.trim() ??
+      null;
+
+    // SEC-005 Gating: bei geschlossener DCR muss ENTWEDER der
+    // initial_access_token korrekt sein, ODER der Caller ein
+    // logged-in-User-Session-Token mitbringen.
+    let actorUserId: string | null = null;
+    let gateMode: 'open' | 'token' | 'session' = 'open';
+    if (!config.DCR_OPEN) {
+      const auth = c.req.header('authorization');
+      const bearer = auth && auth.toLowerCase().startsWith('bearer ')
+        ? auth.slice(7).trim()
+        : null;
+      const expectedToken = config.DCR_INITIAL_ACCESS_TOKEN;
+
+      let authorized = false;
+      // 1. Initial-Access-Token-Pfad.
+      if (expectedToken && bearer && tokensMatch(bearer, expectedToken)) {
+        authorized = true;
+        gateMode = 'token';
+      }
+      // 2. Logged-in-Session-Pfad.
+      if (!authorized) {
+        const user = await resolveSessionUser(c, server);
+        if (user) {
+          authorized = true;
+          gateMode = 'session';
+          actorUserId = user.userId;
+        }
+      }
+      if (!authorized) {
+        await emitAudit(server.db, {
+          action: 'oauth.dcr.denied',
+          actorUserId: null,
+          result: 'failure',
+          ...(ip ? { ip } : {}),
+          details: {
+            reason: 'no_initial_access_token_and_no_session',
+            dcr_open: false,
+          },
+        }).catch(() => {
+          /* audit failure non-fatal */
+        });
+        return oauthError(
+          c,
+          403,
+          'invalid_token',
+          'DCR closed: provide DCR_INITIAL_ACCESS_TOKEN bearer or sign in as a registered user',
+        );
+      }
+    }
+
     let body: unknown;
     try {
       body = await c.req.json();
@@ -73,6 +213,31 @@ export function registerRoutes(server: ServerContext): Hono<AppBindings> {
       return oauthError(c, 400, 'invalid_client_metadata', msg);
     }
     const meta = parsed.data;
+
+    // SEC-005 redirect_uri Scheme + Host-Allowlist-Check.
+    const allowedHosts = config.DCR_ALLOWED_REDIRECT_HOSTS;
+    for (const uri of meta.redirect_uris) {
+      const check = isAllowedRedirectUri(uri);
+      if (!check.ok) {
+        return oauthError(
+          c,
+          400,
+          'invalid_redirect_uri',
+          `redirect_uri "${uri}" rejected: ${check.reason}`,
+        );
+      }
+      if (allowedHosts.length > 0) {
+        const host = new URL(uri).hostname.toLowerCase();
+        if (!allowedHosts.includes(host) && !LOOPBACK_HOSTS.has(host)) {
+          return oauthError(
+            c,
+            400,
+            'invalid_redirect_uri',
+            `redirect_uri host "${host}" not in DCR_ALLOWED_REDIRECT_HOSTS`,
+          );
+        }
+      }
+    }
 
     // Generate identity.
     const clientId = randomUUID();
@@ -115,6 +280,23 @@ export function registerRoutes(server: ServerContext): Hono<AppBindings> {
         createdAt,
       ],
     );
+
+    // SEC-005 audit: jede erfolgreiche Registration ist nachverfolgbar.
+    await emitAudit(server.db, {
+      action: 'oauth.dcr.registered',
+      actorUserId,
+      result: 'success',
+      ...(ip ? { ip } : {}),
+      details: {
+        client_id: clientId,
+        client_name: meta.client_name ?? null,
+        redirect_uris: meta.redirect_uris,
+        gate_mode: gateMode,
+        token_endpoint_auth_method: meta.token_endpoint_auth_method,
+      },
+    }).catch(() => {
+      /* audit failure non-fatal */
+    });
 
     const response: ClientRegistrationResponse = {
       client_id: clientId,

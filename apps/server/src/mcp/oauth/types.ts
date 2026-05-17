@@ -125,6 +125,9 @@ export type OauthErrorCode =
   | 'invalid_scope'
   | 'invalid_redirect_uri'
   | 'invalid_client_metadata'
+  | 'invalid_token'
+  | 'login_required'
+  | 'consent_required'
   | 'unsupported_token_type'
   | 'access_denied'
   | 'server_error';

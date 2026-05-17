@@ -93,7 +93,12 @@ Findings sind innerhalb der Severity nach **Schweregrad/Wahrscheinlichkeit** sor
   2. `redirect_uris`-Schema einschränken: nur `https://` (oder `http://127.0.0.1:*`/`http://localhost:*` für Dev) + Host-Allowlist via `DCR_ALLOWED_REDIRECT_HOSTS`. `javascript:`, `data:`, `file:`, beliebige `http://`-non-loopback rejecten.
   3. `/oauth/authorize` für Browser-Caller: **Consent-Screen anzeigen**, wenn der Client (a) DCR-registriert und (b) für diesen User noch nicht consented ist. Speichere `(user_id, client_id) → consented_at` in eigener Tabelle. Erst nach `POST /oauth/consent` Code-Issue.
   4. `Accept: text/html` + DCR-Client + kein Consent → 200 mit Consent-HTML, niemals 302 zum auto-Issue.
-- **Status:** OPEN — **Cutover-Blocker**.
+- **Status:** ✅ FIXED 2026-05-17 (Phase A) — alle 4 Schichten umgesetzt:
+  1. [register.ts](../../apps/server/src/mcp/oauth/register.ts) gated: `DCR_OPEN=false` Default + `DCR_INITIAL_ACCESS_TOKEN` Bearer-Pfad (RFC 7591 §3) + logged-in-Session-Pfad (Bearer ODER Cookie). Failed register-attempts werden via `oauth.dcr.denied`-Audit-Event protokolliert; successful via `oauth.dcr.registered` mit gate_mode (token/session/open).
+  2. `isAllowedRedirectUri()` in register.ts: https://* OK; http:// nur fuer Loopback (localhost/127.0.0.1/[::1]); andere Schemes (javascript/data/file/...) rejected. Optional `DCR_ALLOWED_REDIRECT_HOSTS` Host-Allowlist als zweite Schicht.
+  3. Neue Tabelle [oauth_client_consents](../../apps/server/migrations/0011_oauth_consent.sql) mit RLS-Policy. [authorize.ts](../../apps/server/src/mcp/oauth/authorize.ts) `hasConsent()` Check vor dem Code-Issue; nicht-consented DCR-Client + Browser → HTML-Consent-Page; nicht-consented DCR-Client + JSON-Caller → 401 `consent_required`. First-party (`registration_source!='dcr'`) skipped.
+  4. POST /oauth/authorize Handler: form-submit `consent=allow` → `recordConsent()` + `issueCodeAndRedirect()`. `consent=deny` → 302 zur redirect_uri mit `error=access_denied`. 11 neue regression-tests in [oauth.test.ts](../../apps/server/src/mcp/oauth/oauth.test.ts).
+- **Operator-Setup:** Doppler-Secrets `DCR_OPEN=false` (oder unset) + `DCR_INITIAL_ACCESS_TOKEN=<rand 48 chars>` + optional `DCR_ALLOWED_REDIRECT_HOSTS=claude.ai,localhost,127.0.0.1`.
 
 ### SEC-006 — kc_wrappers default-sensitivity ist `'read'` → KC2 schema-drift bypasst Approval <a id="sec-006"></a>
 

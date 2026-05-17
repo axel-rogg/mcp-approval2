@@ -221,6 +221,9 @@ function buildConfigFromEnv(env: CfEnv): AppConfig {
     // AS-3 Multi-Audience-Default fuer Google-IdP-Verify; CF-Path setzt
     // den Wert sonst nicht. Default-leer = nur eigene GOOGLE_CLIENT_ID.
     GOOGLE_ALLOWED_AUDIENCES: [],
+    // SEC-005: DCR fail-closed; CF-Path setzt keine eigene Knobs.
+    DCR_OPEN: false,
+    DCR_ALLOWED_REDIRECT_HOSTS: [],
   };
 
   // Optional RS256 keys — only attach if present, to honor

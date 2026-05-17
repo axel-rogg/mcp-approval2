@@ -77,6 +77,8 @@ interface UsersRow {
 
 interface StubState {
   clients: Map<string, OauthClientRow>;
+  /** SEC-005: Set of "userId|clientId" for already-consented client pairs. */
+  consents: Set<string>;
   codes: Map<string, OauthAuthzCodeRow>;
   refresh: Map<string, OauthRefreshRow>;
   users: Map<string, UsersRow>;
@@ -198,6 +200,17 @@ function makeStubDb(state: StubState): ServerContext['db'] {
         { external_id: row.external_id ?? null, email: row.email ?? null },
       ] as unknown as T[];
     }
+    // SEC-005: oauth_client_consents stub.
+    if (s.startsWith('INSERT INTO OAUTH_CLIENT_CONSENTS')) {
+      state.consents.add(`${String(params[0])}|${String(params[1])}`);
+      return [];
+    }
+    if (s.startsWith('SELECT') && s.includes('FROM OAUTH_CLIENT_CONSENTS')) {
+      const key = `${String(params[0])}|${String(params[1])}`;
+      return state.consents.has(key)
+        ? ([{ consentedAt: 1 }] as unknown as T[])
+        : [];
+    }
     // audit_log insert — swallow + record action
     // Schema-Match mit services/audit.ts: (ts, actor_user_id, actor_type,
     // action, request_id, ip, user_agent, result, details). action=$4, result=$8.
@@ -268,12 +281,19 @@ function makeStubConfig(): AppConfig {
     RECOVERY_TTL_SEC: 24 * 60 * 60,
     ALLOWED_ORIGINS: [],
     GOOGLE_ALLOWED_AUDIENCES: [],
+    COOKIE_DOMAIN: '',
+    // SEC-005: Tests laufen mit DCR_OPEN=true damit das existierende
+    // Test-Setup ohne Gating-Token weiter funktioniert. Gating-Path hat
+    // eigene dedizierte Tests (siehe unten).
+    DCR_OPEN: true,
+    DCR_ALLOWED_REDIRECT_HOSTS: [],
   };
 }
 
 function freshState(): StubState {
   return {
     clients: new Map(),
+    consents: new Set(),
     codes: new Map(),
     refresh: new Map(),
     users: new Map(),
@@ -379,6 +399,8 @@ describe('OAuth Authorization-Server', () => {
     });
     const reg = (await regRes.json()) as ClientRegistrationResponse;
     const clientId = reg.client_id;
+    // SEC-005: pre-consent (DCR test fixture — flow-tests skip HTML consent).
+    state.consents.add(`${userId}|${clientId}`);
     const clientSecret = reg.client_secret!;
     expect(clientSecret).toBeTruthy();
 
@@ -481,6 +503,8 @@ describe('OAuth Authorization-Server', () => {
     });
     const reg = (await regRes.json()) as ClientRegistrationResponse;
     const clientId = reg.client_id;
+    // SEC-005: pre-consent (DCR test fixture — flow-tests skip HTML consent).
+    state.consents.add(`${userId}|${clientId}`);
     const clientSecret = reg.client_secret;
     expect(clientId).toBeTruthy();
     expect(clientSecret).toBeTruthy();
@@ -543,6 +567,8 @@ describe('OAuth Authorization-Server', () => {
       body: JSON.stringify({ redirect_uris: ['https://c/cb'], token_endpoint_auth_method: 'none' }),
     });
     const reg = (await regRes.json()) as ClientRegistrationResponse;
+    // SEC-005: pre-consent (DCR test fixture — flow-tests skip HTML consent).
+    state.consents.add(`${userId}|${reg.client_id}`);
     const cfg = makeStubConfig();
     const { token: sessionJwt } = await issueSessionJwt(
       { userId, email: 'u', role: 'member', sessionId: 's' },
@@ -587,6 +613,8 @@ describe('OAuth Authorization-Server', () => {
       body: JSON.stringify({ redirect_uris: ['https://c/cb'], token_endpoint_auth_method: 'none' }),
     });
     const reg = (await regRes.json()) as ClientRegistrationResponse;
+    // SEC-005: pre-consent (DCR test fixture — flow-tests skip HTML consent).
+    state.consents.add(`${userId}|${reg.client_id}`);
     const { token: sessionJwt } = await issueSessionJwt(
       { userId, email: 'u', role: 'member', sessionId: 's' },
       cfg,
@@ -648,6 +676,8 @@ describe('OAuth Authorization-Server', () => {
       body: JSON.stringify({ redirect_uris: ['https://c/cb'], token_endpoint_auth_method: 'none' }),
     });
     const reg = (await regRes.json()) as ClientRegistrationResponse;
+    // SEC-005: pre-consent (DCR test fixture — flow-tests skip HTML consent).
+    state.consents.add(`${userId}|${reg.client_id}`);
     const { token: sessionJwt } = await issueSessionJwt(
       { userId, email: 'u', role: 'member', sessionId: 's' },
       cfg,
@@ -725,6 +755,8 @@ describe('OAuth Authorization-Server', () => {
       }),
     });
     const reg = (await regRes.json()) as ClientRegistrationResponse;
+    // SEC-005: pre-consent (DCR test fixture — flow-tests skip HTML consent).
+    state.consents.add(`${userId}|${reg.client_id}`);
     const { token: sessionJwt } = await issueSessionJwt(
       { userId, email: 'u', role: 'member', sessionId: 's' },
       cfg,
@@ -816,6 +848,8 @@ describe('OAuth Authorization-Server', () => {
       body: JSON.stringify({ redirect_uris: ['https://c/cb'], token_endpoint_auth_method: 'none' }),
     });
     const reg = (await regRes.json()) as ClientRegistrationResponse;
+    // SEC-005: pre-consent (DCR test fixture — flow-tests skip HTML consent).
+    state.consents.add(`${userId}|${reg.client_id}`);
     const cfg = makeStubConfig();
     const { token: sessionJwt } = await issueSessionJwt(
       { userId, email: 'u', role: 'member', sessionId: 's' },
@@ -845,6 +879,8 @@ describe('OAuth Authorization-Server', () => {
       body: JSON.stringify({ redirect_uris: ['https://c/cb'], token_endpoint_auth_method: 'none' }),
     });
     const reg = (await regRes.json()) as ClientRegistrationResponse;
+    // SEC-005: pre-consent (DCR test fixture — flow-tests skip HTML consent).
+    state.consents.add(`${userId}|${reg.client_id}`);
     const { challenge } = pkcePair();
     const res = await app.request(
       '/oauth/authorize?' +
@@ -869,6 +905,8 @@ describe('OAuth Authorization-Server', () => {
       body: JSON.stringify({ redirect_uris: ['https://c/cb'], token_endpoint_auth_method: 'none' }),
     });
     const reg = (await regRes.json()) as ClientRegistrationResponse;
+    // SEC-005: pre-consent (DCR test fixture — flow-tests skip HTML consent).
+    state.consents.add(`${userId}|${reg.client_id}`);
     const { challenge } = pkcePair();
     const authzUrl =
       '/oauth/authorize?' +
@@ -895,5 +933,312 @@ describe('OAuth Authorization-Server', () => {
     const meta = buildDiscoveryMetadata('https://example.test/');
     expect(meta.issuer).toBe('https://example.test');
     expect(meta.authorization_endpoint).toBe('https://example.test/oauth/authorize');
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SEC-005: DCR-Gating + redirect_uri-Allowlist + Consent-Screen.
+// ──────────────────────────────────────────────────────────────────────────────
+
+describe('SEC-005 — DCR-Gating + Consent', () => {
+  const userId = '11111111-2222-3333-4444-555555555555';
+
+  function makeClosedConfig(overrides: Partial<AppConfig> = {}): AppConfig {
+    return {
+      ...makeStubConfig(),
+      DCR_OPEN: false,
+      ...overrides,
+    };
+  }
+
+  async function buildAppClosed(
+    state: StubState,
+    overrides: Partial<AppConfig> = {},
+  ): Promise<Hono<AppBindings>> {
+    const server: ServerContext = { config: makeClosedConfig(overrides), db: makeStubDb(state) };
+    const app = new Hono<AppBindings>();
+    app.use('*', async (c, next) => {
+      c.set('requestId', 'test-req');
+      await next();
+    });
+    app.route('/', oauthRoutes(server));
+    return app;
+  }
+
+  it('rejects /oauth/register with 403 when DCR closed + no token + no session', async () => {
+    const state = freshState();
+    state.users.set(userId, { id: userId, email: 'user@example.com', role: 'member' });
+    const app = await buildAppClosed(state);
+    const res = await app.request('/oauth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: ['https://c/cb'] }),
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('invalid_token');
+  });
+
+  it('accepts /oauth/register with valid DCR_INITIAL_ACCESS_TOKEN', async () => {
+    const state = freshState();
+    state.users.set(userId, { id: userId, email: 'user@example.com', role: 'member' });
+    const token = 'iat-' + 'x'.repeat(40);
+    const app = await buildAppClosed(state, { DCR_INITIAL_ACCESS_TOKEN: token });
+    const res = await app.request('/oauth/register', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ redirect_uris: ['https://c/cb'] }),
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it('accepts /oauth/register when logged-in (session JWT in Bearer)', async () => {
+    const state = freshState();
+    state.users.set(userId, { id: userId, email: 'user@example.com', role: 'member' });
+    const cfg = makeClosedConfig();
+    const app = await buildAppClosed(state);
+    const { token: sessionJwt } = await issueSessionJwt(
+      { userId, email: 'user@example.com', role: 'member', sessionId: 'sess-1' },
+      cfg,
+    );
+    const res = await app.request('/oauth/register', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${sessionJwt}`,
+      },
+      body: JSON.stringify({ redirect_uris: ['https://c/cb'] }),
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it('rejects redirect_uri with javascript: scheme', async () => {
+    const state = freshState();
+    const app = await buildAppClosed(state, { DCR_OPEN: true });
+    const res = await app.request('/oauth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: ['javascript:alert(1)'] }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; error_description: string };
+    // schema might reject as malformed URL OR our scheme check.
+    expect([body.error]).toEqual([
+      body.error === 'invalid_redirect_uri' ? 'invalid_redirect_uri' : 'invalid_client_metadata',
+    ]);
+  });
+
+  it('rejects plain-http non-loopback redirect_uri', async () => {
+    const state = freshState();
+    const app = await buildAppClosed(state, { DCR_OPEN: true });
+    const res = await app.request('/oauth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: ['http://attacker.example/cb'] }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('invalid_redirect_uri');
+  });
+
+  it('accepts http://localhost:* loopback redirect_uri', async () => {
+    const state = freshState();
+    const app = await buildAppClosed(state, { DCR_OPEN: true });
+    const res = await app.request('/oauth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: ['http://localhost:9876/cb'] }),
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it('rejects redirect_uri host not in DCR_ALLOWED_REDIRECT_HOSTS', async () => {
+    const state = freshState();
+    const app = await buildAppClosed(state, {
+      DCR_OPEN: true,
+      DCR_ALLOWED_REDIRECT_HOSTS: ['claude.ai'],
+    });
+    const res = await app.request('/oauth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: ['https://other.example/cb'] }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('invalid_redirect_uri');
+  });
+
+  it('Authorize: shows HTML consent page when DCR-client not yet consented (browser)', async () => {
+    const state = freshState();
+    state.users.set(userId, { id: userId, email: 'user@example.com', role: 'member' });
+    const cfg = makeStubConfig();
+    const app = await buildApp(state);
+    // 1. Register
+    const regRes = await app.request('/oauth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        redirect_uris: ['https://c.example/cb'],
+        client_name: 'TestClient',
+        token_endpoint_auth_method: 'client_secret_post',
+      }),
+    });
+    const reg = (await regRes.json()) as ClientRegistrationResponse;
+    // 2. Authorize OHNE pre-consent → muss HTML zeigen (kein redirect)
+    const { token: sessionJwt } = await issueSessionJwt(
+      { userId, email: 'user@example.com', role: 'member', sessionId: 'sess-1' },
+      cfg,
+    );
+    const { challenge } = pkcePair();
+    const res = await app.request(
+      '/oauth/authorize?' +
+        new URLSearchParams({
+          response_type: 'code',
+          client_id: reg.client_id,
+          redirect_uri: 'https://c.example/cb',
+          code_challenge: challenge,
+          code_challenge_method: 'S256',
+        }).toString(),
+      {
+        headers: {
+          authorization: `Bearer ${sessionJwt}`,
+          accept: 'text/html',
+        },
+      },
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toMatch(/html/);
+    const html = await res.text();
+    expect(html).toContain('Authorize new application');
+    expect(html).toContain('TestClient');
+    expect(html).toContain('value="allow"');
+    expect(html).toContain('value="deny"');
+  });
+
+  it('Authorize: JSON 401 consent_required when non-browser caller', async () => {
+    const state = freshState();
+    state.users.set(userId, { id: userId, email: 'user@example.com', role: 'member' });
+    const cfg = makeStubConfig();
+    const app = await buildApp(state);
+    const regRes = await app.request('/oauth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        redirect_uris: ['https://c.example/cb'],
+        token_endpoint_auth_method: 'none',
+      }),
+    });
+    const reg = (await regRes.json()) as ClientRegistrationResponse;
+    const { token: sessionJwt } = await issueSessionJwt(
+      { userId, email: 'user@example.com', role: 'member', sessionId: 'sess-1' },
+      cfg,
+    );
+    const { challenge } = pkcePair();
+    const res = await app.request(
+      '/oauth/authorize?' +
+        new URLSearchParams({
+          response_type: 'code',
+          client_id: reg.client_id,
+          redirect_uri: 'https://c.example/cb',
+          code_challenge: challenge,
+          code_challenge_method: 'S256',
+        }).toString(),
+      {
+        headers: { authorization: `Bearer ${sessionJwt}`, accept: 'application/json' },
+      },
+    );
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('consent_required');
+  });
+
+  it('POST /oauth/authorize with consent=allow issues code + records consent', async () => {
+    const state = freshState();
+    state.users.set(userId, { id: userId, email: 'user@example.com', role: 'member' });
+    const cfg = makeStubConfig();
+    const app = await buildApp(state);
+    const regRes = await app.request('/oauth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        redirect_uris: ['https://c.example/cb'],
+        token_endpoint_auth_method: 'none',
+      }),
+    });
+    const reg = (await regRes.json()) as ClientRegistrationResponse;
+    const { token: sessionJwt } = await issueSessionJwt(
+      { userId, email: 'user@example.com', role: 'member', sessionId: 'sess-1' },
+      cfg,
+    );
+    const { challenge } = pkcePair();
+    const form = new URLSearchParams({
+      response_type: 'code',
+      client_id: reg.client_id,
+      redirect_uri: 'https://c.example/cb',
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      consent: 'allow',
+    });
+    const res = await app.request('/oauth/authorize', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${sessionJwt}`,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: form.toString(),
+    });
+    expect(res.status).toBe(302);
+    const loc = res.headers.get('location') ?? '';
+    expect(loc).toMatch(/^https:\/\/c\.example\/cb\?code=/);
+    // Consent-Row gespeichert
+    expect(state.consents.has(`${userId}|${reg.client_id}`)).toBe(true);
+  });
+
+  it('POST /oauth/authorize with consent=deny → 302 mit error=access_denied', async () => {
+    const state = freshState();
+    state.users.set(userId, { id: userId, email: 'user@example.com', role: 'member' });
+    const cfg = makeStubConfig();
+    const app = await buildApp(state);
+    const regRes = await app.request('/oauth/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        redirect_uris: ['https://c.example/cb'],
+        token_endpoint_auth_method: 'none',
+      }),
+    });
+    const reg = (await regRes.json()) as ClientRegistrationResponse;
+    const { token: sessionJwt } = await issueSessionJwt(
+      { userId, email: 'user@example.com', role: 'member', sessionId: 'sess-1' },
+      cfg,
+    );
+    const { challenge } = pkcePair();
+    const form = new URLSearchParams({
+      response_type: 'code',
+      client_id: reg.client_id,
+      redirect_uri: 'https://c.example/cb',
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      consent: 'deny',
+      state: 'st-1',
+    });
+    const res = await app.request('/oauth/authorize', {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${sessionJwt}`,
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+      body: form.toString(),
+    });
+    expect(res.status).toBe(302);
+    const loc = res.headers.get('location') ?? '';
+    const u = new URL(loc);
+    expect(u.searchParams.get('error')).toBe('access_denied');
+    expect(u.searchParams.get('state')).toBe('st-1');
+    // Consent-Row NICHT gesetzt
+    expect(state.consents.has(`${userId}|${reg.client_id}`)).toBe(false);
   });
 });
