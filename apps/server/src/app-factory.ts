@@ -71,6 +71,7 @@ import { createUserServerConfigService } from './services/user-server-config.js'
 import { createUserServerOAuthService } from './services/user-server-oauth.js';
 import { createUserServerToolDefaultsService } from './services/user-server-tool-defaults.js';
 import { createSubMcpAuthEnricher } from './services/sub-mcp-auth-enricher.js';
+import { createUserSubMcpToolCacheService } from './services/user-sub-mcp-tool-cache.js';
 import { gdprRoutes } from './routes/gdpr.js';
 import { approvalsRoutes } from './routes/approvals.js';
 import { createApprovalAssertionVerifier } from './auth/webauthn/approval-verify.js';
@@ -128,6 +129,7 @@ import {
   refreshSubMcpToolCache,
   seedSatelliteWorkers,
   seedOAuthCatalogServers,
+  refreshUserSubMcpToolCache,
   subMcpDiscoverRoutes,
   SubMcpForwarder,
   SubMcpWrappersCache,
@@ -494,6 +496,12 @@ export async function createApp(
     ? createSubMcpAuthEnricher({ config: userServerConfigService })
     : undefined;
 
+  // Per-User Tool-Cache fuer OAuth-Sub-MCPs (Sprint 2026-05-18).
+  // Wird nach OAuth-Callback + manuellem Rediscover gefuellt.
+  const userSubMcpToolCacheService = createUserSubMcpToolCacheService({
+    db: server.db,
+  });
+
   // ─────────────────────────────────────────────────────────────────────
   // Burst-7: Optional Services (Apps / Prefs / Push / OutputRefs / Search).
   // Capability-Search needs the live tool-registry, so we build services
@@ -845,6 +853,28 @@ export async function createApp(
       ...(userServerConfigService ? { config: userServerConfigService } : {}),
       ...(userServerOAuthService ? { oauth: userServerOAuthService } : {}),
       toolDefaults: userServerToolDefaultsService,
+      // Post-OAuth-Hook: nach erfolgreichem callback per-User-Discovery
+      // triggern. Nur verdrahtet wenn enricher verfuegbar ist.
+      ...(subMcpAuthEnricher
+        ? {
+            refreshUserToolCache: (a) => {
+              const baseArgs: {
+                userId: string;
+                registry: typeof subMcpReg;
+                authEnricher: typeof subMcpAuthEnricher;
+                toolCache: typeof userSubMcpToolCacheService;
+                only?: ReadonlyArray<string>;
+              } = {
+                userId: a.userId,
+                registry: subMcpReg,
+                authEnricher: subMcpAuthEnricher,
+                toolCache: userSubMcpToolCacheService,
+              };
+              if (a.only) baseArgs.only = a.only;
+              return refreshUserSubMcpToolCache(baseArgs);
+            },
+          }
+        : {}),
     }),
   );
 

@@ -26,6 +26,15 @@ import type { UserSubscriptionsService } from '../../services/user-subscriptions
 import type { UserServerConfigService } from '../../services/user-server-config.js';
 import type { UserServerOAuthService } from '../../services/user-server-oauth.js';
 import type { UserServerToolDefaultsService } from '../../services/user-server-tool-defaults.js';
+import type { UserDiscoveryArgs } from '../../mcp/gateway/discovery.js';
+
+/**
+ * Post-OAuth-Hook: nach erfolgreichem callback wird Per-User-Discovery
+ * getriggert. Optional damit Tests/dev ohne enricher laufen.
+ */
+export type RefreshUserToolCacheFn = (
+  args: Pick<UserDiscoveryArgs, 'userId' | 'only'>,
+) => Promise<unknown>;
 
 export interface MyServersRouteDeps {
   readonly server: ServerContext;
@@ -46,6 +55,11 @@ export interface MyServersRouteDeps {
    * tool-defaults-Endpoints nicht verfuegbar.
    */
   readonly toolDefaults?: UserServerToolDefaultsService;
+  /**
+   * Optional: nach erfolgreichem OAuth-callback per-User-Discovery
+   * triggern. wired in app-factory zu refreshUserSubMcpToolCache().
+   */
+  readonly refreshUserToolCache?: RefreshUserToolCacheFn;
 }
 
 interface MyServerEntry {
@@ -417,6 +431,25 @@ export function myServersRoutes(deps: MyServersRouteDeps): Hono<AppBindings> {
         const name = c.req.param('name');
         const body = c.req.valid('json');
         await oauthSvc.callback(user.userId, name, body.state, body.code);
+
+        // Post-OAuth-Hook: per-User-Discovery triggern damit der User
+        // direkt Tools sieht. Non-fatal — wenn discovery scheitert, kann
+        // der User spaeter manuell rediscover triggern.
+        if (deps.refreshUserToolCache) {
+          try {
+            await deps.refreshUserToolCache({ userId: user.userId, only: [name] });
+          } catch (err) {
+            logger.warn(
+              {
+                event: 'oauth.callback.discovery_failed',
+                server: name,
+                userId: user.userId,
+                err: err instanceof Error ? err.message : String(err),
+              },
+              'sub-mcp post-oauth discovery failed',
+            );
+          }
+        }
         return c.body(null, 204);
       },
     );

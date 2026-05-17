@@ -28,8 +28,10 @@ export { SubMcpForwarder, type SubMcpForwarderOptions } from './forwarder.js';
 
 export {
   refreshSubMcpToolCache,
+  refreshUserSubMcpToolCache,
   buildForwardedToolDefs,
   type RefreshToolCacheArgs,
+  type UserDiscoveryArgs,
   type DiscoveryResult,
 } from './discovery.js';
 
