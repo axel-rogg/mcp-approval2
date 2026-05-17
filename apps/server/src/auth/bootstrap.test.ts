@@ -153,13 +153,23 @@ describe('bootstrapIfNeeded — SEC-008', () => {
     ).rejects.toMatchObject({ status: 403, code: 'bootstrap_only' });
   });
 
-  it('Backward-compat: no BOOTSTRAP_ADMIN_EMAIL → console.warn + accept any email', async () => {
+  it('Backward-compat: no BOOTSTRAP_ADMIN_EMAIL in dev → console.warn + accept any email', async () => {
     const db = makeStubDb();
     const result = await bootstrapIfNeeded(db, input);
     expect(result.role).toBe('admin');
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('BOOTSTRAP_ADMIN_EMAIL is not set'),
     );
+  });
+
+  it('Family-Hardening: no BOOTSTRAP_ADMIN_EMAIL in production → 403 + audit', async () => {
+    const db = makeStubDb();
+    await expect(
+      bootstrapIfNeeded(db, input, { NODE_ENV: 'production' }),
+    ).rejects.toMatchObject({ status: 403, code: 'bootstrap_only' });
+    expect(db._users).toHaveLength(0);
+    const actions = db._audit.map((p) => (p as ReadonlyArray<unknown>)[3]);
+    expect(actions).toContain('admin.bootstrap.rejected');
   });
 
   it('Email comparison is case-insensitive + trimmed', async () => {

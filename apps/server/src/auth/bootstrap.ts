@@ -37,6 +37,7 @@ export interface BootstrapResult {
 
 export interface BootstrapConfig {
   readonly BOOTSTRAP_ADMIN_EMAIL?: string;
+  readonly NODE_ENV?: 'development' | 'test' | 'production';
 }
 
 export async function bootstrapIfNeeded(
@@ -70,11 +71,29 @@ export async function bootstrapIfNeeded(
     );
   }
   if (!expectedEmail) {
-    // Backward-compat: existing deployments don't have this env-var set.
-    // Loud warn so operator sees the drift.
+    // Production: fail-CLOSED. Ohne Email-Gate kann ein Angreifer, der die
+    // Login-Race vor dem Operator gewinnt, Admin werden. THREAT-MODEL §K3.
+    if (config?.NODE_ENV === 'production') {
+      await emitAudit(db, {
+        action: 'admin.bootstrap.rejected',
+        actorUserId: null,
+        result: 'failure',
+        details: {
+          reason: 'bootstrap_admin_email_not_configured',
+          incoming_email: incomingEmail,
+        },
+      }).catch(() => {
+        /* non-fatal */
+      });
+      throw HttpError.forbidden(
+        'bootstrap_only',
+        'BOOTSTRAP_ADMIN_EMAIL must be configured in production',
+      );
+    }
+    // Dev/Test: warn, akzeptiere (Backward-Compat fuer lokale Setups).
     console.warn(
       `[bootstrap] BOOTSTRAP_ADMIN_EMAIL is not set. The first Google login (${incomingEmail}) will become admin. ` +
-        `In production, set BOOTSTRAP_ADMIN_EMAIL to gate this against race-condition attackers (SEC-008).`,
+        `In production this is fail-CLOSED — set BOOTSTRAP_ADMIN_EMAIL to gate against race-condition attackers (SEC-008).`,
     );
   }
 

@@ -221,6 +221,7 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
         kcSyncNeeded = true;
       } else {
         // Bootstrap-Versuch (SEC-008: BOOTSTRAP_ADMIN_EMAIL-Gate aktiv).
+        // In production fail-CLOSED ohne Gate (Family-Hardening 2026-05-17).
         const bs = await bootstrapIfNeeded(
           server.db,
           {
@@ -228,9 +229,12 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
             email: profile.email,
             displayName: profile.displayName,
           },
-          server.config.BOOTSTRAP_ADMIN_EMAIL
-            ? { BOOTSTRAP_ADMIN_EMAIL: server.config.BOOTSTRAP_ADMIN_EMAIL }
-            : undefined,
+          {
+            ...(server.config.BOOTSTRAP_ADMIN_EMAIL
+              ? { BOOTSTRAP_ADMIN_EMAIL: server.config.BOOTSTRAP_ADMIN_EMAIL }
+              : {}),
+            NODE_ENV: server.config.NODE_ENV,
+          },
         );
         userId = bs.userId;
         role = bs.role;

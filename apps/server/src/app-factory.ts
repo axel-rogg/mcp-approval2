@@ -38,6 +38,8 @@ import { HttpError } from './lib/errors.js';
 import { requestId } from './middleware/request-id.js';
 import { logRequests } from './middleware/log.js';
 import { errorHandler } from './middleware/error-handler.js';
+import { securityHeaders } from './middleware/security-headers.js';
+import { originCheck } from './middleware/origin-check.js';
 import {
   createRateLimitMiddleware,
   InMemoryBucketStore,
@@ -310,9 +312,23 @@ export async function createApp(
   // Globale Middleware (in order)
   // ─────────────────────────────────────────────────────────────────────
   app.use('*', requestId());
+  // Security-Headers (HSTS, X-Frame-Options:DENY, nosniff, Referrer-Policy).
+  // CSP bewusst off — siehe middleware/security-headers.ts.
+  app.use('*', securityHeaders());
   // Per-Request-Log (method/path/status/duration). Health-Probes geskipped.
   app.use('*', logRequests());
   app.onError(errorHandler());
+
+  // Origin-Check (CSRF-Lite) auf cookie-gated auth-/oauth-Routes. Family-
+  // Hardening 2026-05-17. State-changing methods (POST/PUT/PATCH/DELETE)
+  // gegen `ORIGIN + ALLOWED_ORIGINS` matchen. Bearer-only-Routen (MCP, /v1/*)
+  // sind nicht CSRF-anfällig und bleiben unangetastet.
+  const originGuard = originCheck({
+    ORIGIN: server.config.ORIGIN,
+    ALLOWED_ORIGINS: server.config.ALLOWED_ORIGINS,
+  });
+  app.use('/auth/*', originGuard);
+  app.use('/oauth/*', originGuard);
 
   // Rate-Limit fuer User-facing v1 + MCP. Auth-Routen + /health bleiben aussen vor.
   // Middleware skipt automatisch wenn `c.get('user')` undefined ist (anonymous).
