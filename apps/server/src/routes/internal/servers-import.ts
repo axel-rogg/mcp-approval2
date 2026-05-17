@@ -96,27 +96,34 @@ export function internalServersImportRoutes(
 
       for (const s of body.servers) {
         try {
-          // Check ob Server bereits existiert (catalog ODER user-owned)
+          // Idempotent: register wenn neu, sonst Metadaten-Refresh.
+          let cfgId: string;
           const existing = await deps.registry.getByName(s.name).catch(() => null);
           if (existing) {
-            errors.push({
+            // Catalog-Default ist NICHT user-owned und nicht ueberschreibbar.
+            if (!existing.ownerUserId || existing.ownerUserId !== user.id) {
+              errors.push({
+                name: s.name,
+                message: `server '${s.name}' exists as catalog-default or belongs to another user`,
+              });
+              continue;
+            }
+            cfgId = existing.id;
+            // Update der configSchema (OAuth-Metadaten) bei Re-Import.
+          } else {
+            const cfg = await deps.registry.register({
               name: s.name,
-              message: `server '${s.name}' already exists (catalog or user-owned)`,
+              displayName: s.displayName,
+              baseUrl: s.baseUrl,
+              authMode: s.authMode,
+              authConfig: {},
+              enabled: true,
+              ownerUserId: user.id,
             });
-            continue;
+            cfgId = cfg.id;
           }
 
-          const cfg = await deps.registry.register({
-            name: s.name,
-            displayName: s.displayName,
-            baseUrl: s.baseUrl,
-            authMode: s.authMode,
-            authConfig: {},
-            enabled: true,
-            ownerUserId: user.id,
-          });
-
-          // configSchema._meta.oauth persistieren
+          // configSchema._meta.oauth persistieren (idempotent — overwrite OK)
           if (deps.registry.updateConfigSchema) {
             const meta = {
               oauth: {
@@ -127,7 +134,7 @@ export function internalServersImportRoutes(
                 scopes: s.oauth.scopes,
               },
             };
-            await deps.registry.updateConfigSchema(cfg.id, meta);
+            await deps.registry.updateConfigSchema(cfgId, meta);
           }
 
           // Client-ID in user_sub_mcp_config schreiben (wenn vorhanden + KMS-fähig)
