@@ -66,7 +66,13 @@ import { approvalsRoutes } from './routes/approvals.js';
 import { createApprovalAssertionVerifier } from './auth/webauthn/approval-verify.js';
 import { appsRoutes } from './routes/apps.js';
 import { pushRoutes } from './routes/push.js';
-import { writemodeRoutes, type WritemodeState } from './routes/writemode.js';
+import {
+  writemodeRoutes,
+  writemodeUserRoutes,
+  type WritemodeState,
+} from './routes/writemode.js';
+import { createWritemodeService } from './services/writemode.js';
+import { createWritemodeActivationVerifier } from './auth/webauthn/writemode-activation-verify.js';
 import { internalCredentialsRoutes } from './routes/internal/credentials.js';
 import { internalDekRoutes } from './routes/internal/dek.js';
 import { internalCronRoutes } from './routes/internal/cron.js';
@@ -407,9 +413,22 @@ export async function createApp(
   }
 
   // ─────────────────────────────────────────────────────────────────────
+  // Writemode-Service — pro-User Auto-Approve-Window (PLAN-writemode).
+  // ─────────────────────────────────────────────────────────────────────
+  const writemodeService = createWritemodeService({ db: server.db });
+
+  // ─────────────────────────────────────────────────────────────────────
   // MCP-Protocol + Tool-Registry
   // ─────────────────────────────────────────────────────────────────────
-  const registry = deps.toolRegistry ?? new ToolRegistry();
+  // writemodeChecker: pro Tool-Call ein DB-Lookup. Bei write-sensitivity
+  // erlaubt aktive Session den Auto-Bypass. danger bleibt immer approval-
+  // pflichtig (registry.ts enforct das).
+  const registry =
+    deps.toolRegistry ??
+    new ToolRegistry({
+      writemodeChecker: async (userId: string) =>
+        writemodeService.isActive({ userId }),
+    });
 
   // ─────────────────────────────────────────────────────────────────────
   // Sub-MCP-Registry + Forwarder werden HIER zentral instanziert, damit
@@ -639,6 +658,17 @@ export async function createApp(
       }),
     );
   }
+
+  // User-facing writemode routes — Bearer-gated, immer gemountet.
+  // Plan-Ref: docs/plans/active/PLAN-writemode.md (Slice 5).
+  app.route(
+    '/',
+    writemodeUserRoutes({
+      server,
+      writemode: writemodeService,
+      verifyActivation: createWritemodeActivationVerifier({ db: server.db }),
+    }),
+  );
 
   // Approvals-Routes (Bearer-gated; pro-Route via auth-Middleware).
   // SEC-001: WebAuthn-Assertion-Verifier ist in Production immer gesetzt —

@@ -68,8 +68,29 @@ export interface DispatchResult {
  */
 export { ApprovalRequiredError, ToolNotFoundError, ToolInputValidationError };
 
+export interface ToolRegistryOptions {
+  /**
+   * Optional Hook fuer Writemode-Auto-Bypass. Wird im Approval-Gate (Step 5)
+   * konsultiert: liefert `true` → Tools mit `sensitivity='write'` werden ohne
+   * ApprovalRequiredError ausgefuehrt. `sensitivity='danger'` ist NIEMALS
+   * bypass-bar.
+   *
+   * Plan-Ref: docs/plans/active/PLAN-writemode.md (Slice 5).
+   *
+   * Default: undefined → kein Auto-Bypass (legacy-Verhalten).
+   */
+  readonly writemodeChecker?: (userId: string) => Promise<boolean>;
+}
+
 export class ToolRegistry {
   private readonly tools = new Map<string, AnyTool>();
+  private readonly writemodeChecker?: (userId: string) => Promise<boolean>;
+
+  constructor(opts: ToolRegistryOptions = {}) {
+    if (opts.writemodeChecker) {
+      this.writemodeChecker = opts.writemodeChecker;
+    }
+  }
 
   /**
    * Registriere ein Tool. Wirft wenn:
@@ -155,14 +176,33 @@ export class ToolRegistry {
       throw new ToolInputValidationError(name, issues);
     }
 
-    // Step 5: Approval-Gate
+    // Step 5: Approval-Gate (mit optional Writemode-Auto-Bypass).
+    //
+    // Plan-Ref: docs/plans/active/PLAN-writemode.md.
+    //
+    // Schema:
+    //   read   → kein Gate
+    //   write  → gated, ausser bypassApproval (=approve-resume) ODER
+    //            writemodeChecker(userId) liefert true.
+    //   danger → gated, ausser bypassApproval. Writemode bypassen DANGER nicht.
+    let writemodeBypassed = false;
     if (tool.sensitivity !== 'read' && !bypassApproval) {
-      throw new ApprovalRequiredError(
-        name,
-        tool.sensitivity,
-        parsed.data,
-        tool.displayTemplate,
-      );
+      if (tool.sensitivity === 'write' && this.writemodeChecker) {
+        try {
+          writemodeBypassed = await this.writemodeChecker(ctx.userId);
+        } catch {
+          // Auto-Bypass-Lookup-Fehler → fail-closed (approval-pflichtig).
+          writemodeBypassed = false;
+        }
+      }
+      if (!writemodeBypassed) {
+        throw new ApprovalRequiredError(
+          name,
+          tool.sensitivity,
+          parsed.data,
+          tool.displayTemplate,
+        );
+      }
     }
 
     // Step 7: Execute
@@ -196,6 +236,7 @@ export class ToolRegistry {
       durationMs,
       ipi_confidence: scan.confidence,
       ipi_sanitized: scan.sanitized,
+      ...(writemodeBypassed ? { writemode_bypassed: true } : {}),
     });
 
     return {
@@ -274,6 +315,7 @@ async function safeEmitAudit(
     readonly error?: string;
     readonly ipi_confidence?: number;
     readonly ipi_sanitized?: boolean;
+    readonly writemode_bypassed?: boolean;
   },
 ): Promise<void> {
   try {
@@ -290,6 +332,7 @@ async function safeEmitAudit(
         ...(details.error ? { error: details.error } : {}),
         ...(details.ipi_confidence !== undefined ? { ipi_confidence: details.ipi_confidence } : {}),
         ...(details.ipi_sanitized !== undefined ? { ipi_sanitized: details.ipi_sanitized } : {}),
+        ...(details.writemode_bypassed ? { writemode_bypassed: true } : {}),
       },
     });
   } catch {

@@ -250,6 +250,96 @@ describe('ToolRegistry.dispatch', () => {
     });
     expect(r.result.content[0]?.text).toBe('echo: hi');
   });
+
+  // Plan-Ref: docs/plans/active/PLAN-writemode.md (Slice 5).
+  describe('writemodeChecker auto-bypass', () => {
+    it('write tool runs when writemodeChecker returns true', async () => {
+      const r2 = new ToolRegistry({
+        writemodeChecker: async () => true,
+      });
+      r2.register(writeTool());
+      const r = await r2.dispatch({
+        name: 'write.set',
+        input: { value: 'bypass-me' },
+        ctx: makeStubCtx(),
+      });
+      expect(r.result.content[0]?.text).toBe('set: bypass-me');
+    });
+
+    it('write tool gated when writemodeChecker returns false', async () => {
+      const r2 = new ToolRegistry({
+        writemodeChecker: async () => false,
+      });
+      r2.register(writeTool());
+      await expect(
+        r2.dispatch({
+          name: 'write.set',
+          input: { value: 'nope' },
+          ctx: makeStubCtx(),
+        }),
+      ).rejects.toBeInstanceOf(ApprovalRequiredError);
+    });
+
+    it('writemodeChecker error fails-closed (still gated)', async () => {
+      const r2 = new ToolRegistry({
+        writemodeChecker: async () => {
+          throw new Error('db down');
+        },
+      });
+      r2.register(writeTool());
+      await expect(
+        r2.dispatch({
+          name: 'write.set',
+          input: { value: 'fail-closed' },
+          ctx: makeStubCtx(),
+        }),
+      ).rejects.toBeInstanceOf(ApprovalRequiredError);
+    });
+
+    it('danger tool is NEVER bypassed by writemode', async () => {
+      const r2 = new ToolRegistry({
+        writemodeChecker: async () => true,
+      });
+      const dangerTool = {
+        name: 'wipe.all',
+        description: 'destructive',
+        inputSchema: z.object({}),
+        sensitivity: 'danger' as const,
+        async execute() {
+          return [{ type: 'text' as const, text: 'wiped' }];
+        },
+      };
+      r2.register(dangerTool);
+      await expect(
+        r2.dispatch({
+          name: 'wipe.all',
+          input: {},
+          ctx: makeStubCtx(),
+        }),
+      ).rejects.toBeInstanceOf(ApprovalRequiredError);
+    });
+
+    it('audit-event has writemode_bypassed=true on bypass', async () => {
+      const events: Array<{ action: string; details?: Record<string, unknown> }> = [];
+      const r2 = new ToolRegistry({
+        writemodeChecker: async () => true,
+      });
+      r2.register(writeTool());
+      const ctx = makeStubCtx({
+        audit: {
+          async emit(e) {
+            events.push({
+              action: e.action,
+              details: e.details as Record<string, unknown> | undefined,
+            });
+          },
+        },
+      });
+      await r2.dispatch({ name: 'write.set', input: { value: 'x' }, ctx });
+      const success = events.find((e) => e.action === 'tool.invoke.success');
+      expect(success?.details?.writemode_bypassed).toBe(true);
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
