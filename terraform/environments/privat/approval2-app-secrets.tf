@@ -113,6 +113,65 @@ resource "doppler_secret" "approval2_resend_api_key_fly" {
   value   = "rs_placeholder_set_via_resend_signup"
 }
 
+# ============================================================================
+# Sub-MCP-Gateway Service-Tokens (Schicht-1, approval2 <-> Worker)
+# ============================================================================
+#
+# Plan-Ref: docs/plans/active/PLAN-per-user-server-store.md
+#
+# Pre-shared Bearer-Tokens zwischen approval2 und den 3 CF-Worker-Sub-MCPs
+# (utils/gws/gcloud). Operator-Secrets — NICHT per-user. User-level OAuth
+# wandert in user_sub_mcp_config (KMS-encrypted, Phase 2).
+#
+# Beide Seiten muessen denselben Token sehen:
+#   - approval2: SUB_MCP_TOKEN_<NAME> aus Doppler-mcp-approval2/fly
+#   - Worker:    SERVICE_TOKEN aus Doppler-mcp-<name>/cloudflare (separater TF)
+#
+# Diese random_password-Resources sind die Single-Source-of-Truth.
+# Outputs unten exposen die plain-Werte fuer Cross-Repo-TF
+# (terraform_remote_state) ODER fuer einmaliges Copy-Paste.
+#
+# Rotation: terraform taint random_password.sub_mcp_token_<name> + apply.
+# Beide Seiten muessen dann neu deployed werden (fly fuer approval2 +
+# wrangler fuer den Worker).
+# ============================================================================
+
+resource "random_password" "sub_mcp_token_utils" {
+  length  = 48
+  special = false
+}
+
+resource "random_password" "sub_mcp_token_gws" {
+  length  = 48
+  special = false
+}
+
+resource "random_password" "sub_mcp_token_gcloud" {
+  length  = 48
+  special = false
+}
+
+resource "doppler_secret" "approval2_sub_mcp_token_utils" {
+  project = "mcp-approval2"
+  config  = "fly"
+  name    = "SUB_MCP_TOKEN_UTILS"
+  value   = random_password.sub_mcp_token_utils.result
+}
+
+resource "doppler_secret" "approval2_sub_mcp_token_gws" {
+  project = "mcp-approval2"
+  config  = "fly"
+  name    = "SUB_MCP_TOKEN_GWS"
+  value   = random_password.sub_mcp_token_gws.result
+}
+
+resource "doppler_secret" "approval2_sub_mcp_token_gcloud" {
+  project = "mcp-approval2"
+  config  = "fly"
+  name    = "SUB_MCP_TOKEN_GCLOUD"
+  value   = random_password.sub_mcp_token_gcloud.result
+}
+
 # ----------------------------------------------------------------------------
 # Outputs — Operator-Helpers
 # ----------------------------------------------------------------------------
@@ -120,5 +179,23 @@ resource "doppler_secret" "approval2_resend_api_key_fly" {
 output "approval2_dcr_initial_access_token" {
   description = "Sensitive: gib das an MCP-Clients die DCR machen sollen. Anzeigen via: terraform output -raw approval2_dcr_initial_access_token"
   value       = random_password.approval2_dcr_initial_access_token.result
+  sensitive   = true
+}
+
+output "sub_mcp_token_utils" {
+  description = "Sensitive: SERVICE_TOKEN fuer mcp-utils-Worker. Sync via wrangler secret put SERVICE_TOKEN."
+  value       = random_password.sub_mcp_token_utils.result
+  sensitive   = true
+}
+
+output "sub_mcp_token_gws" {
+  description = "Sensitive: SERVICE_TOKEN fuer mcp-gws-Worker."
+  value       = random_password.sub_mcp_token_gws.result
+  sensitive   = true
+}
+
+output "sub_mcp_token_gcloud" {
+  description = "Sensitive: SERVICE_TOKEN fuer mcp-gcloud-Worker."
+  value       = random_password.sub_mcp_token_gcloud.result
   sensitive   = true
 }

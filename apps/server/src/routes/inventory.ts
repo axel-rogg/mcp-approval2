@@ -195,16 +195,53 @@ function mapNative(
     });
 }
 
+/**
+ * Tools die zu mcp-knowledge2 gehoeren — per Namens-Prefix identifiziert.
+ *
+ * Hintergrund: es gibt ZWEI Code-Pfade die KC-Tools registrieren:
+ *   1. registerKcWrapperTools (statisch, in tools/kc-wrappers-index.ts) —
+ *      registriert `docs.`-, `skills.`-, `memorize.`-, `objects.`-Tools
+ *      IMMER beim Boot in die Haupt-Registry. Rufen approval2's
+ *      KnowledgeService der KC2 anpingt.
+ *   2. buildKcWrappers (dynamisch, in tools/kc_wrappers/) — fetcht aus KC2's
+ *      tools/list-Manifest. Nutzt kcWrappersCache. Fail't bei KC2-Unreachable.
+ *
+ * Beide Pfade lassen die Tools im selben native-Bucket landen. Fuer die
+ * Inventory-Trennung muessen wir per Pattern identifizieren — `kcWrappersCache`
+ * deckt nur Pfad 2 ab.
+ */
+const KC_TOOL_PREFIXES = [
+  'docs.',
+  'skills.',
+  'memorize.',
+  'objects.',
+  'knowledge.',
+] as const;
+const KC_TOOL_EXACT = new Set(['search']);
+
+function isKcTool(name: string): boolean {
+  if (KC_TOOL_EXACT.has(name)) return true;
+  for (const p of KC_TOOL_PREFIXES) {
+    if (name.startsWith(p)) return true;
+  }
+  return false;
+}
+
 function mapKnowledge2Gateway(
   registry: ToolRegistry,
   snapshot: KcWrapperSnapshot,
-): GatewayEntry | null {
-  if (snapshot.toolNames.size === 0) return null;
+): { gateway: GatewayEntry | null; kcToolNames: Set<string> } {
+  // Pattern-basierte Identifizierung (kcWrappersCache alone reicht NICHT,
+  // weil registerKcWrapperTools statisch laeuft auch ohne KC2-Manifest).
+  // Plus: wenn kcWrappersCache befuellt ist, werden die dortigen Namen mit
+  // aufgenommen — DRY-Union.
+  const kcToolNames = new Set<string>(snapshot.toolNames);
   const tools: GatewayToolEntry[] = [];
   const annotationsForAgg: Array<{ annotations?: unknown }> = [];
-  for (const name of snapshot.toolNames) {
-    const meta = registry.get(name);
-    if (!meta) continue;
+
+  for (const meta of registry.list()) {
+    if (!isKcTool(meta.name) && !snapshot.toolNames.has(meta.name)) continue;
+    kcToolNames.add(meta.name);
     tools.push({
       name: meta.name,
       description: meta.description ?? null,
@@ -212,16 +249,22 @@ function mapKnowledge2Gateway(
     });
     annotationsForAgg.push({ annotations: meta.annotations });
   }
+
+  if (tools.length === 0) {
+    return { gateway: null, kcToolNames };
+  }
+
   tools.sort((a, b) => a.name.localeCompare(b.name));
-  return {
+  const gateway: GatewayEntry = {
     name: 'knowledge2',
     displayName: snapshot.displayName ?? 'Knowledge Core (mcp-knowledge2)',
-    enabled: tools.length > 0,
+    enabled: true,
     toolsCachedAt: snapshot.refreshedAt,
     tools,
     requiredCredentials: aggregateRequiredCredentials(annotationsForAgg),
     configSchema: null,
   };
+  return { gateway, kcToolNames };
 }
 
 async function mapGateways(
@@ -263,9 +306,11 @@ export function inventoryRoutes(deps: InventoryRouteDeps): Hono<AppBindings> {
     const kc = kcSnapshot
       ? kcSnapshot()
       : ({ toolNames: new Set<string>(), refreshedAt: null } satisfies KcWrapperSnapshot);
-    const native = mapNative(registry, kc.toolNames);
+    // KC2-Gateway FIRST bauen damit wir die effektive Exclude-Liste fuer
+    // native haben (Pattern-basiert + kcWrappersCache-Union).
+    const { gateway: knowledge2Entry, kcToolNames } = mapKnowledge2Gateway(registry, kc);
+    const native = mapNative(registry, kcToolNames);
     const allSubMcpGateways = subMcpRegistry ? await mapGateways(subMcpRegistry) : [];
-    const knowledge2Entry = mapKnowledge2Gateway(registry, kc);
 
     // Per-User-Subscription-Filter (Phase 1). Wenn subscriptions verkabelt:
     // - seed catalog-rows lazy beim first read

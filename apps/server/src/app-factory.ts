@@ -542,13 +542,15 @@ export async function createApp(
       if (
         seedResult.registered.length > 0 ||
         seedResult.updated.length > 0 ||
+        seedResult.registeredWithoutToken.length > 0 ||
         seedResult.skipped.length > 0
       ) {
         // eslint-disable-next-line no-console
         console.info(
           `[mcp-approval2] sub-mcp seed: registered=${seedResult.registered.join(',') || '-'} ` +
             `updated=${seedResult.updated.join(',') || '-'} ` +
-            `skipped(no-token)=${seedResult.skipped.map((s) => s.name).join(',') || '-'}`,
+            `registered-without-token=${seedResult.registeredWithoutToken.join(',') || '-'} ` +
+            `skipped(legacy)=${seedResult.skipped.map((s) => s.name).join(',') || '-'}`,
         );
       }
       subMcpReg.invalidate();

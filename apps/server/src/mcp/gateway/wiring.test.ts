@@ -342,60 +342,62 @@ function makeStubDb(
 }
 
 describe('seedCfGateways', () => {
-  it('skips entries without env-var (fail-closed)', async () => {
-    const { db, captured } = makeStubDb([]);
+  it('registers catalog-defaults even without env-tokens (registeredWithoutToken)', async () => {
+    // Phase 2 PLAN-per-user-server-store: Catalog-Defaults werden IMMER
+    // angelegt damit "Verfuegbar"-Liste in der PWA sichtbar ist. Token-
+    // Lookup laeuft zur Laufzeit (env-fallback oder user_sub_mcp_config).
+    const { db, captured } = makeStubDb([
+      [{ name: 'gcloud', was_new: true }],
+      [{ name: 'gws', was_new: true }],
+      [{ name: 'utils', was_new: true }],
+    ]);
     const result = await seedCfGateways({ db, env: {} });
-    expect(result.registered).toEqual([]);
+    expect(result.registered.sort()).toEqual(['gcloud', 'gws', 'utils']);
+    expect(result.registeredWithoutToken.sort()).toEqual(['gcloud', 'gws', 'utils']);
     expect(result.updated).toEqual([]);
-    expect(result.skipped.map((s) => s.name).sort()).toEqual(['gcloud', 'gws', 'utils']);
-    expect(captured).toEqual([]);
+    expect(captured).toHaveLength(3);
+    // auth_config soll service_token_hash:null tragen wenn kein env-Token
+    const authConfig0 = JSON.parse(String(captured[0]?.params[3])) as { service_token_hash: string | null };
+    expect(authConfig0.service_token_hash).toBeNull();
   });
 
-  it('INSERTs new row when env-var set + reports registered', async () => {
+  it('INSERTs new row with hash when env-var set', async () => {
     const { db, captured } = makeStubDb([
-      // Only utils-token set; INSERT returns the new row (was_new=true).
+      [{ name: 'gcloud', was_new: true }],
+      [{ name: 'gws', was_new: true }],
       [{ name: 'utils', was_new: true }],
     ]);
     const result = await seedCfGateways({
       db,
       env: { SUB_MCP_TOKEN_UTILS: 'plain-utils-token' },
     });
-    expect(result.registered).toEqual(['utils']);
-    expect(result.updated).toEqual([]);
-    expect(result.skipped.map((s) => s.name).sort()).toEqual(['gcloud', 'gws']);
-    expect(captured).toHaveLength(1);
-    const sql = captured[0]?.sql ?? '';
-    expect(sql).toContain('INSERT INTO sub_mcp_servers');
-    expect(sql).toContain('ON CONFLICT (name) DO UPDATE');
-    expect(captured[0]?.params[0]).toBe('utils');
-    // Token-hash ist sha256-hex (64 chars), nicht plain-token
-    const authConfigStr = captured[0]?.params[3];
-    expect(typeof authConfigStr).toBe('string');
-    const auth = JSON.parse(String(authConfigStr)) as { service_token_hash: string };
-    expect(auth.service_token_hash).toMatch(/^[0-9a-f]{64}$/);
-    expect(auth.service_token_hash).not.toBe('plain-utils-token');
+    expect(result.registered.sort()).toEqual(['gcloud', 'gws', 'utils']);
+    // gcloud + gws ohne Token: registeredWithoutToken; utils mit Token
+    expect(result.registeredWithoutToken.sort()).toEqual(['gcloud', 'gws']);
+    expect(captured).toHaveLength(3);
+    const utilsCall = captured.find((c) => c.params[0] === 'utils');
+    expect(utilsCall).toBeDefined();
+    const utilsAuth = JSON.parse(String(utilsCall?.params[3])) as { service_token_hash: string };
+    expect(utilsAuth.service_token_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(utilsAuth.service_token_hash).not.toBe('plain-utils-token');
   });
 
   it('reports updated when ON CONFLICT branch fires with was_new=false', async () => {
-    const { db } = makeStubDb([[{ name: 'gws', was_new: false }]]);
-    const result = await seedCfGateways({
-      db,
-      env: { SUB_MCP_TOKEN_GWS: 'plain-gws-token' },
-    });
+    const { db } = makeStubDb([
+      [{ name: 'gcloud', was_new: false }],
+      [{ name: 'gws', was_new: false }],
+      [{ name: 'utils', was_new: false }],
+    ]);
+    const result = await seedCfGateways({ db, env: {} });
     expect(result.registered).toEqual([]);
-    expect(result.updated).toEqual(['gws']);
+    expect(result.updated.sort()).toEqual(['gcloud', 'gws', 'utils']);
   });
 
-  it('treats empty INSERT return as already-in-sync (no entry in either array)', async () => {
-    const { db } = makeStubDb([[]]);
-    const result = await seedCfGateways({
-      db,
-      env: { SUB_MCP_TOKEN_GCLOUD: 'plain-gcloud-token' },
-    });
+  it('treats empty INSERT return as already-in-sync', async () => {
+    const { db } = makeStubDb([[], [], []]);
+    const result = await seedCfGateways({ db, env: {} });
     expect(result.registered).toEqual([]);
     expect(result.updated).toEqual([]);
-    // gcloud token war gesetzt → kein skip, aber auch kein write (idempotent-noop)
-    expect(result.skipped.map((s) => s.name).sort()).toEqual(['gws', 'utils']);
   });
 
   it('DEFAULT_CF_GATEWAYS contains the three expected entries with correct URLs', () => {

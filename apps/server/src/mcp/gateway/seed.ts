@@ -74,6 +74,13 @@ export interface SeedCfGatewaysArgs {
 export interface SeedResult {
   readonly registered: ReadonlyArray<string>;
   readonly updated: ReadonlyArray<string>;
+  /**
+   * Server die ohne env-Token registriert wurden (auth_config leer).
+   * Forward-Calls fail'n bis ein Token via env oder user_sub_mcp_config
+   * verfuegbar ist. Catalog-Default-Sichtbarkeit ist trotzdem da.
+   */
+  readonly registeredWithoutToken: ReadonlyArray<string>;
+  /** @deprecated kept fuer Backwards-Compat — leer wenn 'no_token'-Pfad neu */
   readonly skipped: ReadonlyArray<{ name: string; reason: 'no_token' }>;
 }
 
@@ -92,17 +99,23 @@ export async function seedCfGateways(args: SeedCfGatewaysArgs): Promise<SeedResu
   const now = args.now ?? (() => Date.now());
   const registered: string[] = [];
   const updated: string[] = [];
+  const registeredWithoutToken: string[] = [];
   const skipped: Array<{ name: string; reason: 'no_token' }> = [];
   const raw = args.db.unsafe('sub_mcp_seed_cf_gateways');
 
   for (const gw of gateways) {
     const plainToken = env[gw.serviceTokenEnvVar];
-    if (!plainToken || plainToken.length === 0) {
-      skipped.push({ name: gw.name, reason: 'no_token' });
-      continue;
+    // Catalog-Defaults werden IMMER registriert (auch ohne Token) damit
+    // die "Verfuegbar"-Liste im Tools-Tab sichtbar ist. Forward-Calls fail'n
+    // bis ein Token via env ODER user_sub_mcp_config verfuegbar wird —
+    // Token-Lookup laeuft zur Laufzeit ueber DEFAULT_TOKEN_RESOLVER.
+    const tokenHash = plainToken && plainToken.length > 0 ? sha256Hex(plainToken) : null;
+    const authConfig = JSON.stringify(
+      tokenHash ? { service_token_hash: tokenHash } : { service_token_hash: null },
+    );
+    if (!tokenHash) {
+      registeredWithoutToken.push(gw.name);
     }
-    const tokenHash = sha256Hex(plainToken);
-    const authConfig = JSON.stringify({ service_token_hash: tokenHash });
     const ts = now();
     // INSERT ON CONFLICT UPDATE — idempotent. Bringt Hash + URL auf env-Stand.
     // `enabled` wird beim UPDATE NICHT geflippt, damit ein manueller toggle via
@@ -144,5 +157,5 @@ export async function seedCfGateways(args: SeedCfGatewaysArgs): Promise<SeedResu
     }
   }
 
-  return { registered, updated, skipped };
+  return { registered, updated, registeredWithoutToken, skipped };
 }
