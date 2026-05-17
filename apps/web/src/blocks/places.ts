@@ -5,7 +5,7 @@
  * Actions: addPlace, updatePlace, removePlace, clearAll
  */
 import type { BlockRenderer, RenderArgs } from './types.js';
-import { el, safeArray, safeString } from './types.js';
+import { el, safeArray, safeString, isSafeUrl } from './types.js';
 
 interface PlaceEntry {
   readonly id: string;
@@ -67,7 +67,26 @@ export const placesRenderer: BlockRenderer<PlacesState> = {
 
     const ul = el('ul', { class: 'block-places-items' });
     for (const p of items) {
-      const url = safeString(p.url ?? undefined, '') || mapsUrl(p.address);
+      // SEC-021: validate `p.url` (App-State, indirekt aus Tool-Input).
+      // Per Defense-in-Depth pruefen WIR explizit zusaetzlich zum
+      // el()-Helper, damit der Fallback `mapsUrl(address)` greift statt
+      // einem kaputten href="#".
+      const raw = safeString(p.url ?? undefined, '');
+      let url: string;
+      if (raw && isSafeUrl(raw)) {
+        try {
+          const parsed = new URL(raw);
+          if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+            url = parsed.toString();
+          } else {
+            url = mapsUrl(p.address);
+          }
+        } catch {
+          url = mapsUrl(p.address);
+        }
+      } else {
+        url = mapsUrl(p.address);
+      }
       ul.appendChild(
         el('li', { class: 'block-places-item' }, [
           el('div', { class: 'block-places-item-main' }, [

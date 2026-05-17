@@ -321,6 +321,10 @@ Findings sind innerhalb der Severity nach **Schweregrad/Wahrscheinlichkeit** sor
   } catch { /* fall through */ }
   ```
   Gilt für jeden `setAttribute('href', userValue)`-Pfad. Plus: `el()`-Helper hardenen — `if (k === 'href' && !/^https?:/i.test(String(v))) continue;`.
+- **Status:** ✅ FIXED 2026-05-17 (Phase B) — beide Layer:
+  1. [el() in blocks/types.ts](../../apps/web/src/blocks/types.ts) erweitert um `isSafeUrl()`-Helper + URL-Attribut-Whitelist (`href`, `src`, `formaction`, `action`, `srcset`, `xlink:href`). Dangerous Schemes (`javascript:`, `data:`, `vbscript:`, `file:`, `blob:`, `about:`, `mocha:` — auch URL-encoded via decodeURIComponent-Roundtrip) werden silently auf `#` rewritten + console.warn. Damit ist jeder zukuenftige Renderer per Default safe.
+  2. [places.ts](../../apps/web/src/blocks/places.ts) zusaetzlich Defense-in-Depth: validiert `p.url` explicit via `isSafeUrl` + URL-parsing-check, faellt bei unsafe-URL auf `mapsUrl(p.address)` zurueck (statt kaputtem `#`-href).
+  11 neue Tests in [blocks/types.test.ts](../../apps/web/src/blocks/types.test.ts).
 
 ### SEC-022 — PWA + Server: keine CSRF-Middleware auf state-changing Routes
 

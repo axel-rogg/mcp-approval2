@@ -15,6 +15,7 @@
  *   PATCH  /v1/apps/:id/layout      — update_layout
  */
 import { ApiError } from './api.js';
+import { authedFetch } from './auth-token.js';
 
 export interface LayoutComponent {
   readonly id: string;
@@ -138,14 +139,16 @@ export function createApiAppsClient(baseUrl?: string): ApiAppsClient {
   ): Promise<T> {
     const init: RequestInit = {
       method: opts.method ?? 'GET',
-      credentials: 'include',
       headers: { accept: 'application/json' },
     };
     if (opts.body !== undefined) {
       init.headers = { ...init.headers, 'content-type': 'application/json' };
       init.body = JSON.stringify(opts.body);
     }
-    const res = await fetch(buildUrl(base, path, opts.query), init);
+    // authedFetch haengt Authorization: Bearer <token> dran, macht bei 401
+    // einen Refresh-Versuch + Retry. Token kommt aus shared auth-token-store
+    // (befuellt von api.ts beim ersten /auth/refresh).
+    const res = await authedFetch(buildUrl(base, path, opts.query), init, base);
     return parseJson<T>(res);
   }
 
