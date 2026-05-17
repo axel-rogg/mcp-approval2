@@ -141,7 +141,10 @@ export function appsRoutes(deps: AppsRouteDeps): Hono<AppBindings> {
     const principal = c.get('user');
     if (!principal) throw HttpError.unauthorized();
     const q = c.req.valid('query');
-    const args: Parameters<AppsService['listApps']>[0] = { userId: principal.userId };
+    const args: Parameters<AppsService['listApps']>[0] = {
+      userId: principal.userId,
+      userEmail: principal.email,
+    };
     if (q.type !== undefined) (args as { type?: string }).type = q.type;
     if (q.limit !== undefined) (args as { limit?: number }).limit = q.limit;
     const items = await apps.listApps(args);
@@ -154,7 +157,11 @@ export function appsRoutes(deps: AppsRouteDeps): Hono<AppBindings> {
     if (!principal) throw HttpError.unauthorized();
     const id = c.req.param('id');
     try {
-      const read = await apps.readApp({ userId: principal.userId, id });
+      const read = await apps.readApp({
+        userId: principal.userId,
+        userEmail: principal.email,
+        id,
+      });
       return c.json({ app: read.app, state: read.state });
     } catch (e) {
       if (e instanceof AppsServiceError) mapAppsError(e);

@@ -106,7 +106,11 @@ export interface AppsService {
     summary?: string;
   }): Promise<AppInstance>;
 
-  readApp<TState = unknown>(args: { userId: string; id: string }): Promise<AppWithState<TState>>;
+  readApp<TState = unknown>(args: {
+    userId: string;
+    userEmail?: string;
+    id: string;
+  }): Promise<AppWithState<TState>>;
 
   updateState(args: {
     userId: string;
@@ -115,7 +119,12 @@ export interface AppsService {
     expectedVersion: number;
   }): Promise<AppInstance>;
 
-  listApps(args: { userId: string; type?: string; limit?: number }): Promise<AppInstance[]>;
+  listApps(args: {
+    userId: string;
+    userEmail?: string;
+    type?: string;
+    limit?: number;
+  }): Promise<AppInstance[]>;
 
   deleteApp(args: { userId: string; id: string }): Promise<void>;
 
@@ -281,10 +290,18 @@ class AppsServiceImpl implements AppsService {
     return toAppInstance(created);
   }
 
-  async readApp<TState = unknown>(args: { userId: string; id: string }): Promise<AppWithState<TState>> {
+  async readApp<TState = unknown>(args: {
+    userId: string;
+    userEmail?: string;
+    id: string;
+  }): Promise<AppWithState<TState>> {
     let obj: KnowledgeObject;
     try {
-      obj = await this.knowledge.getObject({ id: args.id, userId: args.userId });
+      obj = await this.knowledge.getObject({
+        id: args.id,
+        userId: args.userId,
+        ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      });
     } catch (e) {
       throw mapNotFound(e, args.id);
     }
@@ -294,15 +311,15 @@ class AppsServiceImpl implements AppsService {
         `object ${args.id} is not an app (subtype=${obj.subtype ?? 'null'})`,
       );
     }
-    // Fetch body explicitly via adapter call expandBody.
-    // KnowledgeService.getObject doesn't accept expandBody — we work around by
-    // reading body from the same getObject (KC returns body when ?expand=body).
-    // For tests, the in-memory adapter respects expandBody flag too.
-    // We re-fetch with expand if needed.
     if (!obj.body) {
-      const adapter = (this.knowledge as unknown as { adapter: { getObject: (a: { id: string; userId: string; expandBody: boolean }) => Promise<KnowledgeObject> } }).adapter;
+      const adapter = (this.knowledge as unknown as { adapter: { getObject: (a: { id: string; userId: string; userEmail?: string; expandBody: boolean }) => Promise<KnowledgeObject> } }).adapter;
       if (adapter && typeof adapter.getObject === 'function') {
-        obj = await adapter.getObject({ id: args.id, userId: args.userId, expandBody: true });
+        obj = await adapter.getObject({
+          id: args.id,
+          userId: args.userId,
+          ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+          expandBody: true,
+        });
       }
     }
     const bodyB64 = obj.body ?? null;
@@ -377,9 +394,15 @@ class AppsServiceImpl implements AppsService {
     return toAppInstance(updated);
   }
 
-  async listApps(args: { userId: string; type?: string; limit?: number }): Promise<AppInstance[]> {
+  async listApps(args: {
+    userId: string;
+    userEmail?: string;
+    type?: string;
+    limit?: number;
+  }): Promise<AppInstance[]> {
     const listArgs: Parameters<KnowledgeService['listObjects']>[0] = {
       userId: args.userId,
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
     };
     // Bei explizitem appType → exakte Subtype-Anfrage (`app:<typ>`). Ohne
     // appType → server-side prefix-match via `subtypePrefix: 'app:'` (index-

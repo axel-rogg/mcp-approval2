@@ -1,13 +1,14 @@
 /**
- * Apps-Tab — list + minimal create form.
+ * Apps-Tab — read-only Liste der vom Agent erzeugten Apps.
  *
  * Routes:
- *   #/apps        → list with "+ New" form
+ *   #/apps        → list (click → detail)
  *   #/apps/:id    → detail (rendered via apps-detail.ts)
  *
- * Multi-User-Hinweis: ApiAppsClient ist same-origin und bringt das Session-
- * Cookie mit (`credentials: 'include'`). Server-side filtert mcp-knowledge2
- * per `sub=userId` aus dem JWT.
+ * Apps werden NUR vom AI-Agent erstellt (via MCP `apps.create`-Tool) — die
+ * PWA bietet kein Create-Form. UX-Entscheidung 2026-05-17: User triggert
+ * App-Generierung per Conversation ("build me a meditation tracker"),
+ * nicht per UI-Form.
  */
 import { ApiError } from './api.js';
 import type { ApiClient, Session } from './api.js';
@@ -48,63 +49,14 @@ function appCard(app: AppInstance, now: number): HTMLElement {
 
 function emptyState(): HTMLElement {
   return el('div', { class: 'card empty-state' }, [
-    el('h2', { text: 'No apps yet' }),
+    el('h2', { text: 'Noch keine Apps' }),
     el('p', {
       class: 'muted',
-      text: 'Apps are usually created via Claude/MCP ("build me a meditation tracker"). You can also create one manually below.',
+      text:
+        'Apps werden vom AI-Agent erzeugt (z.B. via Claude/MCP: "bau mir einen Meditations-Tracker"). ' +
+        'Sobald welche existieren, erscheinen sie hier.',
     }),
   ]);
-}
-
-function createForm(api: ApiAppsClient, reload: () => Promise<void>): HTMLElement {
-  const typeInput = el('input', {
-    type: 'text',
-    placeholder: 'Block type (e.g. counter, list, timer)',
-    required: true,
-    maxlength: 64,
-  }) as HTMLInputElement;
-  const titleInput = el('input', {
-    type: 'text',
-    placeholder: 'Title (optional)',
-    maxlength: 200,
-  }) as HTMLInputElement;
-  const statusEl = el('span', { class: 'form-status muted small' });
-  const submitBtn = el('button', { type: 'submit', class: 'btn', text: 'Create' });
-
-  const form = el('form', { class: 'form card', id: 'create-app-form' }, [
-    el('h3', { text: 'Create a new app' }),
-    el('div', { class: 'field' }, [el('label', { text: 'Block type' }), typeInput]),
-    el('div', { class: 'field' }, [el('label', { text: 'Title' }), titleInput]),
-    el('div', { class: 'form-actions row' }, [submitBtn, statusEl]),
-  ]) as HTMLFormElement;
-
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const appType = typeInput.value.trim();
-    if (!appType) return;
-    submitBtn.disabled = true;
-    statusEl.textContent = 'Creating…';
-    statusEl.className = 'form-status muted small';
-    try {
-      const args: { appType: string; title?: string } = { appType };
-      const title = titleInput.value.trim();
-      if (title) args.title = title;
-      await api.createApp(args);
-      typeInput.value = '';
-      titleInput.value = '';
-      statusEl.textContent = 'OK';
-      statusEl.className = 'form-status ok small';
-      await reload();
-    } catch (err) {
-      const msg = err instanceof ApiError ? `${err.code}: ${err.message}` : String(err);
-      statusEl.textContent = msg;
-      statusEl.className = 'form-status err small';
-    } finally {
-      submitBtn.disabled = false;
-    }
-  });
-
-  return form;
 }
 
 export async function renderAppsTab(
@@ -118,16 +70,15 @@ export async function renderAppsTab(
 
   const main = el('main', { class: 'apps-tab' });
   const listHost = el('ul', { class: 'apps-list' });
-  const formHost = el('div');
 
   async function reload(): Promise<void> {
-    listHost.replaceChildren(el('p', { class: 'muted', text: 'Loading…' }));
+    listHost.replaceChildren(el('p', { class: 'muted', text: 'Lade…' }));
     let apps: AppInstance[];
     try {
       apps = await api.listApps();
     } catch (err) {
       const msg = err instanceof ApiError ? `${err.code}: ${err.message}` : String(err);
-      listHost.replaceChildren(el('p', { class: 'err', text: 'Failed to load apps: ' + msg }));
+      listHost.replaceChildren(el('p', { class: 'err', text: 'Apps konnten nicht geladen werden: ' + msg }));
       return;
     }
     if (apps.length === 0) {
@@ -139,11 +90,8 @@ export async function renderAppsTab(
     for (const a of apps) listHost.appendChild(appCard(a, now));
   }
 
-  formHost.appendChild(createForm(api, reload));
-
   main.appendChild(el('header', { class: 'apps-tab-header' }, [el('h1', { text: 'Apps' })]));
   main.appendChild(listHost);
-  main.appendChild(formHost);
 
   root.appendChild(main);
   await reload();
