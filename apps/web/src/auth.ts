@@ -21,6 +21,7 @@ import {
   bytesToB64Url,
   b64UrlToBytes,
 } from './webauthn-prf.js';
+import { authedFetch } from './auth-token.js';
 
 let cachedSession: Session | null = null;
 let sessionFetched = false;
@@ -131,48 +132,83 @@ export async function logout(api: ApiClient): Promise<void> {
 }
 
 /**
- * Triggert WebAuthn-Passkey-Enrollment (1 Passkey Pflicht, PRF aktiv).
+ * Triggert WebAuthn-Passkey-Enrollment (PRF-Extension).
  *
  * Flow:
- *   1. POST /auth/webauthn/enroll/start → { creationOptionsJSON }
+ *   1. POST /auth/webauthn/enroll/begin (Bearer) → { challengeId, options, prfSalt }
  *   2. navigator.credentials.create() mit PRF-Extension
- *   3. POST /auth/webauthn/enroll/finish → bestaetigt Server-side
+ *   3. POST /auth/webauthn/enroll/finish (Bearer) → { credentialId, prfSupported, transports }
  *
  * Returnt `prfSupported` damit der Caller dem User signalisieren kann ob
  * Credentials mit PRF-Layer erstellt werden koennen.
+ *
+ * 2026-05-17 Fix: Endpoint heisst `/begin` (vorher falsch `/start`); Bearer-
+ * Auth via authedFetch; Request/Response-Shapes an Server-Schema angepasst
+ * ({challengeId, options, prfSalt} statt {creationOptionsJSON}).
  */
 export async function enrollPasskey(): Promise<{ prfSupported: boolean }> {
-  // 1. Start
-  const startRes = await fetch('/auth/webauthn/enroll/start', {
-    method: 'POST',
-    credentials: 'include',
-    headers: { accept: 'application/json' },
-  });
-  if (!startRes.ok) {
-    throw new Error(`Passkey-enrollment start failed: HTTP ${startRes.status}`);
+  const baseUrl = window.location.origin;
+
+  // 1. Begin
+  const beginRes = await authedFetch(
+    new URL('/auth/webauthn/enroll/begin', baseUrl).toString(),
+    { method: 'POST', headers: { accept: 'application/json' } },
+    baseUrl,
+  );
+  if (!beginRes.ok) {
+    let body = '';
+    try {
+      body = await beginRes.text();
+    } catch {
+      /* ignore */
+    }
+    throw new Error(
+      `Passkey-enrollment begin failed: HTTP ${beginRes.status}${body ? ' — ' + body.slice(0, 200) : ''}`,
+    );
   }
-  const startBody = (await startRes.json()) as {
-    creationOptionsJSON: PublicKeyCredentialCreationOptionsJSON;
+  const beginBody = (await beginRes.json()) as {
+    challengeId: string;
+    options: PublicKeyCredentialCreationOptionsJSON;
+    prfSalt: string;
   };
-  const options = parseCreationOptions(startBody.creationOptionsJSON);
+  const options = parseCreationOptions(beginBody.options);
 
   // 2. WebAuthn create + PRF
   const result = await enrollPasskeyWithPrf({ options });
 
-  // 3. Finish
-  const finishRes = await fetch('/auth/webauthn/enroll/finish', {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'content-type': 'application/json', accept: 'application/json' },
-    body: JSON.stringify({
-      credentialIdB64: bytesToB64Url(result.credentialId),
-      clientDataJsonB64: bytesToB64Url(new Uint8Array(result.attestation.clientDataJSON)),
-      attestationObjectB64: bytesToB64Url(new Uint8Array(result.attestation.attestationObject)),
-      prfSupported: result.prfSupported,
-    }),
-  });
+  // 3. Finish — Server erwartet { challengeId, response: <RegistrationResponseJSON> }
+  const finishRes = await authedFetch(
+    new URL('/auth/webauthn/enroll/finish', baseUrl).toString(),
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify({
+        challengeId: beginBody.challengeId,
+        response: {
+          id: bytesToB64Url(result.credentialId),
+          rawId: bytesToB64Url(result.credentialId),
+          type: 'public-key',
+          response: {
+            clientDataJSON: bytesToB64Url(new Uint8Array(result.attestation.clientDataJSON)),
+            attestationObject: bytesToB64Url(new Uint8Array(result.attestation.attestationObject)),
+            transports: result.attestation.getTransports?.() ?? [],
+          },
+          clientExtensionResults: result.credential.getClientExtensionResults(),
+        },
+      }),
+    },
+    baseUrl,
+  );
   if (!finishRes.ok) {
-    throw new Error(`Passkey-enrollment finish failed: HTTP ${finishRes.status}`);
+    let body = '';
+    try {
+      body = await finishRes.text();
+    } catch {
+      /* ignore */
+    }
+    throw new Error(
+      `Passkey-enrollment finish failed: HTTP ${finishRes.status}${body ? ' — ' + body.slice(0, 200) : ''}`,
+    );
   }
 
   return { prfSupported: result.prfSupported };

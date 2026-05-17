@@ -53,9 +53,9 @@ const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
  *   finden.
  * - `public_key`: COSE-encoded public-key bytes. Verification via @simplewebauthn/server
  *   oder eigener COSE-Parser.
- * - `sign_count`: WebAuthn-Spec counter. MUSS bei jedem Login monoton steigen
- *   (Clone-Detection). Wenn das nicht der Fall ist: Authenticator wurde geklont
- *   → Credential markieren + Audit-Log.
+ * - `counter` (Migration 0015 renamed `sign_count` → `counter` damit es zum
+ *   Runtime-Code passt): WebAuthn-Spec sign-counter. MUSS bei jedem Login
+ *   monoton steigen (Clone-Detection).
  * - `transports`: JSON-Array von Hint-Werten ('usb', 'nfc', 'ble', 'internal',
  *   'hybrid'). Wird bei allowCredentials-Listen verwendet.
  * - `prf_supported`: aus Register-Response. TRUE wenn `extensions.prf.results
@@ -75,7 +75,7 @@ export const webauthnCredentialsTable = pgTable(
     userId: uuid('user_id').notNull(),
     credentialId: bytea('credential_id').notNull(),
     publicKey: bytea('public_key').notNull(),
-    signCount: integer('sign_count').notNull().default(0),
+    counter: integer('counter').notNull().default(0),
     transports: jsonb('transports').$type<string[]>().default([]),
     prfSupported: boolean('prf_supported').notNull().default(false),
     prfCredentialId: bytea('prf_credential_id'),
