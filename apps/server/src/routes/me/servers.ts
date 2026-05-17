@@ -372,21 +372,33 @@ export function myServersRoutes(deps: MyServersRouteDeps): Hono<AppBindings> {
         if (!user) throw HttpError.unauthorized('authentication required');
         const name = c.req.param('name');
         const body = c.req.valid('json');
-        // Debug-Diagnostik: PWA sendet `redirectUri` mit. Wenn `#` drin →
-        // alter Bundle, der User wuerde gleich beim GitHub-Authorize ein
-        // "redirect_uri not associated" sehen. Loggen damit wir's nachher
-        // grep'en koennen.
+        // SERVER-SIDE redirectUri: ignoriert was der PWA-Bundle schickt und
+        // baut die kanonische Bridge-URL aus den Request-Origin-Headern.
+        //
+        // Warum: ein veralteter SW-Cache im User-Browser sendet sonst ggf.
+        // einen Hash-Pfad (RFC-incompliant), GitHub-OAuth rejected →
+        // 'redirect_uri not associated'. Mit Server-Seitig-Bau ist es egal
+        // was der Client liefert; Bridge-URL ist immer korrekt.
+        //
+        // Body-redirectUri bleibt aus Schema-Compat-Gruenden im Schema —
+        // wir loggen ihn als Diagnostic, nutzen ihn aber nicht.
+        const fwdProto = c.req.header('x-forwarded-proto') ?? 'https';
+        const fwdHost = c.req.header('x-forwarded-host') ?? c.req.header('host') ?? '';
+        const origin = `${fwdProto}://${fwdHost}`;
+        const canonicalRedirectUri = `${origin}/oauth/sub-mcp-callback?name=${encodeURIComponent(name)}`;
         logger.info(
           {
             event: 'oauth.start',
             server: name,
             userId: user.userId,
-            redirectUri: body.redirectUri,
-            hasHashFragment: body.redirectUri.includes('#'),
+            clientRedirectUri: body.redirectUri,
+            clientHadHashFragment: body.redirectUri.includes('#'),
+            canonicalRedirectUri,
+            overrode: body.redirectUri !== canonicalRedirectUri,
           },
           'sub-mcp oauth-start',
         );
-        const result = await oauthSvc.start(user.userId, name, body.redirectUri);
+        const result = await oauthSvc.start(user.userId, name, canonicalRedirectUri);
         return c.json(result);
       },
     );
