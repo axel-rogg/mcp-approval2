@@ -99,6 +99,11 @@ function makeConfig(): AppConfig {
     RP_ORIGIN: 'http://localhost:8787',
     INVITE_TTL_SEC: 24 * 60 * 60,
     RECOVERY_TTL_SEC: 24 * 60 * 60,
+    ALLOWED_ORIGINS: [],
+    COOKIE_DOMAIN: '',
+    GOOGLE_ALLOWED_AUDIENCES: [],
+    DCR_OPEN: true,
+    DCR_ALLOWED_REDIRECT_HOSTS: [],
   };
 }
 

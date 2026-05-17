@@ -198,28 +198,40 @@ export function loadConfig(env: NodeJS.ProcessEnv | Record<string, string | unde
 
 /**
  * Liest den Origin aus einem HTTP-Request (Hono / Fetch-Request kompatibel)
- * und prueft ihn gegen `config.ALLOWED_ORIGINS`. Fallback auf `config.RP_ORIGIN`
- * wenn:
+ * und prueft ihn gegen `config.ALLOWED_ORIGINS` + `config.RP_ORIGIN`. Fallback
+ * auf `config.RP_ORIGIN` wenn:
  *   - der Header fehlt,
  *   - der Origin nicht in der Allowlist ist (Anti-Host-Header-Spoofing),
- *   - `ALLOWED_ORIGINS` leer ist (Single-Domain-Setup).
+ *   - `ALLOWED_ORIGINS` leer ist UND der Origin nicht gleich `RP_ORIGIN`.
+ *
+ * SEC-003: vor diesem Fix wurde jeder eingehende `Origin`-Header durchgewunken,
+ * sobald `ALLOWED_ORIGINS` leer war. Damit konnte ein Angreifer einen
+ * gefaelschten Origin-Header schicken und WebAuthn-Verify-Calls wuerden
+ * gegen seinen Wunsch-Origin laufen. Wir defaulten jetzt fail-CLOSED: leere
+ * Allowlist bedeutet nur `RP_ORIGIN` ist erlaubt, alle anderen Header werden
+ * ignoriert und der Fallback `RP_ORIGIN` zurueckgegeben.
  */
 export function resolveOrigin(
   request: { headers: { get(name: string): string | null } },
   config: AppConfig,
 ): string {
-  const allow = config.ALLOWED_ORIGINS;
+  // Wir bauen die effektive Allowlist immer mit RP_ORIGIN als Pflicht-
+  // Eintrag. Damit ist:
+  //   ALLOWED_ORIGINS leer → nur RP_ORIGIN passiert den Check.
+  //   ALLOWED_ORIGINS gesetzt → RP_ORIGIN + extra Origins erlaubt.
+  // Dedup ueber Set damit RP_ORIGIN nicht doppelt landet.
+  const allow = new Set<string>([config.RP_ORIGIN, ...config.ALLOWED_ORIGINS]);
   // Bevorzugt `Origin` (browser-set, von WebAuthn benutzt); Fallback auf
   // `Host` + Protokoll-Annahme. Wir greifen NICHT auf `request.url` zurueck —
   // hinter Caddy zeigt das auf den internen Container-Port.
   const originHdr = request.headers.get('origin');
-  if (originHdr && (allow.length === 0 || allow.includes(originHdr))) {
+  if (originHdr && allow.has(originHdr)) {
     return originHdr;
   }
   const host = request.headers.get('host');
   if (host) {
     const candidate = `https://${host}`;
-    if (allow.includes(candidate)) {
+    if (allow.has(candidate)) {
       return candidate;
     }
   }

@@ -161,6 +161,7 @@ Findings sind innerhalb der Severity nach **Schweregrad/Wahrscheinlichkeit** sor
 - **File:** [apps/server/src/lib/config.ts:172-184](../../apps/server/src/lib/config.ts#L172-L184)
 - Default-CSV ist leer. Prod-`fly.toml:81` setzt die Liste, also nur bei Misconfig kritisch. Aber: Defaults sollten fail-closed sein.
 - **Fix:** Bei leerer Allowlist nur `config.RP_ORIGIN` akzeptieren, nie beliebigen Header echoen.
+- **Status:** ✅ FIXED 2026-05-17 (Phase B) — `resolveOrigin` baut die effektive Allowlist jetzt mit `new Set([config.RP_ORIGIN, ...config.ALLOWED_ORIGINS])`. Damit ist RP_ORIGIN immer Pflicht-Eintrag; leere `ALLOWED_ORIGINS` heisst nur RP_ORIGIN passiert, alle anderen Header werden ignoriert und der Fallback `RP_ORIGIN` zurueckgegeben. 8 neue Tests in [lib/config.test.ts](../../apps/server/src/lib/config.test.ts).
 
 ### SEC-008 — Bootstrap-Race: `SELECT count(*)` + `INSERT` ist nicht atomar
 
