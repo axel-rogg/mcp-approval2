@@ -75,6 +75,12 @@ export interface InventoryGateway {
   readonly toolsCachedAt: number | null;
   readonly tools: ReadonlyArray<InventoryGatewayTool>;
   readonly requiredCredentials: ReadonlyArray<InventoryRequiredCredential>;
+  /** Phase 2: pro-Server config-schema vom Worker via tools/list._meta. */
+  readonly configSchema?: Record<string, unknown> | null;
+}
+
+export interface ServerConfigResponse {
+  readonly fields: Record<string, { value: string; isSecret: boolean; updatedAt: number }>;
 }
 
 export interface InventoryAvailableServer {
@@ -136,6 +142,12 @@ export interface ApiClient {
    * PATCH /v1/me/servers/:name/subscription
    */
   setServerSubscription(name: string, enabled: boolean): Promise<void>;
+  /** Phase 2: GET /v1/me/servers/:name/config */
+  getServerConfig(name: string): Promise<ServerConfigResponse>;
+  /** Phase 2: PUT /v1/me/servers/:name/config/:key */
+  setServerConfig(name: string, key: string, value: string): Promise<void>;
+  /** Phase 2: DELETE /v1/me/servers/:name/config/:key */
+  deleteServerConfig(name: string, key: string): Promise<void>;
 
   // Credentials
   listCredentials(): Promise<CredentialMeta[]>;
@@ -393,6 +405,26 @@ export function createApiClient(baseUrl?: string): ApiClient {
         method: 'PATCH',
         body: { enabled },
       });
+    },
+
+    async getServerConfig(name: string) {
+      return await request<ServerConfigResponse>(
+        `/v1/me/servers/${encodeURIComponent(name)}/config`,
+      );
+    },
+
+    async setServerConfig(name: string, key: string, value: string) {
+      await request<void>(
+        `/v1/me/servers/${encodeURIComponent(name)}/config/${encodeURIComponent(key)}`,
+        { method: 'PUT', body: { value } },
+      );
+    },
+
+    async deleteServerConfig(name: string, key: string) {
+      await request<void>(
+        `/v1/me/servers/${encodeURIComponent(name)}/config/${encodeURIComponent(key)}`,
+        { method: 'DELETE' },
+      );
     },
 
     async listCredentials() {

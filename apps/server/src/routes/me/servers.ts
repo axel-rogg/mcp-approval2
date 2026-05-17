@@ -22,11 +22,17 @@ import { HttpError } from '../../lib/errors.js';
 import { auth } from '../../middleware/auth.js';
 import type { SubMcpRegistry } from '../../mcp/gateway/registry.js';
 import type { UserSubscriptionsService } from '../../services/user-subscriptions.js';
+import type { UserServerConfigService } from '../../services/user-server-config.js';
 
 export interface MyServersRouteDeps {
   readonly server: ServerContext;
   readonly registry: SubMcpRegistry;
   readonly subscriptions: UserSubscriptionsService;
+  /**
+   * Per-User-Server-Config Service (Phase 2). Wenn nicht gesetzt, sind die
+   * config-Endpoints nicht verfuegbar (404).
+   */
+  readonly config?: UserServerConfigService;
 }
 
 interface MyServerEntry {
@@ -53,6 +59,14 @@ const SubscriptionPatchBody = z
     enabled: z.boolean(),
   })
   .strict();
+
+const ConfigPutBody = z
+  .object({
+    value: z.string().max(64 * 1024), // 64 KB hard-cap pro config-Wert
+  })
+  .strict();
+
+const CONFIG_KEY_RE = /^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/;
 
 export function myServersRoutes(deps: MyServersRouteDeps): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
@@ -131,6 +145,71 @@ export function myServersRoutes(deps: MyServersRouteDeps): Hono<AppBindings> {
       return c.json({ name, enabled: body.enabled });
     },
   );
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Phase 2: Per-User-Server-Config (KMS-encrypted)
+  // ─────────────────────────────────────────────────────────────────────
+  // GET    /v1/me/servers/:name/config        — alle keys + non-secret values
+  // PUT    /v1/me/servers/:name/config/:key   — set encrypted value
+  // DELETE /v1/me/servers/:name/config/:key   — entfernen
+  //
+  // Konvention: keys mit `_`-Prefix sind secret (Server returnt nur metadata,
+  // value als '***'). Plain-keys liefern den decrypted Wert.
+  if (deps.config) {
+    const cfgSvc = deps.config;
+
+    app.get('/v1/me/servers/:name/config', guard, async (c) => {
+      const user = c.get('user');
+      if (!user) throw HttpError.unauthorized('authentication required');
+      const name = c.req.param('name');
+      const keys = await cfgSvc.listKeys(user.userId, name);
+      // Plain-Werte fetchen, secrets als '***' maskieren.
+      const fields: Record<string, { value: string; isSecret: boolean; updatedAt: number }> = {};
+      for (const k of keys) {
+        if (k.isSecret) {
+          fields[k.configKey] = { value: '***', isSecret: true, updatedAt: k.updatedAt };
+        } else {
+          const full = await cfgSvc.get(user.userId, name, k.configKey);
+          fields[k.configKey] = { value: full.value, isSecret: false, updatedAt: k.updatedAt };
+        }
+      }
+      return c.json({ fields });
+    });
+
+    app.put(
+      '/v1/me/servers/:name/config/:key',
+      guard,
+      zValidator('json', ConfigPutBody),
+      async (c) => {
+        const user = c.get('user');
+        if (!user) throw HttpError.unauthorized('authentication required');
+        const name = c.req.param('name');
+        const key = c.req.param('key');
+        if (!CONFIG_KEY_RE.test(key)) {
+          throw HttpError.badRequest('invalid_request', `invalid config key '${key}'`);
+        }
+        const body = c.req.valid('json');
+        const entry = await cfgSvc.set(user.userId, name, key, body.value);
+        return c.json({
+          configKey: entry.configKey,
+          isSecret: entry.isSecret,
+          updatedAt: entry.updatedAt,
+        });
+      },
+    );
+
+    app.delete('/v1/me/servers/:name/config/:key', guard, async (c) => {
+      const user = c.get('user');
+      if (!user) throw HttpError.unauthorized('authentication required');
+      const name = c.req.param('name');
+      const key = c.req.param('key');
+      if (!CONFIG_KEY_RE.test(key)) {
+        throw HttpError.badRequest('invalid_request', `invalid config key '${key}'`);
+      }
+      await cfgSvc.delete(user.userId, name, key);
+      return c.body(null, 204);
+    });
+  }
 
   return app;
 }

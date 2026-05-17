@@ -62,8 +62,14 @@ export async function refreshSubMcpToolCache(args: RefreshToolCacheArgs): Promis
   const results: DiscoveryResult[] = [];
   for (const cfg of filtered) {
     try {
-      const tools = await fetchToolsList(cfg, fetchImpl, timeoutMs);
+      const { tools, meta } = await fetchToolsListWithMeta(cfg, fetchImpl, timeoutMs);
       await args.registry.updateToolsCache(cfg.id, tools);
+      // Phase 2 (PLAN-per-user-server-store): _meta.config_fields + oauth
+      // wird in sub_mcp_servers.config_schema gespeichert. updateConfigSchema
+      // ist optional auf der Registry — Bestand bleibt funktional.
+      if (meta && args.registry.updateConfigSchema) {
+        await args.registry.updateConfigSchema(cfg.id, meta);
+      }
       results.push({ subMcpName: cfg.name, count: tools.length });
     } catch (err) {
       results.push({
@@ -76,11 +82,30 @@ export async function refreshSubMcpToolCache(args: RefreshToolCacheArgs): Promis
   return results;
 }
 
+interface FetchToolsResult {
+  readonly tools: ReadonlyArray<SubMcpToolCacheEntry>;
+  /**
+   * `_meta`-Block aus dem tools/list-Result. Enthaelt typischerweise:
+   *   - config_fields: Felder die der User pro-Server konfigurieren kann
+   *   - oauth: OAuth-Mode + Provider + Scopes
+   * Worker die das nicht setzen liefern undefined → kein Drawer-Schema.
+   */
+  readonly meta?: Record<string, unknown>;
+}
+
+async function fetchToolsListWithMeta(
+  cfg: SubMcpServerConfig,
+  fetchImpl: typeof fetch,
+  timeoutMs: number,
+): Promise<FetchToolsResult> {
+  return fetchToolsList(cfg, fetchImpl, timeoutMs);
+}
+
 async function fetchToolsList(
   cfg: SubMcpServerConfig,
   fetchImpl: typeof fetch,
   timeoutMs: number,
-): Promise<ReadonlyArray<SubMcpToolCacheEntry>> {
+): Promise<FetchToolsResult> {
   const headers: Record<string, string> = {
     'content-type': 'application/json',
     accept: 'application/json, text/event-stream',
@@ -152,9 +177,12 @@ async function fetchToolsList(
       response.status,
     );
   }
-  const result = parsed.result as { tools?: unknown } | null | undefined;
+  const result = parsed.result as
+    | { tools?: unknown; _meta?: unknown }
+    | null
+    | undefined;
   if (!result || !Array.isArray(result.tools)) {
-    return [];
+    return { tools: [] };
   }
   const out: SubMcpToolCacheEntry[] = [];
   for (const t of result.tools) {
@@ -178,7 +206,11 @@ async function fetchToolsList(
     };
     out.push(entry);
   }
-  return out;
+  const meta =
+    result._meta && typeof result._meta === 'object'
+      ? (result._meta as Record<string, unknown>)
+      : undefined;
+  return meta ? { tools: out, meta } : { tools: out };
 }
 
 /**

@@ -42,6 +42,7 @@ import { renderDefaultsTab } from './defaults-tab.js';
 import { renderWritemodeTab } from './writemode-tab.js';
 import { renderSettings } from './settings-tab.js';
 import { renderToolsTab } from './tools-tab.js';
+import { renderServerConfig } from './server-config.js';
 import { renderAdminTab } from './admin-tab.js';
 import { subscribePush } from './push.js';
 import { renderDebugLog, debug } from './debug-log.js';
@@ -78,6 +79,7 @@ type Route =
   | 'apps'
   | 'apps-detail'
   | 'tools'
+  | 'tools-server-config'
   | 'writemode'
   | 'admin'
   | 'debug';
@@ -98,6 +100,8 @@ function parseRoute(): Route {
   }
   if (hash.startsWith('admin')) return 'admin';
   if (hash.startsWith('settings')) return 'settings';
+  // #/tools/servers/<name>/config — Per-Server-Config-Drawer (Phase 2)
+  if (/^tools\/servers\/[^/?]+\/config/.test(hash)) return 'tools-server-config';
   if (hash.startsWith('tools')) return 'tools';
   if (hash.startsWith('defaults')) return 'defaults';
   if (hash.startsWith('writemode') || hash.startsWith('write-mode')) return 'writemode';
@@ -139,6 +143,18 @@ function parseStorageDetailId(): string | null {
   // hash form: '#/storage/<id>' (id is encodeURIComponent'd)
   const hash = window.location.hash;
   const m = hash.match(/^#\/storage\/([^?]+)/);
+  if (!m || !m[1]) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return m[1];
+  }
+}
+
+function parseServerConfigName(): string | null {
+  // hash form: '#/tools/servers/<name>/config'
+  const hash = window.location.hash;
+  const m = hash.match(/^#\/tools\/servers\/([^/?]+)\/config/);
   if (!m || !m[1]) return null;
   try {
     return decodeURIComponent(m[1]);
@@ -191,6 +207,15 @@ async function boot(): Promise<void> {
     case 'tools':
       await renderToolsSafe(root, session);
       return;
+    case 'tools-server-config': {
+      const name = parseServerConfigName();
+      if (!name) {
+        window.location.hash = '#/tools/servers';
+        return;
+      }
+      await renderServerConfigSafe(root, session, name);
+      return;
+    }
     case 'admin':
       await renderAdminSafe(root, session);
       return;
@@ -334,6 +359,19 @@ async function renderToolsSafe(root: HTMLElement, s: Session): Promise<void> {
     await renderToolsTab(root, api, s);
   } catch (err) {
     console.error('tools render failed', err);
+    renderSessionExpired(root);
+  }
+}
+
+async function renderServerConfigSafe(
+  root: HTMLElement,
+  s: Session,
+  serverName: string,
+): Promise<void> {
+  try {
+    await renderServerConfig(root, api, s, serverName);
+  } catch (err) {
+    console.error('server-config render failed', err);
     renderSessionExpired(root);
   }
 }

@@ -54,13 +54,14 @@ interface SubMcpRowRaw {
   readonly enabled: boolean;
   readonly tools_cache: SubMcpToolCacheEntry[] | string | null;
   readonly tools_cached_at: number | string | null;
+  readonly config_schema: Record<string, unknown> | string | null;
   readonly created_at: number | string;
   readonly updated_at: number | string;
 }
 
 const SELECT_COLS = `
   id, name, display_name, base_url, auth_mode, auth_config,
-  enabled, tools_cache, tools_cached_at,
+  enabled, tools_cache, tools_cached_at, config_schema,
   created_at, updated_at
 `;
 
@@ -108,6 +109,12 @@ export interface SubMcpRegistry {
   listAll(): Promise<ReadonlyArray<SubMcpServerConfig>>;
   /** Tool-Cache nach Discovery aktualisieren. */
   updateToolsCache(id: string, tools: ReadonlyArray<SubMcpToolCacheEntry>): Promise<void>;
+  /**
+   * config_schema (aus _meta.config_fields + oauth aus tools/list) cachen.
+   * Phase 2 PLAN-per-user-server-store — PWA rendert das fuer den Config-
+   * Drawer pro Server.
+   */
+  updateConfigSchema?(id: string, schema: Record<string, unknown>): Promise<void>;
   /** Service-Token-Hash gegen DB-Wert pruefen — Konstant-Zeit-Vergleich. */
   verifyServiceToken(name: string, presentedToken: string): Promise<SubMcpServerConfig | null>;
   /** Sub-MCP eintragen (admin-Operation, hier ohne Auth — Caller schuetzt). */
@@ -141,6 +148,7 @@ export function createSubMcpRegistry(opts: SubMcpRegistryOptions): SubMcpRegistr
   function rowToConfig(row: SubMcpRowRaw): SubMcpServerConfig {
     const authConfig = (parseJson<SubMcpAuthConfig>(row.auth_config) ?? {}) as SubMcpAuthConfig;
     const toolsCache = parseJson<SubMcpToolCacheEntry[]>(row.tools_cache);
+    const configSchema = parseJson<Record<string, unknown>>(row.config_schema);
     const serviceToken = row.auth_mode === 'service_bearer' ? tokenResolver(row.name) : null;
     return {
       id: row.id,
@@ -153,6 +161,7 @@ export function createSubMcpRegistry(opts: SubMcpRegistryOptions): SubMcpRegistr
       serviceToken,
       toolsCache,
       toolsCachedAt: toNumber(row.tools_cached_at),
+      configSchema,
       createdAt: toNumber(row.created_at) ?? 0,
       updatedAt: toNumber(row.updated_at) ?? 0,
     };
@@ -207,6 +216,18 @@ export function createSubMcpRegistry(opts: SubMcpRegistryOptions): SubMcpRegistr
             SET tools_cache = $1, tools_cached_at = $2, updated_at = $3
           WHERE id = $4`,
         [JSON.stringify(tools), ts, ts, id],
+      );
+      cache = null;
+    },
+
+    async updateConfigSchema(id, schema) {
+      const raw = db.unsafe('sub_mcp_update_config_schema');
+      const ts = now();
+      await raw.query(
+        `UPDATE sub_mcp_servers
+            SET config_schema = $1::jsonb, updated_at = $2
+          WHERE id = $3`,
+        [JSON.stringify(schema), ts, id],
       );
       cache = null;
     },

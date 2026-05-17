@@ -64,6 +64,7 @@ import { adminRoutes } from './routes/admin.js';
 import { inventoryRoutes } from './routes/inventory.js';
 import { myServersRoutes } from './routes/me/servers.js';
 import { createUserSubscriptionsService } from './services/user-subscriptions.js';
+import { createUserServerConfigService } from './services/user-server-config.js';
 import { gdprRoutes } from './routes/gdpr.js';
 import { approvalsRoutes } from './routes/approvals.js';
 import { createApprovalAssertionVerifier } from './auth/webauthn/approval-verify.js';
@@ -732,6 +733,14 @@ export async function createApp(
   const userSubscriptionsService = createUserSubscriptionsService({
     db: server.db,
   });
+  // Phase 2: KMS-encrypted per-User-Server-Config. Nur verkabelt wenn ein
+  // kekProvider verfuegbar ist (analog credentials.ts).
+  const userServerConfigService = deps.kekProvider
+    ? createUserServerConfigService({
+        db: server.db,
+        kekProvider: deps.kekProvider,
+      })
+    : undefined;
 
   app.route(
     '/',
@@ -761,6 +770,7 @@ export async function createApp(
       server,
       registry: subMcpReg,
       subscriptions: userSubscriptionsService,
+      ...(userServerConfigService ? { config: userServerConfigService } : {}),
     }),
   );
 

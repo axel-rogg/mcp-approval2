@@ -45,6 +45,12 @@ export interface SubMcpServerConfig {
   readonly serviceToken: string | null;
   readonly toolsCache: ReadonlyArray<SubMcpToolCacheEntry> | null;
   readonly toolsCachedAt: number | null;
+  /**
+   * Phase 2 PLAN-per-user-server-store: vom Worker via `tools/list._meta`
+   * deklarierte Config-Felder + OAuth-Hinweise. PWA rendert das fuer den
+   * Config-Drawer pro Server.
+   */
+  readonly configSchema: Record<string, unknown> | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }

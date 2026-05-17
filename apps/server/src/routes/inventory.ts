@@ -92,6 +92,11 @@ interface GatewayEntry {
   readonly tools: ReadonlyArray<GatewayToolEntry>;
   /** Credentials die der Sub-MCP-Worker fuer mind. eines seiner Tools braucht. */
   readonly requiredCredentials: ReadonlyArray<RequiredCredentialEntry>;
+  /**
+   * Config-Schema vom Worker via tools/list._meta. PWA rendert die Felder
+   * im Config-Drawer. null = kein Schema deklariert.
+   */
+  readonly configSchema: Record<string, unknown> | null;
 }
 
 interface AvailableServerEntry {
@@ -215,6 +220,7 @@ function mapKnowledge2Gateway(
     toolsCachedAt: snapshot.refreshedAt,
     tools,
     requiredCredentials: aggregateRequiredCredentials(annotationsForAgg),
+    configSchema: null,
   };
 }
 
@@ -240,6 +246,7 @@ async function mapGateways(
       requiredCredentials: aggregateRequiredCredentials(
         toolsCache.map((t) => ({ annotations: t.annotations })),
       ),
+      configSchema: s.configSchema,
     };
   });
 }

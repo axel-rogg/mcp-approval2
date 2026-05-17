@@ -258,6 +258,20 @@ function renderServerCard(
     titleRow.appendChild(refreshBtn);
   }
 
+  // Konfigurieren-Knopf — leadet zur Per-Server-Config-Page (Phase 2).
+  // Verfuegbar fuer alle Gateways inkl. knowledge2 (KC2 hat zwar keine
+  // config_schema, aber dort kann der User die Subscription noch sehen).
+  if (s.isGateway) {
+    const configLink = document.createElement('a');
+    configLink.href = `#/tools/servers/${encodeURIComponent(s.name)}/config`;
+    configLink.className = 'btn btn-secondary btn-small server-card-config';
+    configLink.textContent = 'Konfigurieren';
+    configLink.addEventListener('click', (ev) => {
+      ev.stopPropagation(); // <details>-Toggle nicht triggern
+    });
+    titleRow.appendChild(configLink);
+  }
+
   // Deaktivieren-Toggle. Nur fuer Sub-MCP-Gateways die KEIN 'knowledge2'
   // sind (KC2 ist embedded, immer aktiv). Sub-route + jeder User darf
   // seine eigene Subscription togglen.
