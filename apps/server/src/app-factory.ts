@@ -57,6 +57,7 @@ import { webauthnRoutes } from './routes/auth/webauthn.js';
 import { inviteRoutes } from './routes/auth/invite.js';
 import { recoveryRoutes } from './routes/auth/recovery.js';
 import { credentialsRoutes } from './routes/credentials.js';
+import { passkeysRoutes } from './routes/passkeys.js';
 import { knowledgeProxyRoutes } from './routes/knowledge-proxy.js';
 import { kcProxyRoutes } from './routes/kc-proxy.js';
 import { adminRoutes } from './routes/admin.js';
@@ -334,6 +335,7 @@ export async function createApp(
   app.route('/', googleAuthRoutes(server));
   app.route('/', sessionRoutes(server));
   app.route('/', webauthnRoutes(server));
+  app.route('/', passkeysRoutes({ server }));
   app.route('/', inviteRoutes(server));
   app.route('/', recoveryRoutes(server));
 
