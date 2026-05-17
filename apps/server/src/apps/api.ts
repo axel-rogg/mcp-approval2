@@ -97,6 +97,8 @@ export interface AppsService {
     userId: string;
     /** AS-3 OBO-Propagation: email als on_behalf_of-Subject fuer KC2-Resolve. */
     userEmail?: string;
+    /** K-D4: OBO-writes require approval_id (synthetic OK fuer Admin-Migration). */
+    approvalId?: string;
     appType: string;
     slug?: string;
     title?: string;
@@ -213,6 +215,13 @@ class AppsServiceImpl implements AppsService {
   async createApp(args: {
     userId: string;
     userEmail?: string;
+    /**
+     * AS-3 K-D4: OBO writes require approval_id. Fuer normalen User-Flow
+     * setzt das die Approval-Resolve-Pipeline nach Approve. Fuer Admin-
+     * Migrations (z.B. /internal/v1/apps/import) muss der Caller einen
+     * synthetic ID liefern.
+     */
+    approvalId?: string;
     appType: string;
     slug?: string;
     title?: string;
@@ -252,6 +261,7 @@ class AppsServiceImpl implements AppsService {
     const createArgs: CreateObjectArgs = {
       userId: args.userId,
       ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
       subtype: appSubtype(args.appType),
       title,
       description,

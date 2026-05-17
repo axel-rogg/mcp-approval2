@@ -32,6 +32,7 @@
 import { Hono } from 'hono';
 import { zValidator } from '@hono/zod-validator';
 import { z } from 'zod';
+import { randomUUID } from 'node:crypto';
 import type { AppBindings, ServerContext } from '../../lib/context.js';
 import { HttpError } from '../../lib/errors.js';
 import type { AppsService, AppInstance } from '../../apps/api.js';
@@ -127,6 +128,10 @@ export function internalAppsImportRoutes(deps: InternalAppsImportDeps): Hono<App
           // Ohne userEmail wuerde der OBO-JWT die UUID als on_behalf_of haben
           // und KC2 lehnt mit "OBO subject not provisioned" ab.
           userEmail: user.email,
+          // K-D4: OBO writes brauchen approval_id. Bei dieser Admin-only
+          // Migration gibt's keinen User-Approval — wir generieren eine
+          // synthetic UUID pro App, audit_log haelt nach welche.
+          approvalId: randomUUID(),
           appType: a.appType,
           title: a.title,
           initialState: a.initialState,
