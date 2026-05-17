@@ -501,6 +501,14 @@ code {
   border-color: var(--accent);
 }
 
+/* Emoji-Icon innerhalb des Chips. Inline-Block damit das Emoji nicht durch
+   inheritance vom active-state grau wird (Emojis sind glyph-color-immune,
+   aber Edge/Chromium hat auf manchen OS einen Sub-Pixel-Bug). */
+.storage-chip-icon {
+  display: inline-block;
+  margin-right: 0.15em;
+}
+
 .storage-search-row {
   display: flex;
   gap: 0.5rem;

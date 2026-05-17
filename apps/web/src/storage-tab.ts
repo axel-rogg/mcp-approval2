@@ -137,7 +137,19 @@ export async function renderStorageTab(
       (filters.subtype === undefined && chip.value === '') || filters.subtype === chip.value;
     if (isActive) btn.classList.add('active');
     btn.dataset['subtype'] = chip.value;
-    btn.textContent = chip.label;
+    // Icon + Label: subtypeIcon kennt auch APP_FILTER (app:*-Prefix → 🧩).
+    // 'All' (chip.value='') hat kein Icon — bewusst, damit der Chip leicht
+    // als "kein Filter aktiv" erkennbar bleibt.
+    if (chip.value !== '') {
+      const iconSpan = document.createElement('span');
+      iconSpan.className = 'storage-chip-icon';
+      iconSpan.textContent = subtypeIcon(chip.value);
+      iconSpan.setAttribute('aria-hidden', 'true');
+      btn.appendChild(iconSpan);
+      btn.appendChild(document.createTextNode(' ' + chip.label));
+    } else {
+      btn.textContent = chip.label;
+    }
     btn.addEventListener('click', () => {
       const next: StorageFilters = {
         subtype: chip.value === '' ? undefined : chip.value,
