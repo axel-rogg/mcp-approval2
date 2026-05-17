@@ -190,8 +190,13 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
     if (existingByExt && existingByExt.status === 'active') {
       userId = existingByExt.id;
       role = existingByExt.role;
-      // Re-login eines schon gesynchten Users — kein extra-Push noetig
-      // (KC2 hat den User schon).
+      // Backfill-Sync auch fuer existing-by-ext: User die vor SEC-K-001-
+      // Hardening + UserSyncService-Wiring bootstrapped wurden haben keinen
+      // KC2-row, aber waren laengst aktiv. KC2's syncFromApproval2 ist
+      // idempotent (returns "unchanged" wenn schon da), also kostet ein
+      // extra Roundtrip pro Login nichts — schliesst aber die Lucke fuer
+      // pre-Multi-User-Sprint-Bestandsuser.
+      kcSyncNeeded = true;
     } else {
       const existingByEmail = await findUserByEmail(server.db, profile.email);
       if (stateCookie.inviteToken) {
