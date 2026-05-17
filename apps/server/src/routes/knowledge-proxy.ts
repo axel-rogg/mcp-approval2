@@ -146,9 +146,29 @@ export function knowledgeProxyRoutes(server: ServerContext, deps: KnowledgeRoute
     const user = requireUser(c);
     const id = c.req.param('id');
     if (!id) throw HttpError.badRequest('invalid_request', 'missing id');
+    // PWA-Client schickt `?expand=body,refs,tags,summary`. KC2 returnt
+    // body_b64 nur wenn expand=body — daher Param durchreichen.
+    const expandParam = c.req.query('expand') ?? '';
+    const expandBody = expandParam.split(',').includes('body');
     const obj = await runProxy(() =>
-      deps.knowledge.getObject({ id, userId: user.userId, userEmail: user.userEmail }),
+      deps.knowledge.getObject({
+        id,
+        userId: user.userId,
+        userEmail: user.userEmail,
+        expandBody,
+      }),
     );
+    // KC2 antwortet mit `body_b64`. PWA erwartet `body` + `bodyEncoding`.
+    // Adapter-Layer mappt das nicht — wir machen es hier inline.
+    const objAny = obj as unknown as {
+      body?: unknown;
+      bodyEncoding?: string;
+      body_b64?: string;
+    };
+    if (expandBody && typeof objAny.body_b64 === 'string' && objAny.body === undefined) {
+      objAny.body = objAny.body_b64;
+      objAny.bodyEncoding = 'base64';
+    }
     return c.json(obj);
   });
 

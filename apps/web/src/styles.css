@@ -650,13 +650,30 @@ code {
 }
 
 .storage-delete-btn {
-  color: var(--fg-muted);
+  color: var(--danger);
 }
 
 .storage-delete-btn:hover {
   color: var(--danger);
   border-color: var(--danger);
   background: var(--danger-bg);
+}
+
+.storage-copy-btn {
+  color: var(--fg-muted);
+}
+
+.storage-copy-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--bg);
+}
+
+.storage-summary-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0.5rem 0 0;
+  line-height: 1.55;
 }
 
 .storage-summary > summary,

@@ -712,11 +712,19 @@ function encodeBodyB64(body: Uint8Array | string): string {
  * Lift the server's `body_b64`-field (only present with `?expand=body`) into
  * KnowledgeObject.body. We keep both the base64-string and `null` semantics —
  * Caller decode via `Buffer.from(body, 'base64')` falls bytes gewuenscht.
+ *
+ * Setzt zusaetzlich `bodyEncoding='base64'` damit Downstream-Renderer (PWA-
+ * decodeBody) den richtigen Pfad waehlen. Ohne den Marker wuerde der Default
+ * 'utf8' base64-Garbage als Plain-Text rendern.
  */
 function normaliseObjectView<T extends KnowledgeObject & { body_b64?: string | null }>(
   raw: T,
 ): KnowledgeObject {
   const { body_b64, ...rest } = raw;
   if (body_b64 === undefined) return rest as KnowledgeObject;
-  return { ...(rest as KnowledgeObject), body: body_b64 };
+  return {
+    ...(rest as KnowledgeObject),
+    body: body_b64,
+    bodyEncoding: 'base64',
+  };
 }

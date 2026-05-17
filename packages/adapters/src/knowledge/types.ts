@@ -55,6 +55,12 @@ export interface KnowledgeObject {
    * Caller-Side decode: `Buffer.from(body, 'base64')` → Uint8Array.
    */
   readonly body?: string | null;
+  /**
+   * Encoding-Marker fuer `body`. `'base64'` ist der Adapter-Default (KC2
+   * returnt body_b64). 'utf8' nur wenn ein Caller die body-Bytes als raw
+   * UTF-8-String reingesetzt hat. Downstream-Renderer entscheidet anhand.
+   */
+  readonly bodyEncoding?: 'utf8' | 'base64';
 }
 
 export interface CreateObjectArgs {

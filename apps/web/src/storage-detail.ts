@@ -128,8 +128,7 @@ export async function renderStorageDetail(
   title.textContent = obj.title ?? obj.filename ?? obj.id;
   header.appendChild(title);
 
-  // Action-Buttons rechts (Info-Toggle + Delete). KEIN card-wrapper, nur
-  // inline icon-Buttons (User-Feedback 2026-05-17: weniger Rahmen).
+  // Action-Buttons rechts (Info-Toggle + Copy-ID + Delete).
   const actions = document.createElement('div');
   actions.className = 'storage-detail-actions';
 
@@ -140,6 +139,29 @@ export async function renderStorageDetail(
   infoBtn.setAttribute('title', 'Meta-Infos');
   infoBtn.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`;
   actions.appendChild(infoBtn);
+
+  // Copy-ID-Button: kopiert eine Agent-lesbare Referenz auf das Object.
+  // Format ist eine kompakte mehrzeilige Notation die der Agent direkt
+  // verstehen kann (id + subtype + title), nicht nur die nackte UUID.
+  const copyBtn = document.createElement('button');
+  copyBtn.type = 'button';
+  copyBtn.className = 'icon-btn storage-copy-btn';
+  copyBtn.setAttribute('aria-label', 'ID + Titel kopieren (fuer Agent-Referenz)');
+  copyBtn.setAttribute('title', 'ID kopieren');
+  copyBtn.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+  copyBtn.addEventListener('click', async () => {
+    const ref = `Storage-Object:
+  id:      ${obj.id}
+  subtype: ${obj.subtype ?? '-'}
+  title:   ${obj.title ?? obj.filename ?? '-'}`;
+    try {
+      await navigator.clipboard.writeText(ref);
+      showToast('ID + Titel kopiert');
+    } catch {
+      showToast('Kopieren fehlgeschlagen');
+    }
+  });
+  actions.appendChild(copyBtn);
 
   let forceCheckbox: HTMLInputElement | null = null;
   const delBtn = document.createElement('button');
@@ -200,81 +222,63 @@ export async function renderStorageDetail(
     infoBtn.classList.toggle('active', !metaSection.hidden);
   });
 
-  // ─── Accordion: Summary + Body (eines aufgeklappt schliesst das andere) ─
-  // <details>-Elemente mit gemeinsamen "toggle"-Listener fuer Sync.
-  const summaryDetails =
-    obj.description !== undefined && obj.description !== null
-      ? (() => {
-          const d = document.createElement('details');
-          d.className = 'storage-summary card';
-          // Default OPEN — User sieht erstmal die Zusammenfassung
-          d.open = true;
-          const s = document.createElement('summary');
-          s.textContent = 'Summary';
-          if (obj.subtype === 'doc') {
-            const pencil = document.createElement('button');
-            pencil.type = 'button';
-            pencil.className = 'edit-pencil';
-            pencil.textContent = '✏️';
-            pencil.title = 'Summary bearbeiten';
-            pencil.addEventListener('click', (e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              openSummaryModal(api, obj);
-            });
-            s.appendChild(pencil);
-          }
-          d.appendChild(s);
-          const p = document.createElement('p');
-          p.textContent = stripIpiWrappers(obj.description) || '(leer)';
-          d.appendChild(p);
-          return d;
-        })()
-      : null;
-
-  if (summaryDetails) main.appendChild(summaryDetails);
-
-  // Body — Renderer-Dispatch. KEIN Raw-Toggle innen mehr; falls Renderer
-  // leer ist (z.B. weil decodeBody nichts liefert), zeigen wir den raw
-  // decoded text als pre. EINE einzige Body-Section.
-  const bodyDetails = document.createElement('details');
-  bodyDetails.className = 'storage-body card';
-  bodyDetails.open = false; // default zu, Summary ist genug fuer overview
-  const bs = document.createElement('summary');
-  bs.textContent = 'Body';
-  bodyDetails.appendChild(bs);
-
-  const rendered = dispatchRenderer(obj);
-  // Defensive: strip IPI-Wrappers aus rendered DOM-Text-Nodes
-  walkAndStripIpi(rendered);
-
-  // Wenn rendered keinen sichtbaren Inhalt hat, fall-back auf decoded raw.
-  if (!rendered.textContent || rendered.textContent.trim().length === 0) {
-    const raw = decodeBody(obj);
-    if (raw) {
-      const pre = document.createElement('pre');
-      pre.className = 'storage-body-pre';
-      pre.textContent = stripIpiWrappers(raw);
-      bodyDetails.appendChild(pre);
-    } else {
-      const empty = document.createElement('p');
-      empty.className = 'muted';
-      empty.textContent = '(kein Body)';
-      bodyDetails.appendChild(empty);
+  // ─── Summary + Body — beide default OPEN (User-Wunsch).
+  // Kein Accordion-Sync mehr: User soll beide gleichzeitig lesen koennen.
+  if (obj.description !== undefined && obj.description !== null && obj.description !== '') {
+    const summaryDetails = document.createElement('details');
+    summaryDetails.className = 'storage-summary card';
+    summaryDetails.open = true;
+    const s = document.createElement('summary');
+    s.textContent = 'Summary';
+    if (obj.subtype === 'doc') {
+      const pencil = document.createElement('button');
+      pencil.type = 'button';
+      pencil.className = 'edit-pencil';
+      pencil.textContent = '✏️';
+      pencil.title = 'Summary bearbeiten';
+      pencil.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openSummaryModal(api, obj);
+      });
+      s.appendChild(pencil);
     }
-  } else {
-    bodyDetails.appendChild(rendered);
+    summaryDetails.appendChild(s);
+    const p = document.createElement('p');
+    p.className = 'storage-summary-text';
+    p.textContent = stripIpiWrappers(obj.description);
+    summaryDetails.appendChild(p);
+    main.appendChild(summaryDetails);
   }
-  main.appendChild(bodyDetails);
 
-  // Accordion-Sync: Body-open → Summary-close (und vice versa).
-  if (summaryDetails) {
-    bodyDetails.addEventListener('toggle', () => {
-      if (bodyDetails.open) summaryDetails.open = false;
-    });
-    summaryDetails.addEventListener('toggle', () => {
-      if (summaryDetails.open) bodyDetails.open = false;
-    });
+  // Body — nur rendern wenn tatsaechlich Body-Content da ist.
+  // body===null/undefined (= server hat kein body geliefert) → kein Section.
+  // body==='' (= leerer body) → kein Section.
+  const hasBody = obj.body !== undefined && obj.body !== null && obj.body !== '';
+  if (hasBody) {
+    const bodyDetails = document.createElement('details');
+    bodyDetails.className = 'storage-body card';
+    bodyDetails.open = true; // default open (User-Wunsch)
+    const bs = document.createElement('summary');
+    bs.textContent = 'Body';
+    bodyDetails.appendChild(bs);
+
+    const rendered = dispatchRenderer(obj);
+    walkAndStripIpi(rendered);
+
+    if (!rendered.textContent || rendered.textContent.trim().length === 0) {
+      // Renderer leer → decoded raw als pre
+      const raw = decodeBody(obj);
+      if (raw) {
+        const pre = document.createElement('pre');
+        pre.className = 'storage-body-pre';
+        pre.textContent = stripIpiWrappers(raw);
+        bodyDetails.appendChild(pre);
+      }
+    } else {
+      bodyDetails.appendChild(rendered);
+    }
+    main.appendChild(bodyDetails);
   }
 }
 
