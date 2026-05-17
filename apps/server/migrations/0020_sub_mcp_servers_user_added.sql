@@ -28,39 +28,15 @@ UPDATE sub_mcp_servers
 CREATE INDEX IF NOT EXISTS idx_submcp_owner
   ON sub_mcp_servers(owner_user_id) WHERE owner_user_id IS NOT NULL;
 
--- Unique-Constraint anpassen: name darf wiederholt werden wenn owner unter-
--- schiedlich (user-A hat 'mygithub' UND user-B hat 'mygithub' = OK). Aber
--- innerhalb owner_user_id muss name unique sein. Catalog-Defaults
--- (owner_user_id IS NULL) sind auch unique.
+-- Unique-Constraint auf `name` BLEIBT global (idx_sub_mcp_name). Postgres
+-- erlaubt nur volle UNIQUE-Indexes als FK-Target — weder WHERE-partial
+-- noch COALESCE-Expr. 0018 + 0019 haben FKs auf name → die brauchen den
+-- global-uniq-index.
 --
--- 0018 + 0019 haben FKs REFERENCES sub_mcp_servers(name). Postgres laesst
--- den Index nicht droppen solange die FKs auf dem unique-constraint haengen.
--- Loesung: erst FKs droppen, dann index swap, dann FKs gegen neuen unique-
--- composite re-erstellen. ON DELETE CASCADE bleibt.
-ALTER TABLE user_sub_mcp_subscriptions DROP CONSTRAINT IF EXISTS user_sub_mcp_subscriptions_sub_mcp_name_fkey;
-ALTER TABLE user_sub_mcp_config        DROP CONSTRAINT IF EXISTS user_sub_mcp_config_sub_mcp_name_fkey;
-
--- CASCADE: deploy-Fail-Workaround. Die DROP CONSTRAINT statements oben
--- erwischen die FK-namen nicht (Postgres autogen kann variieren),
--- daher Catch-All via CASCADE. Drops gleichzeitig FK + Index.
--- Die FKs werden danach (Lines 54-59) sauber wieder erstellt.
-DROP INDEX IF EXISTS idx_sub_mcp_name CASCADE;
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_submcp_name_per_owner
-  ON sub_mcp_servers(name, COALESCE(owner_user_id, '00000000-0000-0000-0000-000000000000'::UUID));
-
--- Catalog-only FK rekonstituieren: 0018/0019-Tabellen referenzieren NUR
--- Catalog-Defaults (owner_user_id IS NULL). Daher partial unique-index
--- mit WHERE-clause genug fuer Catalog-FK-Target. Wenn spaeter user-added
--- subscriptions noetig, eigene Tabelle dafuer mit FK auf (name, owner_user_id).
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_submcp_catalog_name
-  ON sub_mcp_servers(name) WHERE owner_user_id IS NULL;
-
-ALTER TABLE user_sub_mcp_subscriptions
-  ADD CONSTRAINT user_sub_mcp_subscriptions_sub_mcp_name_fkey
-  FOREIGN KEY (sub_mcp_name) REFERENCES sub_mcp_servers(name) ON DELETE CASCADE;
-ALTER TABLE user_sub_mcp_config
-  ADD CONSTRAINT user_sub_mcp_config_sub_mcp_name_fkey
-  FOREIGN KEY (sub_mcp_name) REFERENCES sub_mcp_servers(name) ON DELETE CASCADE;
+-- Multi-User-different-name use case (user-A hat 'mygithub' UND user-B hat
+-- 'mygithub') wird daher NICHT in 0020 geloest — kommt spaeter via eigener
+-- aliases-Tabelle mit (user_id, alias, name-FK) compos. PRIMARY KEY.
+-- 2026-05-17: Migration verein­facht damit release_command nicht fail't.
 
 -- RLS: catalog-defaults sind fuer alle sichtbar (owner_user_id IS NULL),
 -- user-added nur fuer den Owner. Operator-Pool (BYPASSRLS) sieht alles.
