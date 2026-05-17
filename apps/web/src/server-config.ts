@@ -329,7 +329,11 @@ export async function renderServerConfig(
       authorizeStatus.className = 'muted small';
       authorizeStatus.textContent = 'Starte OAuth…';
       try {
-        const redirectUri = `${window.location.origin}/#/tools/servers/${encodeURIComponent(serverName)}/oauth/callback`;
+        // Server-side bridge `/oauth/sub-mcp-callback?name=<name>` 302-
+        // redirected nach Code-Receipt zur Hash-Route hier in der PWA.
+        // RFC 6749 §3.1.2 verbietet Fragments in redirect_uri — GitHub-
+        // App und andere strict-Provider rejecten sonst beim authorize.
+        const redirectUri = `${window.location.origin}/oauth/sub-mcp-callback?name=${encodeURIComponent(serverName)}`;
         const result = await api.startServerOAuth(serverName, redirectUri);
         // Pre-Save: SessionStorage damit der Callback-Route den state matchen kann
         sessionStorage.setItem(`oauth_state_${serverName}`, result.state);

@@ -53,6 +53,7 @@ import { auth as authMiddleware } from './middleware/auth.js';
 // Public + auth-protected routes
 import { healthRoutes } from './routes/health.js';
 import { googleAuthRoutes } from './routes/auth/google.js';
+import { oauthBridgeRoutes } from './routes/oauth-bridge.js';
 import { debugRoutes } from './routes/debug.js';
 import { sessionRoutes } from './routes/auth/session.js';
 import { webauthnRoutes } from './routes/auth/webauthn.js';
@@ -358,6 +359,7 @@ export async function createApp(
   //  pflichtig sind.)
   // ─────────────────────────────────────────────────────────────────────
   app.route('/', googleAuthRoutes(server));
+  app.route('/', oauthBridgeRoutes(server));  // /oauth/sub-mcp-callback (RFC-compliant bridge)
   app.route('/', sessionRoutes(server));
   app.route('/', webauthnRoutes(server));
   app.route('/', passkeysRoutes({ server }));
