@@ -310,6 +310,41 @@ export function createApprovalService(opts: ApprovalServiceOptions): ApprovalSer
     return db.transaction(userId, async (scoped) => fn(scoped));
   }
 
+  // Lazy-Expiry-Helpers — flippen pending → expired wenn TTL abgelaufen ist,
+  // BEVOR der Lese-SELECT die Rows zurueckliefert. Damit sieht die PWA nie
+  // eine 'pending'-Row mit `expires_at < now`. Plan-Ref: PLAN-approval-expiry.
+  // Audit-Event wird hier bewusst NICHT emittiert — wird vom cron-sweep
+  // einmal pro Batch gemacht (Explore-Agent-Finding, gleicher Pattern wie v1).
+  async function lazyExpireOne(
+    q: { query: <R = unknown>(sql: string, params?: ReadonlyArray<unknown>) => Promise<R[]> },
+    id: string,
+    userId: string,
+    ts: number,
+  ): Promise<void> {
+    await q.query(
+      `UPDATE pending_approvals
+          SET status = 'expired', expired_at = $1
+        WHERE id = $2 AND user_id = $3
+          AND status = 'pending' AND expires_at < $1`,
+      [ts, id, userId],
+    );
+  }
+
+  async function lazyExpireUser(
+    q: { query: <R = unknown>(sql: string, params?: ReadonlyArray<unknown>) => Promise<R[]> },
+    userId: string,
+    ts: number,
+  ): Promise<number> {
+    const rows = await q.query<{ id: string }>(
+      `UPDATE pending_approvals
+          SET status = 'expired', expired_at = $1
+        WHERE user_id = $2 AND status = 'pending' AND expires_at < $1
+        RETURNING id`,
+      [ts, userId],
+    );
+    return rows.length;
+  }
+
   return {
     async create(args) {
       const ttlSec = args.ttlSec ?? DEFAULT_TTL_SEC;
@@ -374,7 +409,10 @@ export function createApprovalService(opts: ApprovalServiceOptions): ApprovalSer
     },
 
     async get(args) {
+      const ts = now();
       const row = await withScoped(args.userId, async (q) => {
+        // Lazy-Expire vor dem SELECT (in derselben Tx — kein TOCTOU-Race).
+        await lazyExpireOne(q, args.id, args.userId, ts);
         const rows = await q.query<ApprovalRowRaw>(
           `SELECT ${SELECT_COLS} FROM pending_approvals WHERE id = $1 AND user_id = $2`,
           [args.id, args.userId],
@@ -386,7 +424,12 @@ export function createApprovalService(opts: ApprovalServiceOptions): ApprovalSer
 
     async list(args) {
       const limit = Math.min(Math.max(args.limit ?? 50, 1), 200);
+      const ts = now();
       const rows = await withScoped(args.userId, async (q) => {
+        // Lazy-Expire vor dem SELECT — sicherzustellen dass abgelaufene Rows
+        // nicht mehr als pending zurueckkommen, egal welcher Status-Filter
+        // gerade aktiv ist.
+        await lazyExpireUser(q, args.userId, ts);
         if (args.status) {
           return q.query<ApprovalRowRaw>(
             `SELECT ${SELECT_COLS} FROM pending_approvals

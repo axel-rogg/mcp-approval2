@@ -1,6 +1,48 @@
 ## PLAN-approval-expiry — Abgelaufene Approvals werden in der PWA noch als `pending` angezeigt
 
-⚠️ **Status: Draft** (2026-05-17)
+⚠️ **Status: Draft v2 — Subagent-validated** (2026-05-17)
+
+### Design-Review (2 Subagenten)
+
+**Alternative geprüft**: SQL-side `effective_status`-Expression im SELECT statt
+Lazy-Write-on-Read. Plan-Agent hat das mit drei strukturellen Argumenten
+abgelehnt:
+
+1. **Single source of truth zerfällt**. Mehrere Code-Stellen prüfen
+   `status` direkt: [transport.ts:396](apps/server/src/mcp/protocol/transport.ts)
+   für `status !== 'approved'`, [transport.ts:415](apps/server/src/mcp/protocol/transport.ts)
+   für `resultEmittedAt`, [approvals.ts:421](apps/server/src/services/approvals.ts)
+   für `existing.status !== 'pending'`. Effective_status müsste in JEDEM
+   dieser Pfade nachgezogen werden — das ist SEC-018/SEC-004-Surface (Race-
+   gegen Re-Dispatch). Lazy-Write hält EIN Feld autoritativ.
+
+2. **WHERE-Filter wird hässlich + Index bricht**. PWA filtert mit
+   `?status=pending` → `WHERE status='pending'`. Effective_status erzwingt
+   `WHERE (status='pending' AND expires_at >= now) OR …` — der Index
+   `idx_(user_id, status)` aus
+   [migrations/0005_approvals.sql:58](apps/server/migrations/0005_approvals.sql)
+   nutzt das nicht sauber.
+
+3. **Audit-Konsistenz**. `expired_at`-Timestamp + `tool.approval.sweep_expired`-
+   Event sind an die persistente Spalte gekoppelt. Effective_status führt zu
+   Drift zwischen DB und Audit unter Last.
+
+**Write-Amplification (das Pro-Argument für effective_status)** ist real aber
+begrenzt: Postgres macht keine no-op writes — `UPDATE … WHERE status='pending'
+AND expires_at < now() RETURNING id` schreibt 0 Rows wenn nichts expired ist.
+Acceptable Overhead.
+
+**Zusätzliche Findings aus v1-Deep-Dive (Explore-Agent)**:
+- v1 hat einen `executing`-Status zur Race-Vermeidung bei double-execute. **v2
+  hat den nicht**. Nicht Teil dieses Plans — Folge-Diskussion zu Re-Dispatch-Locking.
+- v1 hat `idempotency_key` mit UNIQUE-Constraint. **v2 hat den nicht**. Bei
+  Claude-Retry kann doppeltes Pending entstehen. Nicht Teil dieses Plans —
+  Folge-Aufgabe.
+- v1 PWA disabled Approve-Button unter 10s Rest-TTL (gegen Approve-Before-
+  Expire-Race). **In Slice 4 mit aufgenommen.**
+- v1 logged Lazy-Flips NICHT im Audit (cron-sweep emittiert das stattdessen
+  einmal pro Sweep). v2 macht's gleich.
+
 
 ### Symptom
 
