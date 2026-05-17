@@ -44,6 +44,7 @@ import type {
   ToolsCallResult,
 } from './types.js';
 import { ipiFilter } from './ipi-filter.js';
+import { wrapKcUntrusted } from './output-wrapper.js';
 
 export interface DispatchArgs {
   readonly name: string;
@@ -224,8 +225,21 @@ export class ToolRegistry {
     }
     const durationMs = Date.now() - startedAt;
 
-    // Step 8: Normalize result to ToolsCallResult + IPI-Filter
-    const normalized = normalizeToolOutput(rawResult);
+    // Step 8: IPI-Output-Wrap → Normalize → IPI-Filter.
+    //
+    // 8a) wrapKcUntrusted walks the raw result and tags every User-Content
+    //     field (title/description/summary/body) with <external-content>
+    //     boundary markers. This applies BEFORE JSON-stringify so the tags
+    //     end up inside the serialized text the LLM sees. Defense-in-depth
+    //     vs IPI: even content below the detection threshold of ipiFilter
+    //     is clearly marked as data, not instructions.
+    // 8b) normalizeToolOutput lifts to ToolsCallResult wire-shape.
+    // 8c) ipiFilter does pattern-based detection + sanitize for high-
+    //     confidence injection attempts.
+    //
+    // PLAN-Ref: PLAN-document-linking.md §10.5 D3, §3.4.
+    const wrapped = wrapKcUntrusted(rawResult);
+    const normalized = normalizeToolOutput(wrapped);
     const { result: filtered, scan } = ipiFilter(normalized);
 
     // Step 9: Audit success

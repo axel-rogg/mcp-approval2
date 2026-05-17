@@ -44,6 +44,7 @@ export type {
 export { zodToJsonSchema } from './json-schema.js';
 export { ipiFilter, scanText, normalizeText } from './ipi-filter.js';
 export type { IpiScanResult, SanitizedToolResult } from './ipi-filter.js';
+export { wrapKcUntrusted } from './output-wrapper.js';
 export {
   McpMethods,
   mapErrorToJsonRpc,
