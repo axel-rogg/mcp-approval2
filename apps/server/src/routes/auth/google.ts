@@ -15,6 +15,7 @@ import { getCookie, setCookie, deleteCookie } from 'hono/cookie';
 import type { AppBindings, ServerContext } from '../../lib/context.js';
 import { HttpError } from '../../lib/errors.js';
 import { authCookieOpts, deleteCookieOpts } from '../../lib/cookie.js';
+import { withRequestId } from '../../lib/logger.js';
 import { GoogleOAuthProvider } from '../../auth/idp/google.js';
 import { acceptInvite } from '../../auth/invite/accept.js';
 import { bootstrapIfNeeded } from '../../auth/bootstrap.js';
@@ -74,10 +75,22 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
     setCookie(c, STATE_COOKIE, JSON.stringify(payload), authCookieOpts(server.config, { maxAge: 10 * 60 }));
     const startArgs = inviteToken ? { state, nonce, inviteToken } : { state, nonce };
     const { authorizationUrl } = await idp.start(startArgs);
+    withRequestId(c.get('requestId')).info(
+      {
+        event: 'auth.google.start',
+        host: new URL(c.req.url).host,
+        returnRaw: returnRaw ?? null,
+        returnTo: returnTo ?? null,
+        invite: !!inviteToken,
+        cookieDomain: server.config.COOKIE_DOMAIN || '(host-scoped)',
+      },
+      'oauth.start',
+    );
     return c.redirect(authorizationUrl);
   });
 
   app.get('/auth/google/callback', async (c) => {
+    const log = withRequestId(c.get('requestId'));
     const code = c.req.query('code');
     const stateQ = c.req.query('state');
     const error = c.req.query('error');
@@ -85,6 +98,16 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
     if (!code || !stateQ) throw HttpError.badRequest('invalid_request', 'missing code/state');
 
     const cookieRaw = getCookie(c, STATE_COOKIE);
+    log.info(
+      {
+        event: 'auth.google.callback.in',
+        host: new URL(c.req.url).host,
+        hasStateCookie: !!cookieRaw,
+        hasCode: !!code,
+        cookieHeaderPresent: !!c.req.header('cookie'),
+      },
+      'oauth.callback.in',
+    );
     if (!cookieRaw) throw HttpError.badRequest('invalid_request', 'missing oauth state cookie');
     let stateCookie: StateCookiePayload;
     try {
@@ -184,9 +207,27 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
     // damit der nachgelagerte Authorize-Endpoint den User wiedererkennt.
     if (stateCookie.returnTo && isSafeReturnPath(stateCookie.returnTo, returnAllowOrigins(server.config))) {
       setCookie(c, 'session_jwt', accessToken, authCookieOpts(server.config, { maxAge: server.config.SESSION_TTL_SEC }));
+      log.info(
+        { event: 'auth.google.callback.redirect', returnTo: stateCookie.returnTo, userId, role },
+        'oauth.callback.redirect',
+      );
       return c.redirect(stateCookie.returnTo, 302);
     }
 
+    log.info(
+      {
+        event: 'auth.google.callback.json',
+        returnToPresent: !!stateCookie.returnTo,
+        returnToSafe: stateCookie.returnTo
+          ? isSafeReturnPath(stateCookie.returnTo, returnAllowOrigins(server.config))
+          : null,
+        returnTo: stateCookie.returnTo ?? null,
+        allowed: returnAllowOrigins(server.config),
+        userId,
+        role,
+      },
+      'oauth.callback.json',
+    );
     return c.json({
       accessToken,
       expiresAt: accessExp,

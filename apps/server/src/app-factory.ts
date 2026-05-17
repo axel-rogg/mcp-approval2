@@ -36,6 +36,7 @@ import type { BlobAdapter, KekProvider } from '@mcp-approval2/adapters';
 import type { AppBindings, ServerContext } from './lib/context.js';
 import { HttpError } from './lib/errors.js';
 import { requestId } from './middleware/request-id.js';
+import { logRequests } from './middleware/log.js';
 import { errorHandler } from './middleware/error-handler.js';
 import {
   createRateLimitMiddleware,
@@ -282,6 +283,8 @@ export async function createApp(
   // Globale Middleware (in order)
   // ─────────────────────────────────────────────────────────────────────
   app.use('*', requestId());
+  // Per-Request-Log (method/path/status/duration). Health-Probes geskipped.
+  app.use('*', logRequests());
   app.onError(errorHandler());
 
   // Rate-Limit fuer User-facing v1 + MCP. Auth-Routen + /health bleiben aussen vor.
