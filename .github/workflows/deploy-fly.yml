@@ -74,7 +74,30 @@ jobs:
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         run: |
-          flyctl deploy --config fly.toml --remote-only --strategy rolling
+          # --wait-timeout 10m: default 5min ist oft zu knapp wenn Fly-API
+          #   gerade unter Last steht. Boot selbst <30s, der Puffer fängt
+          #   Fly-Infra-Flakes ab.
+          # Retry-Schleife: bei Health-Check-Timeout (Fly-Flake) genau EIN
+          #   automatischer Retry. Mehr nicht — wenn 2x failt, ist's das
+          #   Code-Problem und wir wollen es sehen.
+          set +e
+          for attempt in 1 2; do
+            echo "::group::flyctl deploy attempt ${attempt}"
+            flyctl deploy --config fly.toml --remote-only \
+              --strategy rolling --wait-timeout 10m
+            rc=$?
+            echo "::endgroup::"
+            if [ $rc -eq 0 ]; then
+              echo "::notice::Fly deploy succeeded on attempt ${attempt}"
+              exit 0
+            fi
+            if [ $attempt -eq 1 ]; then
+              echo "::warning::Fly deploy attempt 1 failed (rc=${rc}) — retrying once"
+              sleep 30
+            fi
+          done
+          echo "::error::Fly deploy failed twice — investigate"
+          exit 1
 
       - name: Post-deploy health check
         env:

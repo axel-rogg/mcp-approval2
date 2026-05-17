@@ -101,8 +101,13 @@ kill_timeout   = 30
   processes             = ["app"]
 
   [[http_service.checks]]
-    grace_period = "10s"
-    interval     = "30s"
+    # grace_period: wie lange Fly nach machine-start wartet, BEVOR der erste
+    # Check zaehlt. Cold-Start umfasst Node-Init + DbAdapter.connect +
+    # CloudKmsKekProvider.init (1x Google-KMS-Call, kann 5-15s dauern unter
+    # Last) + SubMcp-Registry seed. 60s gibt uns Puffer gegen
+    # 'timeout reached waiting for health checks'.
+    grace_period = "60s"
+    interval     = "15s"
     method       = "GET"
     timeout      = "5s"
     path         = "/health"
