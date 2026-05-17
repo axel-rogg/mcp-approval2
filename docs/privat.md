@@ -310,6 +310,46 @@ Entscheidung dokumentiert in [ADR-0005](./adr/0005-cloud-kms-decision.md).
 
 **Migration-Pfad zu business (Cloud SQL):** identisch zum bestehenden §8.6 (pg_dump → restore). Neon hat keinen Vendor-Lock-In auf SQL-Schema-Ebene, nur auf Admin-API-Ebene (Project-Management — irrelevant für Daten-Migration).
 
+### 9.7 Email-Versand: **Resend (mit Console-Outbox-Fallback)** für Multi-User Tier 1
+
+- **Default `EMAIL_PROVIDER=console`** (Pilot-Start ohne DNS-Setup): Invite/
+  Recovery-Mails landen in `email_outbox`-Tabelle, Operator sieht sie im
+  PWA-Admin-Tab "Outbox" + stellt Links manuell zu (Signal/iMessage). Funktioniert
+  ab dem ersten Tester ohne weitere Setup-Arbeit.
+- **Production-Switch zu Resend** (Operator-Aufgabe, ~30min):
+  1. resend.com signup, Domain `ai-toolhub.org` hinzufügen
+  2. DKIM `resend._domainkey` + SPF + optional DMARC als
+     `cloudflare_record`-Resourcen in [terraform/environments/privat/](../terraform/environments/privat/)
+     einpflegen (Resend hat keinen TF-Provider)
+  3. `doppler secrets set EMAIL_PROVIDER=resend RESEND_API_KEY=rs_<wert> --project mcp-approval2 --config fly`
+  4. `fly secrets set` + redeploy
+- Cost: Resend Free-Tier = 3000 mails/month + 100 mails/day → für 2-15 User-Pilot
+  unbegrenzt; Production-Plan ab 20 USD/mo bei 50k mails
+- Verworfene Alternativen: SendGrid (mature aber teurer + komplexer Setup),
+  Mailgun (DNS-Setup-Reibung ähnlich, weniger moderne API), AWS SES (Sandbox
+  + verify-cycle), Gmail-SMTP (rate-limited + nicht-transactional)
+- Doku: [runbooks/runbook-pilot-open.md](runbooks/runbook-pilot-open.md) §"Resend-Switch"
+
+### 9.8 Multi-User Tier 1 Surface (2026-05-17): Email-Outbox + PWA-Admin-Tab
+
+Operator-UX statt curl-Workflow für Pilot mit 2-15 Testern:
+
+- **EmailAdapter** (`packages/adapters/src/email/`): Console + Resend, Adapter-
+  Pattern damit Switch ohne Code-Change geht
+- **email_outbox-Tabelle** (Migration 0013): persistent jede ausgehende Mail
+  (subject, body_html, body_text, kind, status, error_detail). Admin-only-read
+  via app-layer-gate (analog audit_log, keine RLS-Policy).
+- **PWA Admin-Tab** (`#/admin`, shield-Icon im Header für `role=admin`):
+  - Users-Subtab: suspend/unsuspend/role-change/soft-delete (self-protect aktiv)
+  - Invites-Subtab: Form + acceptUrl-Copy + email-status
+  - Outbox-Subtab: Liste, Body-popup, Link-Extract, Mark-dispatched-Toggle
+  - Audit-Subtab: letzte 100 audit_log-Events
+- **AdminService** Erweiterungen: `changeRole` (mit SEC-008 one_active_admin
+  constraint mapping auf 409), `softDeleteUser` (self-delete forbidden +
+  sessions/refresh-tokens revoked, GDPR-Hard-Erase läuft separat via Cron)
+
+Operator-Setup-Sequenz: [runbooks/runbook-pilot-open.md](runbooks/runbook-pilot-open.md).
+
 ### 9.6 Verworfene Alternativen
 
 - **Coolify auf Hetzner** (self-host PaaS): zwar günstiger als Fly, aber Operator-Verantwortung für die Coolify-Host-VM bleibt — verschiebt das Problem nicht

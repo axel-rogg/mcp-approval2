@@ -1,12 +1,18 @@
-# Status: mcp-approval2 (2026-05-17, Pilot-Deploy LIVE)
+# Status: mcp-approval2 (2026-05-17, Pilot-Ready: Security A+B + Multi-User Tier 1 LIVE)
 
-> **🚀 Pilot-Live 2026-05-17:** Beide Services erstmals end-to-end auf Fly.io
+> **🛡 Security-Audit Phase A+B + Multi-User-Tier-1 deployed 2026-05-17.**
+> 14 Security-Findings gefixt (8 BLOCKER + 6 HIGH). EmailAdapter (Resend +
+> Console-Fallback) + persistente `email_outbox` + PWA-Admin-Tab
+> (Users/Invites/Outbox/Audit) live. Operator-Sequenz für ersten Pilot-Tester
+> siehe [runbooks/runbook-pilot-open.md](runbooks/runbook-pilot-open.md).
+>
+> **🚀 Pilot-Live seit 2026-05-17:** Beide Services erstmals end-to-end auf Fly.io
 > erreichbar. `https://mcp2.ai-toolhub.org/health` → `{"status":"ok"}` (2 Machines fra),
 > `https://mcp-knowledge2.fly.dev/health/ready` → `{"status":"ready","checks":{"db":"ok","blob":"ok"}}`.
-> MCP-Protokoll-Smoke grün: DCR-Registration HTTP 201, OAuth-AS-Metadata + JWKS
+> MCP-Protokoll-Smoke grün: DCR-Registration HTTP 201 (mit
+> `DCR_INITIAL_ACCESS_TOKEN` aus SEC-005-Gating), OAuth-AS-Metadata + JWKS
 > (`kid=key-2026-05-14`) korrekt, `/oauth/authorize` redirected Browser zu
-> Google-OIDC (AS-3-Flow), `/mcp` ohne Bearer → HTTP 401. Token-Rotation + GCP-
-> Console-Redirect-URI-Fix offen für 2026-05-18, sonst Pilot-Service-Live.
+> Google-OIDC (AS-3-Flow), `/mcp` ohne Bearer → HTTP 401.
 >
 > Snapshot. Branch `feat/as3-cutover` enthält die letzten Wellen seit dem 14.05.
 > Pilot-Destroy:
@@ -36,17 +42,20 @@
 > [PLAN-wrapper-conventions](plans/active/PLAN-wrapper-conventions.md),
 > [PLAN-pwa-subtype-renderers](plans/active/PLAN-pwa-subtype-renderers.md),
 > [PLAN-vulnerabilities-2026-05-15](plans/active/PLAN-vulnerabilities-2026-05-15.md),
+> [PLAN-multiuser-tier1](plans/active/PLAN-multiuser-tier1.md) (Email + Outbox + Admin-UI),
+> [security/SECURITY_ISSUES](security/SECURITY_ISSUES.md) (14 fixed in Phase A+B),
+> [runbooks/runbook-pilot-open](runbooks/runbook-pilot-open.md) (Operator-Sequenz),
 > [privat.md](privat.md) — kanonische Fly.io-Architektur-Wahrheit.
 
-## Test-Baseline (lokal, 2026-05-16)
+## Test-Baseline (lokal, 2026-05-17 nach Multi-User-Tier-1)
 
 | Workspace | Tests | Anmerkung |
 |---|---|---|
-| `packages/adapters` | 129 passed, 1 skipped | inkl. OpenBao AppRole + StaticToken + Knowledge-Client |
+| `packages/adapters` | 137 passed, 1 skipped | + 8 EmailAdapter-Tests (Console + Resend, fail-cases) |
 | `packages/core` | 47 passed | crypto, AAD, types |
-| `apps/server` | 519 passed | Routes, Services, Tools, Cron-Dispatcher, kc_wrappers, contract-Tests gegen KC2-Wire |
-| `apps/web` | 16 passed | PWA-Renderer-Dispatch + WebAuthn-PRF-Service |
-| **Total** | **711 passed, 1 skipped** | `npm run typecheck` clean über alle Workspaces |
+| `apps/server` | 617 passed | + Bootstrap-SEC-008, Approval-SEC-001/004/018, OAuth-SEC-005-DCR-Consent, KC-Wrapper-SEC-006, EmailOutbox, Admin-Role/Delete |
+| `apps/web` | 27 passed | + isSafeUrl-SEC-021, config-SEC-003, Admin-Tab compile-checks |
+| **Total** | **828 passed, 1 skipped** | `npm run typecheck` clean über alle 4 Workspaces |
 
 ## Deploy-Status (2026-05-17, Pilot LIVE)
 
@@ -111,6 +120,50 @@ Architektonisch sauber strukturiert ([cf/README.md](../apps/server/src/cf/README
 | Deploy-Script [deploy/cloudflare/deploy.sh](../deploy/cloudflare/deploy.sh) | ✅ idempotent, gut dokumentiert |
 
 **Fazit CF-Pfad:** für Solo-Operator-Use-Case ohne KC2-Anbindung und ohne Approval-Flow theoretisch wieder-aktivierbar — aber für den AS-3-Pilot ist Hetzner/Fly der einzige Weg.
+
+## Security-Audit (2026-05-17): Phase A+B FIXED, Phase C+ Backlog
+
+| Phase | Findings | Status | Commits |
+|---|---|---|---|
+| A (BLOCKER) | SEC-001/002/004/005/006/007/008/009/018 (8) | ✅ FIXED | 246d284, b2ec20f, 79c137d, 1535534, c7adb89, 72df0c0 |
+| B (HIGH) | SEC-003/010/011/019/020/021 (6) | ✅ FIXED | daa4dcf, 1a49347, 3de9e19, f055448, 8d74e45, 25b2d2a |
+| C (HIGH, offen) | SEC-012/013/014/015/016/017/022/023/024/025/026 (11) | ⚠ Backlog | nicht-blockend für Pilot |
+| MEDIUM (offen) | SEC-027..035+ | ⚠ Backlog | post-pilot |
+
+Vollständige Details mit FIXED-Bannern + Commit-Refs in
+[security/SECURITY_ISSUES.md](security/SECURITY_ISSUES.md).
+
+**Operator-Setup nach Phase A+B (Doppler `mcp-approval2/fly`, TF-managed
+via [terraform/environments/privat/approval2-app-secrets.tf](../terraform/environments/privat/approval2-app-secrets.tf)):**
+
+- `BOOTSTRAP_ADMIN_EMAIL=axelrogg@gmail.com` (SEC-008 race-Schutz)
+- `DCR_OPEN=false` + `DCR_INITIAL_ACCESS_TOKEN=GoIc...11Hx1Urw` (SEC-005)
+- `DCR_ALLOWED_REDIRECT_HOSTS=` (leer = nur Scheme-Check)
+
+## Multi-User Tier 1 (2026-05-17): LIVE
+
+Email-Adapter + Persistente Outbox + PWA-Admin-Tab. Pilot kann mit 2-3
+Testern eröffnet werden ohne weiteren Code-Setup. Operator-Sequenz:
+[runbooks/runbook-pilot-open.md](runbooks/runbook-pilot-open.md).
+
+| Komponente | Status | Anmerkung |
+|---|---|---|
+| `packages/adapters/src/email/` (EmailAdapter + Resend + Console) | ✅ live | 8 Tests, Resend-API + AbortController-Timeout |
+| Migration `0013_email_outbox.sql` | ✅ applied | append-only, admin-only-read app-layer-gated |
+| `services/email-outbox.ts` (sendAndPersist + listOutbox + markDispatched) | ✅ live | fail-soft bei Send-Fail, Outbox bleibt |
+| Invite + Recovery wire EmailAdapter | ✅ live | no-enumeration-leak bei unknown-email |
+| `AdminService.changeRole + softDeleteUser` | ✅ live | one_active_admin-constraint mapped auf 409 |
+| `routes/admin.ts` (POST role, DELETE user, GET/POST email-outbox) | ✅ live | adminOnly-middleware |
+| PWA Admin-Tab (`#/admin`) mit 4 Subtabs | ✅ live | Shield-Icon nur für admins sichtbar |
+| Doppler-Secrets (`EMAIL_PROVIDER`, `EMAIL_FROM`, `RESEND_API_KEY`) | ✅ via TF | Default-Mode `console` — Resend-Switch ist optional |
+| Resend-DNS-Verify | ⚠ pending | Operator-out-of-band: resend.com signup + DNS in CF einpflegen |
+
+**Multi-User Phase 2 Backlog** (kein Pilot-Blocker):
+- Logout-All-Devices Endpoint
+- Recovery-Codes (2-Faktor-Fallback)
+- R2-Storage-Quota pro User
+- `/admin/users/:id/relink` für SEC-010-Pattern
+- PWA-Recovery-Form (heute nur API-Endpunkt)
 
 ## Security-Follow-Ups (offen für 2026-05-18)
 
