@@ -85,6 +85,7 @@ import { internalCronRoutes } from './routes/internal/cron.js';
 import { internalAppsImportRoutes } from './routes/internal/apps-import.js';
 import { internalServersImportRoutes } from './routes/internal/servers-import.js';
 import { internalObjectsImportRoutes } from './routes/internal/objects-import.js';
+import { internalRefsImportRoutes } from './routes/internal/refs-import.js';
 import { createDekService } from './services/dek.js';
 import { createAdminService } from './services/admin.js';
 import { createEmailOutboxService } from './services/email-outbox.js';
@@ -918,6 +919,18 @@ export async function createApp(
           server,
           knowledge: deps.knowledge,
           ...(userSyncService ? { userSync: userSyncService } : {}),
+        }),
+      );
+
+      // POST /internal/v1/refs/import — PLAN-document-linking §9 P6.
+      // v1 → v2 Knowledge-Graph-Refs-Migration. v1-IDs werden im Service-
+      // Layer auf v2-IDs aufgelöst (via meta.v1_id der schon migrierten Objects).
+      app.use('/internal/v1/refs/*', serviceTokenGuard);
+      app.route(
+        '/',
+        internalRefsImportRoutes({
+          server,
+          knowledge: deps.knowledge,
         }),
       );
     }

@@ -23,6 +23,7 @@
  */
 
 import type {
+  AddRefArgs,
   CreateShareArgs,
   EraseUserArgs,
   EraseUserResult,
@@ -30,6 +31,7 @@ import type {
   KnowledgeAdapter,
   ListObjectsArgs,
   ListSharesArgs,
+  RemoveRefArgs,
   RevokeShareArgs,
   SearchArgs,
   SyncUserArgs,
@@ -505,6 +507,36 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
       method: 'DELETE',
       path: `/v1/objects/${encodeURIComponent(args.id)}`,
       userId: args.userId,
+      scope: 'objects:write',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Refs (PLAN-document-linking §10.5)
+  // ---------------------------------------------------------------------------
+
+  async addRef(args: AddRefArgs): Promise<void> {
+    const body: Record<string, unknown> = { to_id: args.toId, role: args.role };
+    if (args.meta !== undefined) body['meta'] = args.meta;
+    await this.authedFetch<void>({
+      method: 'POST',
+      path: `/v1/objects/${encodeURIComponent(args.fromId)}/refs`,
+      userId: args.userId,
+      body,
+      scope: 'objects:write',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
+    });
+  }
+
+  async removeRef(args: RemoveRefArgs): Promise<void> {
+    await this.authedFetch<void>({
+      method: 'DELETE',
+      path: `/v1/objects/${encodeURIComponent(args.fromId)}/refs`,
+      userId: args.userId,
+      body: { to_id: args.toId, role: args.role },
       scope: 'objects:write',
       ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
       ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),

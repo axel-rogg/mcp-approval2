@@ -203,6 +203,21 @@ export interface EraseUserResult {
   readonly deletedRows: number;
 }
 
+export interface AddRefArgs extends OnBehalfOfFields {
+  readonly userId: string;
+  readonly fromId: string;
+  readonly toId: string;
+  readonly role: string;
+  readonly meta?: Record<string, unknown>;
+}
+
+export interface RemoveRefArgs extends OnBehalfOfFields {
+  readonly userId: string;
+  readonly fromId: string;
+  readonly toId: string;
+  readonly role: string;
+}
+
 export interface KnowledgeAdapter {
   // ---------- Objects ----------
   createObject(args: CreateObjectArgs): Promise<KnowledgeObject>;
@@ -215,6 +230,10 @@ export interface KnowledgeAdapter {
     userEmail?: string;
     approvalId?: string;
   }): Promise<void>;
+
+  // ---------- Refs (PLAN-document-linking §10.5) ----------
+  addRef(args: AddRefArgs): Promise<void>;
+  removeRef(args: RemoveRefArgs): Promise<void>;
 
   // ---------- Sharing ----------
   createShare(args: CreateShareArgs): Promise<Share>;

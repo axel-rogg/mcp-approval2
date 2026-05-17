@@ -206,16 +206,74 @@ export class KnowledgeService {
   }
 
   // ---------------------------------------------------------------------------
-  // Knowledge-Graph: skill ↔ doc resource-refs.
+  // Native KC2-Refs (PLAN-document-linking §10.5).
   //
-  // KC2 hat heute keine dedizierten /v1/refs-Routes (vgl. KC1.skill_resource +
-  // object_refs); wir modellieren die Beziehung im `meta`-Feld des Skill-
-  // Objekts unter `meta.resource_ids: string[]`. Das ist forward-compatible —
-  // sobald KC2 native refs hat, wird hier umgestellt ohne dass Tool-Caller
-  // angefasst werden muessen.
+  // Diese Methoden delegieren direkt an `object_refs` in KC2 — die kanonische
+  // Storage für den Knowledge-Graph. Cycle-Detection + Refcount + is_subdoc-
+  // Toggle laufen KC2-seitig. Approval-Audit-Trail ist hier verkabelt.
+  // ---------------------------------------------------------------------------
+
+  async addRef(args: {
+    userId: string;
+    userEmail?: string;
+    approvalId?: string;
+    fromId: string;
+    toId: string;
+    role: string;
+    meta?: Record<string, unknown>;
+  }): Promise<void> {
+    await this.audited(
+      'knowledge.ref.add',
+      args.userId,
+      undefined,
+      args.fromId,
+      () =>
+        this.adapter.addRef({
+          userId: args.userId,
+          ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+          ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
+          fromId: args.fromId,
+          toId: args.toId,
+          role: args.role,
+          ...(args.meta !== undefined ? { meta: args.meta } : {}),
+        }),
+      () => ({ details: { toId: args.toId, role: args.role } }),
+    );
+  }
+
+  async removeRef(args: {
+    userId: string;
+    userEmail?: string;
+    approvalId?: string;
+    fromId: string;
+    toId: string;
+    role: string;
+  }): Promise<void> {
+    await this.audited(
+      'knowledge.ref.remove',
+      args.userId,
+      undefined,
+      args.fromId,
+      () =>
+        this.adapter.removeRef({
+          userId: args.userId,
+          ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+          ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
+          fromId: args.fromId,
+          toId: args.toId,
+          role: args.role,
+        }),
+      () => ({ details: { toId: args.toId, role: args.role } }),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Knowledge-Graph: skill ↔ doc resource-refs (LEGACY meta.resource_ids-Pfad).
   //
-  // Achtung: refcount + Vectorize-Cleanup laufen heute NICHT (Folge-Plan).
-  // Diese Wrapper sind die Approval-Surface; KC2 owns die Persistenz.
+  // PLAN-document-linking §10.5: dieser Pfad ist seit native `addRef`-Support
+  // deprecated und sollte durch `addRef(role='resource')` ersetzt werden
+  // (P7). Heute koexistieren beide Pfade; bei Migration in P7 wird die
+  // meta.resource_ids-Verkabelung entfernt.
   // ---------------------------------------------------------------------------
 
   /**
