@@ -243,6 +243,14 @@ export const SkillsAttachResourceInput = z
   .strict();
 export type SkillsAttachResourceInput = z.infer<typeof SkillsAttachResourceInput>;
 
+export const SkillsDetachResourceInput = z
+  .object({
+    skill_id: z.string().min(1).max(128),
+    doc_id: z.string().min(1).max(128),
+  })
+  .strict();
+export type SkillsDetachResourceInput = z.infer<typeof SkillsDetachResourceInput>;
+
 // =============================================================================
 // Memorize-Tools  (kind='memo', subtype=scope)
 // =============================================================================

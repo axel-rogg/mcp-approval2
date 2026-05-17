@@ -272,6 +272,7 @@ describe('registerKcWrapperTools — registration', () => {
         'skills.search',
         'skills.read_resource',
         'skills.attach_resource',
+        'skills.detach_resource',
         'memorize.add',
         'memorize.search',
         'memorize.list_recent',
@@ -289,18 +290,12 @@ describe('registerKcWrapperTools — registration', () => {
         'notes.list',
         'notes.get',
         'notes.delete',
-        'bookmarks.create',
-        'bookmarks.list',
-        'bookmarks.get',
-        'bookmarks.delete',
-        'recipes.create',
-        'recipes.update',
-        'recipes.list',
-        'recipes.get',
-        'recipes.delete',
       ].sort(),
     );
-    expect(registry.size()).toBe(40);
+    // 31 = 7 docs + 8 skills + 4 memorize + 2 objects + 6 lists + 5 notes
+    // bookmarks/recipes entfernt 2026-05-17; skills.detach_resource hinzu P7
+    // (PLAN-doc-linking).
+    expect(registry.size()).toBe(32);
   });
 
   it('exposes correct sensitivity annotations', () => {

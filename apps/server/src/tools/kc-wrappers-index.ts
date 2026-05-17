@@ -29,6 +29,7 @@ import {
 import {
   makeSkillsAttachResourceTool,
   makeSkillsDeleteTool,
+  makeSkillsDetachResourceTool,
   makeSkillsGetTool,
   makeSkillsListTool,
   makeSkillsPutTool,
@@ -103,7 +104,7 @@ export function registerKcWrapperTools(
   registry.register(makeDocsAttachToTool(dDeps));
   registry.register(makeDocsUpdateSummaryTool(dDeps));
 
-  // Skills (7)
+  // Skills (8) — PLAN-doc-linking P7: detach_resource hinzugefügt.
   registry.register(makeSkillsPutTool(sDeps));
   registry.register(makeSkillsGetTool(sDeps));
   registry.register(makeSkillsListTool(sDeps));
@@ -111,6 +112,7 @@ export function registerKcWrapperTools(
   registry.register(makeSkillsSearchTool(sDeps));
   registry.register(makeSkillsReadResourceTool(sDeps));
   registry.register(makeSkillsAttachResourceTool(sDeps));
+  registry.register(makeSkillsDetachResourceTool(sDeps));
 
   // Memorize (4)
   registry.register(makeMemorizeAddTool(mDeps));

@@ -28,6 +28,7 @@ import type { KnowledgeService } from '../services/knowledge.js';
 import {
   SkillsAttachResourceInput,
   SkillsDeleteInput,
+  SkillsDetachResourceInput,
   SkillsGetInput,
   SkillsListInput,
   SkillsPutInput,
@@ -35,6 +36,7 @@ import {
   SkillsSearchInput,
   type SkillsAttachResourceInput as SkillsAttachResourceInputT,
   type SkillsDeleteInput as SkillsDeleteInputT,
+  type SkillsDetachResourceInput as SkillsDetachResourceInputT,
   type SkillsGetInput as SkillsGetInputT,
   type SkillsListInput as SkillsListInputT,
   type SkillsPutInput as SkillsPutInputT,
@@ -242,24 +244,70 @@ export function makeSkillsReadResourceTool(
 }
 
 // ---------------------------------------------------------------------------
-// skills.attach_resource — write
+// skills.attach_resource — write  (PLAN-document-linking §10.5 D4, P7)
+//
+// Schaltet auf native KC2-Refs um: object_refs(role='resource'). Idempotent
+// via KC2's ON CONFLICT DO NOTHING. Legacy `meta.resource_ids[]` wird hier
+// nicht mehr geschrieben — bei alten Skills existieren beide Pfade parallel
+// (Storage-Detail-View liest beide).
 // ---------------------------------------------------------------------------
 
 export function makeSkillsAttachResourceTool(
   deps: SkillsToolsDeps,
-): Tool<SkillsAttachResourceInputT, KnowledgeObject> {
+): Tool<SkillsAttachResourceInputT, { ok: true; warnings: string[] }> {
   return {
     name: 'skills.attach_resource',
-    description: 'Attach a doc as a resource to a skill (idempotent).',
+    description:
+      'Attach a doc as a resource to a skill. Idempotent (re-attach is a no-op). ' +
+      'Creates a knowledge-graph ref role="resource" — Agent lädt das Doc mit ' +
+      'wenn der Skill geladen wird (siehe objects.get refs.outgoing[]).',
     sensitivity: 'write',
-    displayTemplate: 'Attach doc {{doc_id}} to skill {{skill_id}}',
+    displayTemplate: 'Attach doc {{doc_id}} as resource to skill {{skill_id}}',
     inputSchema: SkillsAttachResourceInput,
-    async execute(ctx: ToolContext, input): Promise<KnowledgeObject> {
-      return deps.knowledge.attachDocToSkill({
+    async execute(ctx: ToolContext, input): Promise<{ ok: true; warnings: string[] }> {
+      await deps.knowledge.addRef({
         userId: ctx.userId,
-        skillId: input.skill_id,
-        docId: input.doc_id,
+        userEmail: ctx.email,
+        ...(ctx.approvalId !== undefined ? { approvalId: ctx.approvalId } : {}),
+        fromId: input.skill_id,
+        toId: input.doc_id,
+        role: 'resource',
       });
+      // KC2 returns warnings via the route response, but the adapter's
+      // addRef currently swallows the body (POST returns 204 on clean).
+      // We expose ok+empty-warnings to keep the tool-response shape stable;
+      // when adapter is extended to surface warnings, this returns them.
+      return { ok: true, warnings: [] };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// skills.detach_resource — write  (PLAN-document-linking §10.5 P7)
+// ---------------------------------------------------------------------------
+
+export function makeSkillsDetachResourceTool(
+  deps: SkillsToolsDeps,
+): Tool<SkillsDetachResourceInputT, { ok: true }> {
+  return {
+    name: 'skills.detach_resource',
+    description:
+      'Remove a resource link from a skill. Idempotent (remove of non-existent is a no-op). ' +
+      'Does NOT delete the doc — only the knowledge-graph edge. If doc was attached only ' +
+      'to this skill, doc.is_subdoc flips back to false.',
+    sensitivity: 'write',
+    displayTemplate: 'Detach doc {{doc_id}} from skill {{skill_id}}',
+    inputSchema: SkillsDetachResourceInput,
+    async execute(ctx: ToolContext, input): Promise<{ ok: true }> {
+      await deps.knowledge.removeRef({
+        userId: ctx.userId,
+        userEmail: ctx.email,
+        ...(ctx.approvalId !== undefined ? { approvalId: ctx.approvalId } : {}),
+        fromId: input.skill_id,
+        toId: input.doc_id,
+        role: 'resource',
+      });
+      return { ok: true };
     },
   };
 }
