@@ -87,6 +87,15 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
+      # Workspace-packages (core + adapters) muessen gebaut sein BEVOR typecheck
+      # vom server-Workspace laeuft — sonst kann tsc die @mcp-approval2/*
+      # Module nicht via "types": dist/*.d.ts aufloesen → TS2307 Cannot-find-module.
+      # `npm run build --if-present` baut core+adapters+server+web (Reihenfolge
+      # via workspace-deps), web-Build ist tsc --noEmit + vite build und damit
+      # selbst Typecheck.
+      - name: Build workspaces (needed before typecheck)
+        run: npm run build
+
       - name: Typecheck (all workspaces)
         run: npm run typecheck
 
