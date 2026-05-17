@@ -311,9 +311,11 @@ function renderServerCard(
   const titleRow = document.createElement('div');
   titleRow.className = 'server-card-title-row';
 
-  // ─── Actions LINKS ───
+  // ─── Actions RECHTSBÜNDIG (User-Wunsch 2026-05-17) ───
   // Reihenfolge: [Toggle] [⚙ Konfig] [↻ Refresh] [🗑 Delete-wenn-userOwned]
   // Native + knowledge2: nur Konfig (Tool-Defaults), kein Toggle/Delete.
+  // DOM-Order: Title + Pills zuerst, Actions als letztes Element +
+  // margin-left:auto schiebt sie nach rechts. Siehe CSS.
   const actions = document.createElement('div');
   actions.className = 'server-card-actions';
 
@@ -384,8 +386,6 @@ function renderServerCard(
     actions.appendChild(deleteBtn);
   }
 
-  titleRow.appendChild(actions);
-
   const title = document.createElement('span');
   title.className = 'server-card-title';
   title.textContent = s.displayName;
@@ -402,6 +402,9 @@ function renderServerCard(
     disabled.textContent = 'aus';
     titleRow.appendChild(disabled);
   }
+
+  // Actions ans Ende — margin-left:auto schiebt rechtsbündig.
+  titleRow.appendChild(actions);
 
   summary.appendChild(titleRow);
 
@@ -707,6 +710,11 @@ async function renderServersView(
     try {
       const result = await api.rediscoverGateways(name ?? undefined);
       status.textContent = renderRediscoverResult(result);
+      // Wenn pro-Server-Errors in der Liste sind: status visuell rot
+      // markieren. Sonst sieht der User "+0 -0 (-) · 1 Fehler: ..." im
+      // Default-grauen-Text und es wirkt wie ein normaler Status.
+      const hasErrors = result.results.some((r) => r.error);
+      status.classList.toggle('err', hasErrors);
       await loadAndRender();
     } catch (err) {
       status.classList.add('err');

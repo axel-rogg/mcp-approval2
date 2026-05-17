@@ -2543,6 +2543,9 @@ code {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
+  /* User-Wunsch 2026-05-17: Actions rechtsbündig. margin-left:auto
+     schiebt den ganzen Cluster ans rechte Ende der title-row. */
+  margin-left: auto;
 }
 
 /* Wenn actions leer ist (Native ohne Toggle/Delete), Container komplett
@@ -2555,6 +2558,18 @@ code {
   min-width: 1.8rem;
   min-height: 1.8rem;
   padding: 0.25rem;
+}
+
+/* Rote Mülltonne — User-Wunsch 2026-05-17 "die Mülltonne rot".
+   Der Delete-Button trägt schon .btn-danger; wir explizit die Stroke
+   auf --danger fuer den SVG-Trash. Hover macht's noch deutlicher. */
+.server-card-actions .server-card-delete {
+  color: var(--danger, #cf222e);
+}
+
+.server-card-actions .server-card-delete:hover {
+  background: rgba(207, 34, 46, 0.12);
+  color: var(--danger, #cf222e);
 }
 
 /* Toggle-Switch — Hidden-Checkbox + Slider-Span (CSS-Switch-Pattern). */
