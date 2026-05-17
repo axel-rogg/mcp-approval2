@@ -148,9 +148,9 @@ async function renderUsersSubtab(
   card.appendChild(h2);
 
   const table = document.createElement('table');
-  table.className = 'admin-table';
+  table.className = 'admin-table admin-users-table';
   table.innerHTML = `<thead><tr>
-    <th>Email</th><th>Name</th><th>Role</th><th>Status</th><th>Last login</th><th>Actions</th>
+    <th>Email</th><th>Role / Status</th><th>Last login</th><th>Actions</th>
   </tr></thead>`;
   const tbody = document.createElement('tbody');
   for (const u of users) {
@@ -171,15 +171,19 @@ function renderUserRow(
 ): HTMLTableRowElement {
   const tr = document.createElement('tr');
   tr.dataset['userId'] = u.id;
+  // Display-Name (aus Google-OAuth-Profil) als title-tooltip auf der Email-
+  // Zelle — Spalte selbst entfernt weil nicht UI-pflegbar + mobil zu breit.
+  const titleAttr = u.display_name ? ` title="${escapeHtml(u.display_name)}"` : '';
   tr.innerHTML = `
-    <td><code>${escapeHtml(u.email)}</code></td>
-    <td>${escapeHtml(u.display_name)}</td>
-    <td><span class="pill pill-${u.role}">${u.role}</span></td>
-    <td><span class="pill pill-${u.status}">${u.status}</span></td>
+    <td${titleAttr}><code>${escapeHtml(u.email)}</code></td>
+    <td class="admin-pill-stack">
+      <span class="pill pill-${u.role}">${u.role}</span>
+      <span class="pill pill-${u.status}">${u.status}</span>
+    </td>
     <td class="small muted">${fmtDate(u.last_login_at)}</td>
   `;
   const actionsTd = document.createElement('td');
-  actionsTd.className = 'row';
+  actionsTd.className = 'admin-actions-stack';
 
   const isSelf = u.id === session.userId;
 

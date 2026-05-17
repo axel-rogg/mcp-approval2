@@ -2127,3 +2127,46 @@ code {
   font-size: 0.75rem;
 }
 
+/* Users-Tabelle: Role+Status als vertikaler Pill-Stack, Actions vertikal
+ * gestackt damit Tabelle auch auf Handy passt. */
+.admin-users-table .admin-pill-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  align-items: flex-start;
+}
+
+.admin-users-table .admin-actions-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  align-items: stretch;
+  min-width: 6.5rem;
+}
+
+.admin-users-table .admin-actions-stack .btn,
+.admin-users-table .admin-actions-stack button,
+.admin-users-table .admin-actions-stack select {
+  width: 100%;
+  font-size: 0.75rem;
+  padding: 0.25rem 0.5rem;
+  line-height: 1.2;
+}
+
+/* Mobile (<=480px): noch enger, code-Spalte word-break damit Email umbricht */
+@media (max-width: 480px) {
+  .admin-users-table {
+    font-size: 0.78rem;
+  }
+  .admin-users-table code {
+    font-size: 0.72rem;
+    word-break: break-all;
+  }
+  .admin-users-table tbody td {
+    padding: 0.35rem 0.4rem;
+  }
+  .admin-users-table .admin-actions-stack {
+    min-width: 5.5rem;
+  }
+}
+
