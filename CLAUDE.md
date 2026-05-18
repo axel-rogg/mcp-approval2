@@ -253,6 +253,27 @@ TF-Provider dafür gibt. Token-Werte und Geheimnisse können meist via TF-Resour
 Outputs direkt in Doppler-Secrets gepiped werden — kein Copy-Paste durch den
 User nötig.
 
+## MCP-Tool-Selbstreferenz (`mcp__approval2__*`)
+
+Claude Code hat **approval2 selbst als MCP-Server eingebunden** (`~/.claude.json`
+top-level `mcpServers.approval2 → https://mcp2.ai-toolhub.org/mcp`, HTTP +
+DCR-OAuth). **Wichtig:** diese Tools rufen GENAU das System auf, das hier
+entwickelt wird — Self-Hosting-Loop. Konsequenzen:
+
+- **Erst-Auth**: vor erstem Tool-Call ruft Claude Code `mcp__approval2__authenticate`
+  → Browser-OAuth-Flow → `mcp__approval2__complete_authentication`. Danach
+  sind die ~219 Tools als `mcp__approval2__<tool>` (z.B. `tools_list`,
+  `tools_run`, `utils:now`, `gws.calendar.list`) verfügbar.
+- **Sensibilität bei Dev-Loops**: bei lokalen Code-Änderungen am Tool-Surface
+  laufen die `mcp__approval2__*`-Calls weiter gegen **prod** (`mcp2.ai-toolhub.
+  org`), nicht gegen deinen lokalen Dev-Stand. Test-Smoke gegen prod ist OK,
+  destruktive Operationen nicht.
+- **NIEMALS** `mcp__approval2__*` für Schreiboperationen auf eigene
+  Resourcen nutzen während du Migrations/Schema-Changes baust — die Tools
+  greifen auf die EIGENE Postgres-DB zu.
+- Read-only Tests (`tools_list`, `utils:now`, `gcloud:health`, `*.read.*`)
+  sind safe und nützlich zur E2E-Verifikation.
+
 **Dokumentierte Ausnahmen** (Dashboard-Pfad legitim):
 - Provider unterstützt die Ressource nicht (z.B. CF AI Gateway Authentication
   Token ist gateway-intern, kein eigenes TF-Resource — fallback: Authenticated=false)
