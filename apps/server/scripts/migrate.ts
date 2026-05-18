@@ -122,6 +122,18 @@ async function main() {
   const sql = postgres(dbUrl, { max: 1, onnotice: () => {} });
 
   try {
+    // Neon-Pooler-Quirk: connect macht implicit SET ROLE neon_superuser.
+    // ALTER TABLE checked gegen current_user — die alten approval2-Tabellen
+    // (sessions, users, etc.) sind approval_app-owned. Ohne RESET ROLE
+    // bekommt jedes ALTER "must be owner of table X".
+    // Symptomgleich zu KC2-Mig-Sprint 2026-05-18; full root-cause in
+    // knowledge2 scripts/migrate.ts.
+    try {
+      await sql.unsafe('RESET ROLE');
+    } catch {
+      // Lokaler Postgres ohne neon_superuser-Membership: no-op.
+    }
+
     // Ensure tracking table exists (idempotent).
     const metaPath = join(MIGRATIONS_DIR, META_FILE);
     const metaSql = readFileSync(metaPath, 'utf8');
