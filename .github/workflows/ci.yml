@@ -3,8 +3,37 @@ name: CI
 on:
   push:
     branches: ['**']
+    # paths-ignore: rein-dokumentarische / infra-orthogonale Aenderungen brauchen
+    # kein CI (Postgres+OpenBao-Container, build, typecheck, lint, test). Whitelist
+    # ist riskanter — neue Code-Pfade wuerden lautlos uebersprungen.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'terraform/**'        # hat eigenen Workflow terraform-plan.yml
+      - 'deploy/**'           # Deploy-Configs, kein Build-Impact
+      - 'scripts/**'          # Bash-Scripts, kein TS-Build
+      - '.claude/**'
+      - '.vscode/**'
+      - '.editorconfig'
+      - '.gitignore'
+      - '.dockerignore'
+      - '.env.example'
+      - 'BITTE_TESTEN.md'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'terraform/**'
+      - 'deploy/**'
+      - 'scripts/**'
+      - '.claude/**'
+      - '.vscode/**'
+      - '.editorconfig'
+      - '.gitignore'
+      - '.dockerignore'
+      - '.env.example'
+      - 'BITTE_TESTEN.md'
 
 # Cancel superseded runs on the same ref to save CI minutes.
 concurrency:

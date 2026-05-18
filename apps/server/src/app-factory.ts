@@ -990,6 +990,17 @@ export async function createApp(
         config: server.config,
         cache: subMcpWrappersCache,
       },
+      // Sprint 2026-05-18: sweep-oauth-state Deps. Nur wenn der
+      // OAuth-Service verfuegbar ist (kekProvider live).
+      ...(userServerOAuthService
+        ? {
+            sweepOAuthState: {
+              cleanupOAuthState: () => userServerOAuthService.cleanupExpired(),
+              cleanupStaleToolCache: (staleBefore: number) =>
+                userSubMcpToolCacheService.cleanupStale(staleBefore),
+            },
+          }
+        : {}),
       ...(optionalServices.push ? { push: optionalServices.push } : {}),
       // AS-3 (A9): kc-manifest-refresh erhaelt registry + previous-snapshot
       // wenn das Boot-Build erfolgreich war. Cache-getter laeuft jedes Mal —

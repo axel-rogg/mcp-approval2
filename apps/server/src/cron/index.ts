@@ -41,6 +41,10 @@ import {
   runKcManifestRefresh,
   type KcManifestRefreshDeps,
 } from './kc-manifest-refresh.js';
+import {
+  runSweepOAuthState,
+  type OAuthStateSweepDeps,
+} from './sweep-oauth-state.js';
 
 export const CRON_TASKS = [
   'auto-archive-apps',
@@ -52,6 +56,8 @@ export const CRON_TASKS = [
   'reminders',
   // AS-3 (A9): KC2-Manifest-Refresh, scheduled `*/5 * * * *`.
   'kc-manifest-refresh',
+  // Sprint 2026-05-18: Per-User OAuth-State + stale tool-cache. */5 oder hourly.
+  'sweep-oauth-state',
 ] as const;
 
 export type CronTask = (typeof CRON_TASKS)[number];
@@ -93,6 +99,13 @@ export interface CronDeps {
    * Restart sichtbar. App-Factory verkabelt das standardmaessig.
    */
   readonly subMcpWrappers?: SubMcpWrappersRefreshDeps;
+  /**
+   * Sprint 2026-05-18: Sweep-Deps fuer sweep-oauth-state.
+   * Wenn nicht gesetzt → Task ist noop (returns skipped). App-Factory
+   * verkabelt das wenn UserServerOAuthService + UserSubMcpToolCacheService
+   * verfuegbar sind.
+   */
+  readonly sweepOAuthState?: OAuthStateSweepDeps;
 }
 
 /**
@@ -130,6 +143,8 @@ export async function runCronTask(task: string, deps: CronDeps): Promise<TaskRes
       return runReminders(deps);
     case 'kc-manifest-refresh':
       return runKcManifestRefresh(deps);
+    case 'sweep-oauth-state':
+      return runSweepOAuthState(deps);
   }
 }
 

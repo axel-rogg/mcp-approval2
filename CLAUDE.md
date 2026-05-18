@@ -164,7 +164,7 @@ mcp-approval2/
   `if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || contains(join(github.event.commits.*.message, ' '), '[deploy]')`.
   Ohne `[deploy]`-Tag: Workflow startet kurz, Job skipped sofort — **kein Docker-Build, kein Fly-Deploy**. Erspart Compute + reduziert Lärm in der Actions-UI. (Konvention von mcp-approval v1 übernommen — `commits.*` statt nur `head_commit` fängt Multi-Commit-Pushes ab, bei denen `[deploy]` in einem buried Commit steckt.)
 - Manueller Deploy: `gh workflow run deploy-fly.yml` (workflow_dispatch) — z.B. um eine Doku-Korrektur ohne Code-Change zu deployen.
-- CI (`ci.yml`) läuft auf jedem Push (Branches: `'**'`) — das ist unkritisch, Concurrency-Cancel-in-progress ist aktiv.
+- CI (`ci.yml`) läuft auf jedem Push (Branches: `'**'`) mit `paths-ignore` für `**/*.md`, `docs/**`, `terraform/**`, `deploy/**`, `scripts/**`, `.claude/**`, `.vscode/**` und einige Root-Dotfiles. Atomare Doc-/Plan-/Terraform-/Cosmetic-Pushes triggern damit weder die Postgres+OpenBao-Service-Container noch build/typecheck/lint/test. Concurrency-Cancel-in-progress bleibt als Fallback für rapid-fire-Code-Pushes aktiv.
 - Co-Authored-By-Footer für Claude-generierte Commits
 
 ## Konventionen
