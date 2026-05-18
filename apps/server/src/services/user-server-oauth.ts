@@ -267,22 +267,23 @@ export function createUserServerOAuthService(
       const userConfig = await config.getAllValues(userId, subMcpName);
       let clientId = userConfig.get('_oauth_client_id') ?? userConfig.get('client_id');
 
-      // shared-app: globale OAuth-App (Operator-Setup einmalig). Refresh-Token
-      // bleibt per-User, aber alle User durchlaufen Authorize mit demselben
-      // client_id/secret. Beispiel: gws + gcloud nutzen die Google-OAuth-App
-      // die schon fuer Login angelegt wurde.
-      if (oauth.kind === 'shared-app') {
+      // shared-app: globale OAuth-App (Operator-Setup einmalig).
+      // Per-User-Override hat Vorrang: wenn der User selbst client_id in der
+      // PWA gesetzt hat (user_sub_mcp_config._oauth_client_id), den nehmen.
+      // Sonst env-Fallback (Operator-Setup via Doppler/wrangler).
+      //
+      // Background: ein User kann eine eigene Google-OAuth-App haben (eigene
+      // Redirect-URIs konfiguriert, eigene Test-User-Liste, eigene Scope-
+      // Approval). Hardcoded env-Fallback wuerde das verhindern.
+      if (oauth.kind === 'shared-app' && !clientId) {
         const creds = sharedAppCredentials(subMcpName, oauth);
         if (!creds) {
           throw HttpError.badRequest(
             'invalid_request',
-            `server '${subMcpName}' kind='shared-app' aber Operator hat keine ${oauth.client_id_env ?? 'GOOGLE_WORKSPACE_CLIENT_ID'} / GOOGLE_CLIENT_ID in env gesetzt`,
+            `server '${subMcpName}' kind='shared-app': weder per-User _oauth_client_id gesetzt noch Operator-env (${oauth.client_id_env ?? 'GOOGLE_WORKSPACE_CLIENT_ID'} / GOOGLE_CLIENT_ID) verfuegbar`,
           );
         }
         clientId = creds.clientId;
-        // client_secret wird NICHT in user_sub_mcp_config gespeichert (waere
-        // Doppelung der env-Var). Statt dessen liest callback() ihn beim
-        // Token-Exchange erneut aus den shared-app-Credentials.
       }
 
       // DCR (RFC 7591) — wenn kind='dcr' und kein client_id im config:
@@ -402,21 +403,24 @@ export function createUserServerOAuthService(
       let clientId = userConfig.get('_oauth_client_id') ?? userConfig.get('client_id');
       let clientSecret = userConfig.get('_oauth_client_secret');
 
-      // shared-app: client_id/secret aus env (gleicher Lookup wie start()).
-      // Wir speichern beides NICHT in user_sub_mcp_config — der refresh-grant
-      // (sub-mcp-auth-enricher.ts) liest sie ebenso aus env. Nur der
-      // refresh_token landet user-encrypted in der Config.
-      if (oauth.kind === 'shared-app') {
+      // shared-app: client_id/secret aus user-config bevorzugen (per-User-
+      // Override aus PWA), sonst env-Fallback (Operator-Setup). Spiegel zu
+      // start() — wir muessen dieselben Credentials beim Token-Exchange
+      // verwenden mit denen authorize gestartet wurde.
+      if (oauth.kind === 'shared-app' && !clientId) {
         const creds = sharedAppCredentials(subMcpName, oauth);
         if (!creds) {
           throw HttpError.badRequest(
             'invalid_request',
-            `server '${subMcpName}' kind='shared-app' aber Operator hat keine client_id/secret in env`,
+            `server '${subMcpName}' kind='shared-app': weder per-User noch Operator-env Credentials`,
           );
         }
         clientId = creds.clientId;
         clientSecret = creds.clientSecret;
       }
+      // Beide Pfade (per-User + env) brauchen client_secret fuer Token-Exchange.
+      // Wenn per-User-clientId gesetzt aber kein _oauth_client_secret: User
+      // muss in PWA auch das Secret hinterlegen (sonst error=invalid_client).
 
       if (!clientId) {
         throw HttpError.badRequest('invalid_request', 'client_id missing');
