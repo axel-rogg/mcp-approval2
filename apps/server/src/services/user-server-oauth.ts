@@ -112,10 +112,12 @@ function computeCodeChallenge(verifier: string): string {
 /**
  * Default-Lookup fuer shared-app-Credentials. Liest aus process.env:
  *   1. <meta.client_id_env> + <meta.client_secret_env>  (Override pro Server)
- *   2. GOOGLE_WORKSPACE_CLIENT_ID + GOOGLE_WORKSPACE_CLIENT_SECRET (Default)
- *   3. GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET           (Fallback: gleiche
- *      App wie Login-OIDC, funktioniert wenn der Consent-Screen die GWS-
- *      Scopes deklariert hat)
+ *   2. GOOGLE_WORKSPACE_CLIENT_ID + GOOGLE_WORKSPACE_CLIENT_SECRET
+ *      (separate OAuth-App fuer Workspace-Scopes — empfohlen)
+ *   3. GOOGLE_OAUTH_CLIENT_ID + GOOGLE_OAUTH_CLIENT_SECRET
+ *      (Doppler-Naming der Login-App, Fallback wenn Workspace-Scopes
+ *      im selben Consent-Screen deklariert sind)
+ *   4. GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET (interner Schema-Name)
  * Wenn keiner gesetzt: null → Caller wirft.
  */
 function defaultSharedAppCredentials(
@@ -128,6 +130,7 @@ function defaultSharedAppCredentials(
   const candidates: Array<[string | undefined, string | undefined]> = [
     [clientIdEnv, clientSecretEnv],
     ['GOOGLE_WORKSPACE_CLIENT_ID', 'GOOGLE_WORKSPACE_CLIENT_SECRET'],
+    ['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET'],
     ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'],
   ];
   for (const [idVar, secretVar] of candidates) {

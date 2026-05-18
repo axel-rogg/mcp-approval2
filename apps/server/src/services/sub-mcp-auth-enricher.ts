@@ -127,7 +127,12 @@ function parseScopes(raw: string | undefined): ReadonlyArray<string> | undefined
 /**
  * Default-Lookup fuer shared-app-Credentials (gws + gcloud).
  *   1. GOOGLE_WORKSPACE_CLIENT_ID + GOOGLE_WORKSPACE_CLIENT_SECRET
- *   2. GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET (Fallback)
+ *      (separate OAuth-App fuer Workspace-Scopes — empfohlen)
+ *   2. GOOGLE_OAUTH_CLIENT_ID + GOOGLE_OAUTH_CLIENT_SECRET
+ *      (Doppler-Naming der Login-App, Fallback)
+ *   3. GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET
+ *      (interner Schema-Name nach translateBootEnv — selten in process.env,
+ *      aber im Test-Setup ggf. so gesetzt)
  */
 function defaultSharedAppCredentials(
   _serverName: string,
@@ -135,6 +140,7 @@ function defaultSharedAppCredentials(
   const env = typeof process !== 'undefined' ? process.env : {};
   const candidates: Array<[string, string]> = [
     ['GOOGLE_WORKSPACE_CLIENT_ID', 'GOOGLE_WORKSPACE_CLIENT_SECRET'],
+    ['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET'],
     ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'],
   ];
   for (const [idVar, secretVar] of candidates) {
