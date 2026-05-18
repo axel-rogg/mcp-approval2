@@ -328,6 +328,9 @@ export function createSubMcpAuthEnricher(opts: SubMcpAuthEnricherOpts): SubMcpAu
         const clientId = cfgMap.get('_oauth_client_id');
         const clientSecret = cfgMap.get('_oauth_client_secret');
         const tokenUrl = OAUTH_BEARER_TOKEN_ENDPOINTS.get(subMcpName);
+        const storedAccessToken = cfgMap.get('_oauth_access_token');
+        const storedExpiresAtRaw = cfgMap.get('_oauth_access_token_expires_at');
+        const storedExpiresAt = storedExpiresAtRaw ? Number(storedExpiresAtRaw) : 0;
         // eslint-disable-next-line no-console
         console.info('[enricher] oauth-bearer enrich', {
           subMcpName,
@@ -335,10 +338,14 @@ export function createSubMcpAuthEnricher(opts: SubMcpAuthEnricherOpts): SubMcpAu
           hasRefreshToken: !!refreshToken,
           hasClientId: !!clientId,
           hasClientSecret: !!clientSecret,
+          hasStoredAccessToken: !!storedAccessToken,
+          storedExpiresInSec: storedAccessToken && storedExpiresAt
+            ? Math.floor((storedExpiresAt - now()) / 1000)
+            : null,
           tokenUrl: tokenUrl ?? null,
           configKeys: Array.from(cfgMap.keys()),
         });
-        if (!refreshToken || !clientId || !clientSecret || !tokenUrl) {
+        if (!refreshToken || !clientId || !tokenUrl) {
           // eslint-disable-next-line no-console
           console.warn('[enricher] oauth-bearer skipped: missing pieces', {
             subMcpName,
@@ -346,26 +353,45 @@ export function createSubMcpAuthEnricher(opts: SubMcpAuthEnricherOpts): SubMcpAu
             missing: {
               refreshToken: !refreshToken,
               clientId: !clientId,
-              clientSecret: !clientSecret,
               tokenUrl: !tokenUrl,
             },
           });
           return {};
         }
-        // Cache-Check
+        // Cache-Check (in-memory)
         const key = cacheKey(userId, subMcpName);
         const cached = tokenCache.get(key);
         const ts = now();
         if (cached && cached.expiresAt > ts + 60_000) {
           return { authorization: `Bearer ${cached.token}` };
         }
-        // Refresh via Standard-OAuth2-refresh_token-grant.
+        // DB-cached access_token aus callback (vor erstem Refresh nutzen — spart
+        // einen Refresh-Roundtrip + vermeidet refresh-token-Rotation falls
+        // der Server kein Rotation macht). Wenn noch >60s gueltig: nutzen,
+        // in-memory cachen, return.
+        if (storedAccessToken && storedExpiresAt > ts + 60_000) {
+          tokenCache.set(key, {
+            token: storedAccessToken,
+            expiresAt: Math.min(storedExpiresAt, ts + OAUTH_BEARER_CACHE_MS),
+          });
+          // eslint-disable-next-line no-console
+          console.info('[enricher] oauth-bearer using stored access_token', {
+            subMcpName,
+            expiresInSec: Math.floor((storedExpiresAt - ts) / 1000),
+          });
+          return { authorization: `Bearer ${storedAccessToken}` };
+        }
+        // Refresh via Standard-OAuth2-refresh_token-grant. Public clients
+        // (DCR mit token_endpoint_auth_method=none, z.B. moeglich bei cf):
+        // client_secret weglassen, sonst error=invalid_client.
         const body = new URLSearchParams({
           grant_type: 'refresh_token',
           refresh_token: refreshToken,
           client_id: clientId,
-          client_secret: clientSecret,
         });
+        if (clientSecret) {
+          body.set('client_secret', clientSecret);
+        }
         const resp = await fetchImpl(tokenUrl, {
           method: 'POST',
           headers: {

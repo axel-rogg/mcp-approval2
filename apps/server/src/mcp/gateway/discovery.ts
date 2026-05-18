@@ -299,7 +299,35 @@ async function fetchToolsList(
     clearTimeout(timer);
   }
   if (!response.ok) {
-    throw new SubMcpForwardError(cfg.name, `tools/list HTTP ${response.status}`, response.status);
+    // Auf 401/403 zusaetzlich Body lesen — viele MCP-Server liefern
+    // detaillierte error_description / www-authenticate-Hinweise zum scope-
+    // /audience-/format-mismatch.
+    let errBody = '';
+    if (response.status === 401 || response.status === 403) {
+      try {
+        errBody = (await response.text()).slice(0, 300);
+      } catch {
+        // ignore
+      }
+      const wwwAuth = response.headers.get('www-authenticate') ?? '';
+      // eslint-disable-next-line no-console
+      console.warn('[discovery] tools/list non-ok', {
+        subMcp: cfg.name,
+        url: buildMcpUrl(cfg.baseUrl),
+        status: response.status,
+        wwwAuthenticate: wwwAuth.slice(0, 200),
+        body: errBody,
+        authPresent: !!headers['authorization'],
+        authPrefix: headers['authorization']
+          ? headers['authorization'].slice(0, 16) + '…'
+          : null,
+      });
+    }
+    throw new SubMcpForwardError(
+      cfg.name,
+      `tools/list HTTP ${response.status}${errBody ? ` body=${errBody.slice(0, 80)}` : ''}`,
+      response.status,
+    );
   }
   // Body EINMAL als Text lesen — response.json() konsumiert den Body, danach
   // schlaegt response.text() im SSE-Fallback mit "body already read" fehl.
