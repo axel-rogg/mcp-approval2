@@ -299,30 +299,28 @@ async function fetchToolsList(
     clearTimeout(timer);
   }
   if (!response.ok) {
-    // Auf 401/403 zusaetzlich Body lesen — viele MCP-Server liefern
-    // detaillierte error_description / www-authenticate-Hinweise zum scope-
-    // /audience-/format-mismatch.
+    // Diagnostik fuer ALLE non-2xx (Routing-Fehler 404, scope/audience 401/403,
+    // server-errors 5xx). Body + www-authenticate + Auth-Header-Prefix loggen
+    // und im SubMcpForwardError-message mitliefern.
     let errBody = '';
-    if (response.status === 401 || response.status === 403) {
-      try {
-        errBody = (await response.text()).slice(0, 300);
-      } catch {
-        // ignore
-      }
-      const wwwAuth = response.headers.get('www-authenticate') ?? '';
-      // eslint-disable-next-line no-console
-      console.warn('[discovery] tools/list non-ok', {
-        subMcp: cfg.name,
-        url: buildMcpUrl(cfg.baseUrl),
-        status: response.status,
-        wwwAuthenticate: wwwAuth.slice(0, 200),
-        body: errBody,
-        authPresent: !!headers['authorization'],
-        authPrefix: headers['authorization']
-          ? headers['authorization'].slice(0, 16) + '…'
-          : null,
-      });
+    try {
+      errBody = (await response.text()).slice(0, 300);
+    } catch {
+      // ignore
     }
+    const wwwAuth = response.headers.get('www-authenticate') ?? '';
+    // eslint-disable-next-line no-console
+    console.warn('[discovery] tools/list non-ok', {
+      subMcp: cfg.name,
+      url: buildMcpUrl(cfg.baseUrl),
+      status: response.status,
+      wwwAuthenticate: wwwAuth.slice(0, 200),
+      body: errBody,
+      authPresent: !!headers['authorization'],
+      authPrefix: headers['authorization']
+        ? headers['authorization'].slice(0, 16) + '…'
+        : null,
+    });
     throw new SubMcpForwardError(
       cfg.name,
       `tools/list HTTP ${response.status}${errBody ? ` body=${errBody.slice(0, 80)}` : ''}`,

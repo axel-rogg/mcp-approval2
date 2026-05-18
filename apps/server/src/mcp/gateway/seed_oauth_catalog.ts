@@ -71,7 +71,12 @@ export const DEFAULT_OAUTH_CATALOG_SERVERS: ReadonlyArray<OAuthCatalogServerSeed
   {
     name: 'cf',
     displayName: 'Cloudflare MCP',
-    baseUrl: 'https://bindings.mcp.cloudflare.com/sse',
+    // CF bietet zwei Transport-Endpoints:
+    //   /sse — legacy SSE (GET subscribe + POST /sse/message)
+    //   /mcp — modernes Streamable-HTTP (POST mit JSON-RPC body)
+    // Wir nutzen /mcp weil unser SubMcpForwarder Streamable-HTTP spricht.
+    // Bei /sse + POST mit JSON-RPC body: HTTP 404 (method nicht im Handler).
+    baseUrl: 'https://bindings.mcp.cloudflare.com/mcp',
     oauthKind: 'dcr',
     oauthMeta: {
       // Verifiziert via curl .well-known/oauth-authorization-server (2026-05-18):
