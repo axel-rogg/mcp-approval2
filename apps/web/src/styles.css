@@ -1948,7 +1948,7 @@ code {
 .approval-card.st-approved .st-icon { color: var(--ok); }
 .approval-card.st-rejected .st-icon { color: var(--danger); }
 .approval-card.st-expired  .st-icon { color: var(--fg-muted); }
-.approval-card:hover      { border-color: var(--accent); }
+.approval-card:hover      { border-color: var(--accent); text-decoration: none; }
 
 /* Detail-Header: Badge + Tool-Name kombiniert als h2. */
 .approval-tool-header {
