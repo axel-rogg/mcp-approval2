@@ -425,11 +425,17 @@ async function renderOAuthFlow(
   cfg: { fields: Record<string, { value: string; isSecret: boolean }> } | null,
   oauth?: OAuthMeta,
 ): Promise<void> {
+  const isDcr = oauth?.kind === 'dcr';
+  const refreshTokenField = cfg?.fields['_oauth_refresh_token'];
+
   const desc = document.createElement('p');
   desc.className = 'muted small';
-  desc.textContent =
-    'Pre-registered OAuth 2.0: trage Client-ID + Client-Secret deiner OAuth-App ein, ' +
-    'dann starte den Authorize-Flow. Refresh-Token wird KMS-encrypted gespeichert.';
+  desc.textContent = isDcr
+    ? 'Dynamic Client Registration (DCR, RFC 7591): beim Klick auf Authorize ' +
+      'registrieren wir einen eigenen OAuth-Client beim Provider. Du musst nichts eintragen. ' +
+      'Refresh-Token wird KMS-encrypted gespeichert.'
+    : 'Pre-registered OAuth 2.0: trage Client-ID + Client-Secret deiner OAuth-App ein, ' +
+      'dann starte den Authorize-Flow. Refresh-Token wird KMS-encrypted gespeichert.';
   card.appendChild(desc);
 
   if (oauth?.help_url) {
@@ -450,9 +456,72 @@ async function renderOAuthFlow(
     card.appendChild(scopesP);
   }
 
+  // Pre-registered: User muss client_id/secret selbst eintragen.
+  // DCR: client_id/secret werden serverseitig beim ersten Authorize erzeugt
+  //      und in user_sub_mcp_config gespeichert — kein Input-Form noetig.
+  if (!isDcr) {
+    renderClientCredentialsForm(card, api, serverName, cfg);
+  } else if (cfg?.fields['_oauth_client_id']) {
+    const regInfo = document.createElement('p');
+    regInfo.className = 'muted small';
+    regInfo.textContent =
+      '✓ DCR-Client bereits registriert. Re-Authorize benutzt denselben Client.';
+    card.appendChild(regInfo);
+  }
+
+  // Authorize-Flow (gemeinsam fuer pre + dcr)
+  const statusLine = document.createElement('p');
+  if (refreshTokenField) {
+    statusLine.className = 'ok small';
+    statusLine.textContent = '✓ Authorisiert — Refresh-Token gespeichert (KMS-encrypted).';
+  } else {
+    statusLine.className = 'muted small';
+    statusLine.textContent = isDcr
+      ? '⚠ Noch nicht authorisiert. Klicke Authorize — wir registrieren den DCR-Client und leiten dich zum Provider.'
+      : '⚠ Noch nicht authorisiert. Speichere zuerst Client-ID + Client-Secret oben, dann klicke Authorize.';
+  }
+  card.appendChild(statusLine);
+
+  const authzBox = document.createElement('div');
+  authzBox.className = 'server-detail-action-row';
+  authzBox.style.marginTop = '1rem';
+  const authzBtn = document.createElement('button');
+  authzBtn.type = 'button';
+  authzBtn.className = 'btn btn-primary btn-small';
+  authzBtn.textContent = refreshTokenField ? '▶ Re-Authorize' : '▶ Authorize';
+  const authzStatus = document.createElement('span');
+  authzStatus.className = 'muted small';
+
+  authzBtn.addEventListener('click', async () => {
+    authzBtn.disabled = true;
+    authzStatus.textContent = isDcr
+      ? 'Registriere DCR-Client + generiere Authorize-URL…'
+      : 'Generiere Authorize-URL…';
+    authzStatus.className = 'muted small';
+    try {
+      const redirectUri = `${window.location.origin}/#/tools/servers/${encodeURIComponent(serverName)}/oauth/callback`;
+      const { authorizeUrl } = await api.startServerOAuth(serverName, redirectUri);
+      authzStatus.textContent = 'Leite zu Provider…';
+      window.location.href = authorizeUrl;
+    } catch (err) {
+      authzStatus.textContent = `Fehler: ${(err as Error).message}`;
+      authzStatus.className = 'err small';
+      authzBtn.disabled = false;
+    }
+  });
+  authzBox.appendChild(authzBtn);
+  authzBox.appendChild(authzStatus);
+  card.appendChild(authzBox);
+}
+
+function renderClientCredentialsForm(
+  card: HTMLElement,
+  api: ApiClient,
+  serverName: string,
+  cfg: { fields: Record<string, { value: string; isSecret: boolean }> } | null,
+): void {
   const clientIdField = cfg?.fields['_oauth_client_id'];
   const clientSecretField = cfg?.fields['_oauth_client_secret'];
-  const refreshTokenField = cfg?.fields['_oauth_refresh_token'];
 
   const form = document.createElement('form');
   form.className = 'form';
@@ -517,47 +586,6 @@ async function renderOAuthFlow(
     }
   });
   card.appendChild(form);
-
-  // Authorize-Flow
-  const authzBox = document.createElement('div');
-  authzBox.className = 'server-detail-action-row';
-  authzBox.style.marginTop = '1rem';
-
-  const statusLine = document.createElement('p');
-  if (refreshTokenField) {
-    statusLine.className = 'ok small';
-    statusLine.textContent = '✓ Authorisiert — Refresh-Token gespeichert (KMS-encrypted).';
-  } else {
-    statusLine.className = 'muted small';
-    statusLine.textContent = '⚠ Noch nicht authorisiert. Speichere zuerst Client-ID + Client-Secret oben, dann klicke Authorize.';
-  }
-  card.appendChild(statusLine);
-
-  const authzBtn = document.createElement('button');
-  authzBtn.type = 'button';
-  authzBtn.className = 'btn btn-primary btn-small';
-  authzBtn.textContent = refreshTokenField ? '▶ Re-Authorize' : '▶ Authorize';
-  const authzStatus = document.createElement('span');
-  authzStatus.className = 'muted small';
-
-  authzBtn.addEventListener('click', async () => {
-    authzBtn.disabled = true;
-    authzStatus.textContent = 'Generiere Authorize-URL…';
-    authzStatus.className = 'muted small';
-    try {
-      const redirectUri = `${window.location.origin}/#/tools/servers/${encodeURIComponent(serverName)}/oauth/callback`;
-      const { authorizeUrl } = await api.startServerOAuth(serverName, redirectUri);
-      authzStatus.textContent = 'Leite zu Provider…';
-      window.location.href = authorizeUrl;
-    } catch (err) {
-      authzStatus.textContent = `Fehler: ${(err as Error).message}`;
-      authzStatus.className = 'err small';
-      authzBtn.disabled = false;
-    }
-  });
-  authzBox.appendChild(authzBtn);
-  authzBox.appendChild(authzStatus);
-  card.appendChild(authzBox);
 }
 
 async function renderDefaultsTab(
