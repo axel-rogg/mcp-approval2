@@ -252,6 +252,59 @@ async function fetchToolsListWithMeta(
   return fetchToolsList(cfg, fetchImpl, timeoutMs, extraHeaders);
 }
 
+/**
+ * Streamable-HTTP `initialize` handshake. Schickt das initialize-RPC,
+ * liest `Mcp-Session-Id` aus den Response-Headern. Wirft SubMcpForwardError
+ * falls der Server keinen Session-Id zurueckliefert (dann ist der
+ * Handshake-Pfad ein Sackgasse — Server haette mit anderem 400-Body
+ * antworten muessen).
+ */
+async function initializeMcpSession(
+  subMcpName: string,
+  mcpUrl: string,
+  fetchImpl: typeof fetch,
+  headers: Record<string, string>,
+  signal: AbortSignal,
+): Promise<string> {
+  const initBody = {
+    jsonrpc: '2.0' as const,
+    id: randomUUID(),
+    method: 'initialize',
+    params: {
+      protocolVersion: '2025-03-26',
+      capabilities: {},
+      clientInfo: { name: 'mcp-approval2', version: '1.0.0' },
+    },
+  };
+  const resp = await fetchImpl(mcpUrl, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(initBody),
+    signal,
+  });
+  if (!resp.ok) {
+    const txt = (await resp.text().catch(() => '')).slice(0, 200);
+    throw new SubMcpForwardError(
+      subMcpName,
+      `initialize HTTP ${resp.status} body=${txt}`,
+      resp.status,
+    );
+  }
+  // Session-Id wird im Response-Header geliefert (Streamable-HTTP-Spec).
+  const sessionId = resp.headers.get('mcp-session-id') ?? resp.headers.get('Mcp-Session-Id');
+  if (!sessionId) {
+    const txt = (await resp.text().catch(() => '')).slice(0, 200);
+    throw new SubMcpForwardError(
+      subMcpName,
+      `initialize ok but no Mcp-Session-Id header. body=${txt}`,
+      resp.status,
+    );
+  }
+  // Body konsumieren damit der Stream geschlossen wird (Connection-Hygiene).
+  await resp.text().catch(() => '');
+  return sessionId;
+}
+
 async function fetchToolsList(
   cfg: SubMcpServerConfig,
   fetchImpl: typeof fetch,
@@ -275,9 +328,19 @@ async function fetchToolsList(
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const mcpUrl = buildMcpUrl(cfg.baseUrl);
+
+  // Streamable-HTTP Spec: viele Server (z.B. CF) verlangen einen
+  // `initialize`-Handshake vor jedem stateful Call. Wir machen einen
+  // einmaligen probe-call zuerst — wenn 400/406 mit "session-id required"
+  // zurueck kommt, holen wir uns die Session via initialize und
+  // wiederholen tools/list mit dem `mcp-session-id`-Header.
+  // Ein erster Versuch ohne Init zuerst spart bei stateless Servern
+  // (utils/gws/gcloud workers, github MCP) einen Roundtrip.
   let response: Response;
+  let usedSessionId: string | null = null;
   try {
-    response = await fetchImpl(buildMcpUrl(cfg.baseUrl), {
+    response = await fetchImpl(mcpUrl, {
       method: 'POST',
       headers,
       body: JSON.stringify({
@@ -288,6 +351,39 @@ async function fetchToolsList(
       }),
       signal: controller.signal,
     });
+    if (response.status === 400) {
+      // Probe response auf "session required" pruefen
+      const probeText = await response.text();
+      const needsSession = /mcp-session-id|session.+required/i.test(probeText);
+      if (needsSession) {
+        // eslint-disable-next-line no-console
+        console.info('[discovery] server needs session — handshaking', {
+          subMcp: cfg.name,
+          url: mcpUrl,
+        });
+        const sessionId = await initializeMcpSession(cfg.name, mcpUrl, fetchImpl, headers, controller.signal);
+        usedSessionId = sessionId;
+        const retryHeaders = { ...headers, 'mcp-session-id': sessionId };
+        response = await fetchImpl(mcpUrl, {
+          method: 'POST',
+          headers: retryHeaders,
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: randomUUID(),
+            method: 'tools/list',
+            params: {},
+          }),
+          signal: controller.signal,
+        });
+      } else {
+        // Anderes 400 — Fall-through zum non-ok-Handler unten. Body neu
+        // bauen weil schon konsumiert.
+        response = new Response(probeText, {
+          status: 400,
+          headers: response.headers,
+        });
+      }
+    }
   } catch (err) {
     throw new SubMcpForwardError(
       cfg.name,
@@ -298,6 +394,7 @@ async function fetchToolsList(
   } finally {
     clearTimeout(timer);
   }
+  void usedSessionId; // future: cache + reuse
   if (!response.ok) {
     // Diagnostik fuer ALLE non-2xx (Routing-Fehler 404, scope/audience 401/403,
     // server-errors 5xx). Body + www-authenticate + Auth-Header-Prefix loggen

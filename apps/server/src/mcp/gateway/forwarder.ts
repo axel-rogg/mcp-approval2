@@ -115,14 +115,33 @@ export class SubMcpForwarder {
       else args.signal.addEventListener('abort', upstreamAbort, { once: true });
     }
 
+    const mcpUrl = buildMcpUrl(cfg.baseUrl);
     let response: Response;
     try {
-      response = await this.fetchImpl(buildMcpUrl(cfg.baseUrl), {
+      response = await this.fetchImpl(mcpUrl, {
         method: 'POST',
         headers,
         body: JSON.stringify(payload),
         signal: controller.signal,
       });
+      // Streamable-HTTP: stateful Server (z.B. CF) verlangen `Mcp-Session-Id`.
+      // Bei 400 mit "session required": initialize → retry mit session-id-Header.
+      if (response.status === 400) {
+        const probeText = await response.text();
+        const needsSession = /mcp-session-id|session.+required/i.test(probeText);
+        if (needsSession) {
+          const sessionId = await this.initializeSession(args.subMcpName, mcpUrl, headers, controller.signal);
+          const retryHeaders = { ...headers, 'mcp-session-id': sessionId };
+          response = await this.fetchImpl(mcpUrl, {
+            method: 'POST',
+            headers: retryHeaders,
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          });
+        } else {
+          response = new Response(probeText, { status: 400, headers: response.headers });
+        }
+      }
     } catch (err) {
       clearTimeout(timer);
       if (args.signal) args.signal.removeEventListener('abort', upstreamAbort);
@@ -191,6 +210,54 @@ export class SubMcpForwarder {
       throw new SubMcpError(args.subMcpName, code, message, parsed.error.data);
     }
     return parsed.result;
+  }
+
+  /**
+   * Streamable-HTTP `initialize`-Handshake. Liest `Mcp-Session-Id` aus den
+   * Response-Headern. Identisch zu discovery.ts:initializeMcpSession — wir
+   * koennen das spaeter in einen shared helper extrahieren wenn weitere
+   * Stellen den Handshake brauchen.
+   */
+  private async initializeSession(
+    subMcpName: string,
+    mcpUrl: string,
+    headers: Record<string, string>,
+    signal: AbortSignal,
+  ): Promise<string> {
+    const resp = await this.fetchImpl(mcpUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: randomUUID(),
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-03-26',
+          capabilities: {},
+          clientInfo: { name: 'mcp-approval2', version: '1.0.0' },
+        },
+      }),
+      signal,
+    });
+    if (!resp.ok) {
+      const txt = (await resp.text().catch(() => '')).slice(0, 200);
+      throw new SubMcpForwardError(
+        subMcpName,
+        `initialize HTTP ${resp.status} body=${txt}`,
+        resp.status,
+      );
+    }
+    const sessionId =
+      resp.headers.get('mcp-session-id') ?? resp.headers.get('Mcp-Session-Id');
+    if (!sessionId) {
+      throw new SubMcpForwardError(
+        subMcpName,
+        'initialize ok but no Mcp-Session-Id header',
+        resp.status,
+      );
+    }
+    await resp.text().catch(() => '');
+    return sessionId;
   }
 }
 
