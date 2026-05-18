@@ -25,8 +25,9 @@ import {
 } from './api-admin.js';
 import { logout } from './auth.js';
 import type { ApiClient } from './api.js';
+import { renderAdminGroupsSub } from './admin-groups.js';
 
-type SubTab = 'users' | 'invites' | 'outbox' | 'audit' | 'diagnostic';
+type SubTab = 'users' | 'invites' | 'outbox' | 'audit' | 'diagnostic' | 'groups';
 
 function fmtDate(raw: number | string | null | undefined): string {
   if (raw === null || raw === undefined || raw === '' || raw === 0) return '—';
@@ -71,6 +72,7 @@ export async function renderAdminTab(
   const subtabs: ReadonlyArray<{ id: SubTab; label: string }> = [
     { id: 'users', label: 'Users' },
     { id: 'invites', label: 'Invites' },
+    { id: 'groups', label: 'Groups' },
     { id: 'outbox', label: 'Outbox' },
     { id: 'audit', label: 'Audit' },
     { id: 'diagnostic', label: 'Diagnostic' },
@@ -99,6 +101,7 @@ export async function renderAdminTab(
     try {
       if (tab === 'users') await renderUsersSubtab(contentEl, adminApi, session);
       else if (tab === 'invites') await renderInvitesSubtab(contentEl, adminApi);
+      else if (tab === 'groups') await renderAdminGroupsSub(contentEl, session);
       else if (tab === 'outbox') await renderOutboxSubtab(contentEl, adminApi);
       else if (tab === 'audit') await renderAuditSubtab(contentEl, adminApi);
       else if (tab === 'diagnostic') renderDiagnosticSubtab(contentEl);
