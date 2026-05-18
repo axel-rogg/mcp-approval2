@@ -71,6 +71,7 @@ import { createUserServerConfigService } from './services/user-server-config.js'
 import { createUserServerOAuthService } from './services/user-server-oauth.js';
 import { createUserServerToolDefaultsService } from './services/user-server-tool-defaults.js';
 import { createToolDefaultsService } from './services/tool-defaults.js';
+import { createToolDefaultProfilesService } from './services/tool-default-profiles.js';
 import { createSubMcpAuthEnricher } from './services/sub-mcp-auth-enricher.js';
 import { createUserSubMcpToolCacheService } from './services/user-sub-mcp-tool-cache.js';
 import { gdprRoutes } from './routes/gdpr.js';
@@ -88,6 +89,7 @@ import { createWritemodeActivationVerifier } from './auth/webauthn/writemode-act
 import { internalCredentialsRoutes } from './routes/internal/credentials.js';
 import { internalDekRoutes } from './routes/internal/dek.js';
 import { internalCronRoutes } from './routes/internal/cron.js';
+import { internalRewrapTickRoutes } from './routes/internal/rewrap-tick.js';
 import { internalAppsImportRoutes } from './routes/internal/apps-import.js';
 import { internalServersImportRoutes } from './routes/internal/servers-import.js';
 import { internalObjectsImportRoutes } from './routes/internal/objects-import.js';
@@ -816,13 +818,22 @@ export async function createApp(
     app.use('/mcp/*', authMiddleware(server, { required: true }), costGate);
   }
 
-  // Phase A+B (PLAN-tool-defaults-v2.md): Hub-side Tool-Defaults-Resolver.
+  // Phase C (PLAN-tool-defaults-v2.md): Profile-CRUD pro (user, sub_mcp_name).
+  // Wird vom Resolver fuer Active-Profile-Lookup + vom REST-Layer fuer
+  // Profile-CRUD genutzt.
+  const toolDefaultProfilesService = createToolDefaultProfilesService({
+    db: server.db,
+  });
+
+  // Phase A+B+C (PLAN-tool-defaults-v2.md): Hub-side Tool-Defaults-Resolver.
   // Mergt Per-User-Defaults aus user_server_tool_defaults in jeden Tool-Call,
   // bevor registry.dispatch laeuft. Args-WIN. WYSIWYS via defaults_applied
-  // in pending_approvals. Phase B: + Orphan-Detection via schemaFields-Callback.
+  // in pending_approvals. + Orphan-Detection via schemaFields-Callback (Phase B).
+  // + Multi-Profile-Resolution mit __profile-Override (Phase C).
   const toolDefaultsResolver = createToolDefaultsService({
     db: server.db,
     schemaFields: (toolName) => extractTopLevelSchemaFields(registry, toolName),
+    profiles: toolDefaultProfilesService,
   });
 
   // MCP-Protocol-Routes — Auth pro-Route via mcpTransport.
@@ -913,6 +924,7 @@ export async function createApp(
       ...(userServerConfigService ? { config: userServerConfigService } : {}),
       ...(userServerOAuthService ? { oauth: userServerOAuthService } : {}),
       toolDefaults: userServerToolDefaultsService,
+      toolDefaultProfiles: toolDefaultProfilesService,
       // Post-OAuth-Hook: nach erfolgreichem callback applyGatewayDiscovery
       // triggern. Das macht in einem Schritt:
       //   1. tools/list-Roundtrip mit User-Token (operatorUserId)
@@ -1052,6 +1064,9 @@ export async function createApp(
         cronDeps,
       }),
     );
+
+    // P2-7: rewrap-tick-Proxy fuer GH-Actions-Cron → Flycast → KC2
+    app.route('/', internalRewrapTickRoutes({ server }));
 
     // POST /internal/v1/apps/import — One-Shot v1→v2 App-Migration
     if (optionalServices.apps) {
