@@ -233,22 +233,40 @@ async function renderOverviewTab(
 
 interface OAuthMeta {
   readonly provider?: string;
-  readonly kind?: 'pre' | 'dcr';
+  readonly kind?: 'pre' | 'dcr' | 'shared-app';
   readonly scopes?: ReadonlyArray<string>;
   readonly help_url?: string;
 }
 
+interface ConfigField {
+  readonly key: string;
+  readonly label: string;
+  readonly type?: 'text' | 'password' | 'textarea';
+  readonly is_secret?: boolean;
+  readonly description?: string;
+}
+
 interface ConfigSchemaMeta {
   readonly oauth?: OAuthMeta;
+  readonly config_fields?: ReadonlyArray<ConfigField>;
   readonly auth_mode?: 'service_bearer' | 'oauth' | 'api_token';
 }
 
 type AuthMode = 'service_bearer' | 'oauth' | 'api_token' | 'none';
 
-function detectAuthMode(gw: InventoryGateway | null): { mode: AuthMode; oauth?: OAuthMeta } {
+function detectAuthMode(gw: InventoryGateway | null): {
+  mode: AuthMode;
+  oauth?: OAuthMeta;
+  configFields?: ReadonlyArray<ConfigField>;
+} {
   if (!gw) return { mode: 'none' };
   const schema = (gw.configSchema as ConfigSchemaMeta | undefined) ?? {};
-  if (schema.oauth) return { mode: 'oauth', oauth: schema.oauth };
+  const configFields = schema.config_fields;
+  if (schema.oauth) {
+    return configFields
+      ? { mode: 'oauth', oauth: schema.oauth, configFields }
+      : { mode: 'oauth', oauth: schema.oauth };
+  }
   if (schema.auth_mode === 'api_token') return { mode: 'api_token' };
   if (schema.auth_mode === 'service_bearer') return { mode: 'service_bearer' };
   // Defaults: requires_credential mit kind=oauth_refresh → oauth.
@@ -265,7 +283,7 @@ async function renderAuthTab(
   serverName: string,
   gw: InventoryGateway | null,
 ): Promise<void> {
-  const { mode, oauth } = detectAuthMode(gw);
+  const { mode, oauth, configFields } = detectAuthMode(gw);
   const card = document.createElement('section');
   card.className = 'card server-detail-section';
 
@@ -309,7 +327,7 @@ async function renderAuthTab(
   }
 
   if (mode === 'oauth') {
-    await renderOAuthFlow(card, api, serverName, cfg, oauth);
+    await renderOAuthFlow(card, api, serverName, cfg, oauth, configFields);
   } else if (mode === 'api_token') {
     renderTokenForm(card, api, serverName, cfg, '_api_token', 'API-Token / PAT');
   } else {
@@ -458,18 +476,42 @@ async function renderOAuthFlow(
   serverName: string,
   cfg: { fields: Record<string, { value: string; isSecret: boolean }> } | null,
   oauth?: OAuthMeta,
+  configFields?: ReadonlyArray<ConfigField>,
 ): Promise<void> {
   const isDcr = oauth?.kind === 'dcr';
+  const isSharedApp = oauth?.kind === 'shared-app';
+  // Heuristik: gcloud (und vergleichbar) hat ein `_service_account_json`-Feld
+  // in config_fields → SA-Key-Pfad als zweite Authentifizierungs-Option
+  // verfuegbar. PWA zeigt das explicit als "OAuth ODER Service-Account".
+  const hasSaPath =
+    (configFields ?? []).some((f) => f.key === '_service_account_json');
   const refreshTokenField = cfg?.fields['_oauth_refresh_token'];
 
   const desc = document.createElement('p');
   desc.className = 'muted small';
-  desc.textContent = isDcr
-    ? 'Dynamic Client Registration (DCR, RFC 7591): beim Klick auf Authorize ' +
+  if (isDcr) {
+    desc.textContent =
+      'Dynamic Client Registration (DCR, RFC 7591): beim Klick auf Authorize ' +
       'registrieren wir einen eigenen OAuth-Client beim Provider. Du musst nichts eintragen. ' +
-      'Refresh-Token wird KMS-encrypted gespeichert.'
-    : 'Pre-registered OAuth 2.0: trage Client-ID + Client-Secret deiner OAuth-App ein, ' +
+      'Refresh-Token wird KMS-encrypted gespeichert.';
+  } else if (isSharedApp && hasSaPath) {
+    desc.textContent =
+      'Zwei Authentifizierungs-Pfade verfuegbar. WAEHLE EINEN:\n\n' +
+      '  A) Service-Account (empfohlen fuer Headless/Production): SA-JSON unten paste, ' +
+      'optional Projekt-Id ueberschreiben. Kein OAuth-Roundtrip noetig — Service-Account ' +
+      'wird via JWT-Bearer-Grant lokal in access_token getauscht. Private-Key verlaesst approval2 nicht.\n\n' +
+      '  B) User-OAuth: Client-ID + Secret deiner OAuth-App eintragen, dann Authorize. ' +
+      'Aktionen laufen unter deinem Google-Account. Refresh-Token wird KMS-encrypted gespeichert.';
+    desc.style.whiteSpace = 'pre-line';
+  } else if (isSharedApp) {
+    desc.textContent =
+      'Shared-App OAuth: Client-ID + Secret deiner Google-OAuth-App eintragen, dann Authorize. ' +
+      'Refresh-Token wird KMS-encrypted gespeichert. Du nutzt deine eigene OAuth-App — keine Doppler-Konfiguration noetig.';
+  } else {
+    desc.textContent =
+      'Pre-registered OAuth 2.0: trage Client-ID + Client-Secret deiner OAuth-App ein, ' +
       'dann starte den Authorize-Flow. Refresh-Token wird KMS-encrypted gespeichert.';
+  }
   card.appendChild(desc);
 
   if (oauth?.help_url) {
@@ -480,6 +522,39 @@ async function renderOAuthFlow(
     scopesP.className = 'muted small';
     scopesP.textContent = `Scopes: ${oauth.scopes.join(', ')}`;
     card.appendChild(scopesP);
+  }
+
+  // config_fields: server-deklarierte per-User-Felder (z.B. _service_account_json,
+  // _gcp_project_id fuer gcloud). Andere Felder die nicht OAuth-spezifisch sind
+  // rendern wir oberhalb der OAuth-Form. _oauth_*-Felder werden vom OAuth-Form
+  // selbst verwaltet — die NICHT hier rendern (sonst doppelt).
+  const OAUTH_KEYS = new Set([
+    '_oauth_client_id',
+    '_oauth_client_secret',
+    '_oauth_refresh_token',
+    '_oauth_access_token',
+    '_oauth_access_token_expires_at',
+  ]);
+  const nonOauthFields = (configFields ?? []).filter((f) => !OAUTH_KEYS.has(f.key));
+  if (nonOauthFields.length > 0) {
+    if (hasSaPath) {
+      const h3 = document.createElement('h3');
+      h3.textContent = 'Pfad A: Service-Account';
+      h3.style.marginTop = '1rem';
+      card.appendChild(h3);
+    }
+    renderConfigFieldsForm(card, api, serverName, cfg, nonOauthFields);
+    if (hasSaPath) {
+      const h3 = document.createElement('h3');
+      h3.textContent = 'Pfad B: User-OAuth';
+      h3.style.marginTop = '1.5rem';
+      card.appendChild(h3);
+      const hint = document.createElement('p');
+      hint.className = 'muted small';
+      hint.textContent =
+        'Wenn du oben den Service-Account-Pfad benutzt, kannst du diesen Bereich ueberspringen.';
+      card.appendChild(hint);
+    }
   }
 
   // Pre-registered: User muss client_id/secret selbst eintragen.
@@ -538,6 +613,107 @@ async function renderOAuthFlow(
   authzBox.appendChild(authzBtn);
   authzBox.appendChild(authzStatus);
   card.appendChild(authzBox);
+}
+
+/**
+ * Rendert server-deklarierte per-User-config_fields (z.B. SA-JSON, project_id).
+ * Pro Feld ein Input/Textarea/Password mit Save-Button. Werte werden via
+ * api.setServerConfig persistiert (KMS-encrypted wenn key mit `_` startet).
+ */
+function renderConfigFieldsForm(
+  card: HTMLElement,
+  api: ApiClient,
+  serverName: string,
+  cfg: { fields: Record<string, { value: string; isSecret: boolean }> } | null,
+  fields: ReadonlyArray<ConfigField>,
+): void {
+  for (const f of fields) {
+    const wrap = document.createElement('div');
+    wrap.className = 'field';
+    wrap.style.marginBottom = '0.75rem';
+    const lbl = document.createElement('label');
+    lbl.textContent = f.label;
+    wrap.appendChild(lbl);
+    const existing = cfg?.fields[f.key];
+    const isSecret = f.is_secret === true || f.type === 'password';
+    let inputEl: HTMLInputElement | HTMLTextAreaElement;
+    if (f.type === 'textarea') {
+      const ta = document.createElement('textarea');
+      ta.rows = 6;
+      ta.placeholder = existing
+        ? (isSecret ? '••••••• (gesetzt — neuer Wert ersetzt)' : '(gesetzt — neuer Wert ersetzt)')
+        : 'Hier paste …';
+      inputEl = ta;
+    } else {
+      const i = document.createElement('input');
+      i.type = isSecret ? 'password' : 'text';
+      i.autocomplete = isSecret ? 'new-password' : 'off';
+      i.placeholder = existing
+        ? (isSecret ? '••••••• (gesetzt — neuer Wert ersetzt)' : '(gesetzt — neuer Wert ersetzt)')
+        : '';
+      inputEl = i;
+    }
+    wrap.appendChild(inputEl);
+    if (f.description) {
+      const help = document.createElement('p');
+      help.className = 'muted small';
+      help.style.marginTop = '0.25rem';
+      help.textContent = f.description;
+      wrap.appendChild(help);
+    }
+    const row = document.createElement('div');
+    row.className = 'row form-actions';
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'btn btn-secondary btn-small';
+    saveBtn.textContent = existing ? 'Aktualisieren' : 'Speichern';
+    const status = document.createElement('span');
+    status.className = 'muted small';
+    row.appendChild(saveBtn);
+    row.appendChild(status);
+    if (existing) {
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'btn btn-secondary btn-small btn-danger';
+      delBtn.textContent = 'Löschen';
+      delBtn.addEventListener('click', async () => {
+        if (!window.confirm(`Feld ${f.label} entfernen?`)) return;
+        try {
+          await api.deleteServerConfig(serverName, f.key);
+          status.textContent = '✓ Geloescht — Page neu laden.';
+          status.className = 'ok small';
+        } catch (err) {
+          status.textContent = `Fehler: ${(err as Error).message}`;
+          status.className = 'err small';
+        }
+      });
+      row.appendChild(delBtn);
+    }
+    wrap.appendChild(row);
+    saveBtn.addEventListener('click', async () => {
+      if (!inputEl.value) {
+        status.textContent = 'Bitte Wert eingeben.';
+        status.className = 'err small';
+        return;
+      }
+      saveBtn.disabled = true;
+      status.textContent = 'Speichere…';
+      status.className = 'muted small';
+      try {
+        await api.setServerConfig(serverName, f.key, inputEl.value);
+        status.textContent = '✓ Gespeichert';
+        status.className = 'ok small';
+        inputEl.value = '';
+        inputEl.placeholder = isSecret ? '••••••• (gesetzt — neuer Wert ersetzt)' : '(gesetzt — neuer Wert ersetzt)';
+      } catch (err) {
+        status.textContent = `Fehler: ${(err as Error).message}`;
+        status.className = 'err small';
+      } finally {
+        saveBtn.disabled = false;
+      }
+    });
+    card.appendChild(wrap);
+  }
 }
 
 function renderClientCredentialsForm(
