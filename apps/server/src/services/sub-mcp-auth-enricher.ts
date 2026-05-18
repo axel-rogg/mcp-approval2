@@ -110,7 +110,9 @@ const GOOGLE_TOKEN_CACHE_MS = 50 * 60 * 1000;
  */
 const OAUTH_BEARER_TOKEN_ENDPOINTS: ReadonlyMap<string, string> = new Map([
   ['github', 'https://github.com/login/oauth/access_token'],
-  ['cf', 'https://bindings.mcp.cloudflare.com/oauth/token'],
+  // Verifiziert via .well-known/oauth-authorization-server (2026-05-18):
+  // token_endpoint ist /token, nicht /oauth/token.
+  ['cf', 'https://bindings.mcp.cloudflare.com/token'],
 ]);
 
 /** Standard OAuth-Access-Token cache duration. 50 min entspricht GitHub

@@ -74,12 +74,14 @@ export const DEFAULT_OAUTH_CATALOG_SERVERS: ReadonlyArray<OAuthCatalogServerSeed
     baseUrl: 'https://bindings.mcp.cloudflare.com/sse',
     oauthKind: 'dcr',
     oauthMeta: {
-      // Cloudflare-MCP folgt RFC 9728 (Protected Resource Metadata).
-      // authorize_url + token_url werden hier als Snapshot eingetragen; bei
-      // Drift wird der Wert beim nächsten Discovery (RFC 8414) refreshed.
+      // Verifiziert via curl .well-known/oauth-authorization-server (2026-05-18):
+      //   authorization_endpoint = /oauth/authorize
+      //   token_endpoint         = /token       (NICHT /oauth/token)
+      //   registration_endpoint  = /register    (NICHT /oauth/register)
+      // Bei Drift wird der Wert beim naechsten Discovery (RFC 8414) refreshed.
       authorize_url: 'https://bindings.mcp.cloudflare.com/oauth/authorize',
-      token_url: 'https://bindings.mcp.cloudflare.com/oauth/token',
-      registration_endpoint: 'https://bindings.mcp.cloudflare.com/oauth/register',
+      token_url: 'https://bindings.mcp.cloudflare.com/token',
+      registration_endpoint: 'https://bindings.mcp.cloudflare.com/register',
       default_scopes: ['mcp:tools'],
       provider: 'cloudflare',
     },
