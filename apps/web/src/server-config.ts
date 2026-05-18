@@ -34,7 +34,13 @@ interface ConfigSchemaMeta {
   readonly config_fields?: ReadonlyArray<ConfigField>;
   readonly oauth?: {
     readonly provider?: string;
-    readonly kind?: 'pre' | 'dcr';
+    /**
+     * - 'pre': User legt eigene OAuth-App an, traegt client_id/secret manuell ein
+     * - 'dcr': approval2 macht Dynamic Client Registration beim ersten Authorize
+     * - 'shared-app': eine Operator-App (env GOOGLE_WORKSPACE_CLIENT_ID/SECRET)
+     *   wird fuer alle User genutzt; refresh-token bleibt per-User. (gws + gcloud)
+     */
+    readonly kind?: 'pre' | 'dcr' | 'shared-app';
     readonly scopes?: ReadonlyArray<string>;
     readonly help_url?: string;
   };
@@ -306,20 +312,38 @@ export async function renderServerConfig(
 
     // Status: refresh_token vorhanden?
     const hasToken = !!cfgValues?.fields['_oauth_refresh_token'];
+    const oauthKind = schema.oauth.kind ?? 'pre';
     const statusRow = document.createElement('p');
     if (hasToken) {
       statusRow.className = 'ok small';
       statusRow.textContent = '✓ Authorisiert — Refresh-Token gespeichert (KMS-encrypted).';
+    } else if (oauthKind === 'shared-app') {
+      // Operator hat die OAuth-App schon im Doppler hinterlegt — User
+      // klickt einfach Verbinden, keine manuelle client_id-Eingabe noetig.
+      statusRow.className = 'muted small';
+      statusRow.textContent =
+        '⚠ Noch nicht authorisiert. Klicke unten "Verbinden mit Google" — Browser-Roundtrip zur Google-Consent-Page, dann kommt dein refresh_token zurueck.';
+    } else if (oauthKind === 'dcr') {
+      statusRow.className = 'muted small';
+      statusRow.textContent =
+        '⚠ Noch nicht authorisiert. Klicke unten "OAuth starten" — approval2 registriert dynamisch einen DCR-Client beim Provider und startet dann den Authorize-Flow.';
     } else {
       statusRow.className = 'muted small';
-      statusRow.textContent = '⚠ Noch nicht authorisiert. Trage zuerst _oauth_client_id (und ggf. _oauth_client_secret) oberhalb ein, dann starte den Authorize-Flow.';
+      statusRow.textContent =
+        '⚠ Noch nicht authorisiert. Trage zuerst _oauth_client_id (und ggf. _oauth_client_secret) oberhalb ein, dann starte den Authorize-Flow.';
     }
     oauthSection.appendChild(statusRow);
 
     const authorizeBtn = document.createElement('button');
     authorizeBtn.type = 'button';
     authorizeBtn.className = 'btn btn-primary btn-small';
-    authorizeBtn.textContent = hasToken ? 'Re-Authorisieren' : 'OAuth starten';
+    if (hasToken) {
+      authorizeBtn.textContent = 'Neu verbinden';
+    } else if (oauthKind === 'shared-app' && schema.oauth.provider === 'google') {
+      authorizeBtn.textContent = 'Verbinden mit Google';
+    } else {
+      authorizeBtn.textContent = 'OAuth starten';
+    }
     const authorizeStatus = document.createElement('span');
     authorizeStatus.className = 'muted small';
     authorizeStatus.style.marginLeft = '0.5rem';
