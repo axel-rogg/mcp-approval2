@@ -305,6 +305,15 @@ function renderServerCard(
   const details = document.createElement('details');
   details.className = 'server-card card';
 
+  // Problem-Highlight: Gateway/KC2 ist enabled aber liefert 0 Tools — typisch
+  // Discovery-Error (Worker 403, KC2 401, OAuth-Token fehlt). Native nicht
+  // highlighten (hat immer tools). Catalog-Defaults die der User noch nicht
+  // aktiviert hat (in available[]) sind auch keine "Probleme" — die landen
+  // in einer eigenen Section, nicht hier.
+  if (s.isGateway && s.enabled && s.tools.length === 0) {
+    details.classList.add('has-problem');
+  }
+
   const summary = document.createElement('summary');
   summary.className = 'server-card-summary';
 

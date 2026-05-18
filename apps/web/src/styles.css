@@ -1562,6 +1562,29 @@ code {
   padding: 0 1rem 0.85rem;
 }
 
+/* Problem-State — Gateway ist subscribed aber liefert 0 Tools (Discovery-
+   Fehler, fehlender Token, OAuth nicht abgeschlossen).
+   - Light-Mode: weicher pastell-roter Hintergrund + linker Akzent-Bar.
+   - Dark-Mode: dunkler bordeaux-Hintergrund (--danger-bg = #3a0f12), KEIN
+     heller pastell-Tint der im dark contrast saugt.
+   Border-left ist der primaere Anzeiger, BG ist optional + subtil. */
+.server-card.has-problem {
+  border-left: 3px solid var(--danger);
+  background: color-mix(in srgb, var(--danger-bg) 60%, var(--bg-elev) 40%);
+}
+
+.server-card.has-problem .server-card-empty {
+  color: var(--danger);
+}
+
+/* Fallback fuer Browser ohne color-mix (Safari <15.4): einfach --danger-bg.
+   Dark-Mode haelt das dunkel (#3a0f12). */
+@supports not (background: color-mix(in srgb, red, blue)) {
+  .server-card.has-problem {
+    background: var(--danger-bg);
+  }
+}
+
 .tool-row {
   padding: 0.5rem 0;
   border-top: 1px solid var(--border);
