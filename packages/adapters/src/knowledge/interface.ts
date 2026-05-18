@@ -275,6 +275,12 @@ export interface SetGroupReadAuditArgs extends OnBehalfOfFields {
   readonly enabled: boolean;
 }
 
+export interface TransferGroupOwnershipArgs extends OnBehalfOfFields {
+  readonly userId: string;
+  readonly groupId: string;
+  readonly newOwnerUserId: string;
+}
+
 export interface CreateShareWithGroupArgs extends OnBehalfOfFields {
   readonly userId: string;
   readonly resourceId: string;
@@ -329,6 +335,12 @@ export interface KnowledgeAdapter {
   addGroupMember(args: AddGroupMemberArgs): Promise<GroupMember>;
   removeGroupMember(args: RemoveGroupMemberArgs): Promise<void>;
   setGroupReadAudit(args: SetGroupReadAuditArgs): Promise<void>;
+  /**
+   * P2-4: Owner-Transfer. Caller MUSS aktueller Owner sein. New-Owner MUSS
+   * bereits aktives Member sein (kein "drop in" Transfer ohne Membership).
+   * Beide bleiben nach dem Transfer als admin-Member drin.
+   */
+  transferGroupOwnership(args: TransferGroupOwnershipArgs): Promise<void>;
   createShareWithGroup(args: CreateShareWithGroupArgs): Promise<GroupShare>;
 
   // ---------- Search ----------

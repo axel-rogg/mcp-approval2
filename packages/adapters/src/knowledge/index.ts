@@ -40,6 +40,7 @@ export type {
   SetGroupReadAuditArgs,
   SyncUserArgs,
   SyncUserResult,
+  TransferGroupOwnershipArgs,
   UpdateObjectArgs,
   UserSyncStatus,
 } from './interface.js';

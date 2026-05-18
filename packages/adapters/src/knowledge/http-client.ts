@@ -45,6 +45,7 @@ import type {
   SetGroupReadAuditArgs,
   SyncUserArgs,
   SyncUserResult,
+  TransferGroupOwnershipArgs,
   UpdateObjectArgs,
 } from './interface.js';
 import type {
@@ -706,6 +707,18 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
       path: `/v1/groups/${encodeURIComponent(args.groupId)}/read-audit`,
       userId: args.userId,
       body: { enabled: args.enabled },
+      scope: 'groups:write',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
+    });
+  }
+
+  async transferGroupOwnership(args: TransferGroupOwnershipArgs): Promise<void> {
+    await this.authedFetch<void>({
+      method: 'POST',
+      path: `/v1/groups/${encodeURIComponent(args.groupId)}/transfer-ownership`,
+      userId: args.userId,
+      body: { new_owner_user_id: args.newOwnerUserId },
       scope: 'groups:write',
       ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
       ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),

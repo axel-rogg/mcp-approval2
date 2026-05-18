@@ -55,6 +55,7 @@ import {
   makeGroupsListTool,
   makeGroupsRemoveMemberTool,
   makeGroupsSetReadAuditTool,
+  makeGroupsTransferOwnershipTool,
   makeSharesListMySharesTool,
   makeSharesRevokeTool,
   makeSkillsShareWithGroupTool,
@@ -147,6 +148,9 @@ export function registerCoreTools(registry: ToolRegistry, deps: ToolDeps): void 
   registry.register(makeDocsShareWithGroupTool({ knowledge: deps.knowledge }));
   registry.register(makeSharesRevokeTool({ knowledge: deps.knowledge }));
   registry.register(makeSharesListMySharesTool({ knowledge: deps.knowledge }));
+
+  // Phase 2-4: Owner-Transfer (danger)
+  registry.register(makeGroupsTransferOwnershipTool({ knowledge: deps.knowledge }));
 
   // KC-Wrappers (docs.*, skills.*, memorize.*, objects.*)
   registerKcWrapperTools(registry, { knowledge: deps.knowledge });

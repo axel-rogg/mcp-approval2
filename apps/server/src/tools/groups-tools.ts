@@ -134,6 +134,14 @@ type SharesRevokeInputT = z.infer<typeof SharesRevokeInput>;
 const SharesListMySharesInput = z.object({}).strict();
 type SharesListMySharesInputT = z.infer<typeof SharesListMySharesInput>;
 
+const GroupsTransferOwnershipInput = z
+  .object({
+    group_id: z.string().uuid(),
+    new_owner_user_id: z.string().uuid(),
+  })
+  .strict();
+type GroupsTransferOwnershipInputT = z.infer<typeof GroupsTransferOwnershipInput>;
+
 // ─── Helper: KC-Auth aus Context ───────────────────────────────────────────
 
 function kcAuth(ctx: ToolContext): { userEmail?: string; approvalId?: string } {
@@ -414,6 +422,32 @@ export function makeSharesListMySharesTool(
         ...kcAuth(ctx),
       });
       return { items };
+    },
+  };
+}
+
+export function makeGroupsTransferOwnershipTool(
+  deps: GroupsToolsDeps,
+): Tool<GroupsTransferOwnershipInputT, { ok: true; newOwnerUserId: string }> {
+  return {
+    name: 'groups.transfer_ownership',
+    description:
+      'Transfer group ownership to another user (owner-only, danger). The new owner MUST already be an active group member. Both old and new owner remain as admin members; no master-key rotation is performed (the new owner already has access via their wrappedGroupDek). Reversible only by the new owner transferring back.',
+    sensitivity: 'danger',
+    displayTemplate:
+      'TRANSFER ownership of group {{group_id}} to user {{new_owner_user_id}}. You lose owner-level privileges (add/remove members, archive, share-with-group); the new owner gains them. Both remain as admin members.',
+    inputSchema: GroupsTransferOwnershipInput,
+    async execute(
+      ctx: ToolContext,
+      input,
+    ): Promise<{ ok: true; newOwnerUserId: string }> {
+      await deps.knowledge.transferGroupOwnership({
+        userId: ctx.userId,
+        groupId: input.group_id,
+        newOwnerUserId: input.new_owner_user_id,
+        ...kcAuth(ctx),
+      });
+      return { ok: true, newOwnerUserId: input.new_owner_user_id };
     },
   };
 }

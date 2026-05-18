@@ -121,6 +121,7 @@ export type {
   SignOboArgs,
   SyncUserArgs,
   SyncUserResult,
+  TransferGroupOwnershipArgs,
   UpdateObjectArgs,
   UserSyncStatus,
 } from './knowledge/index.js';

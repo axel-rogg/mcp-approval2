@@ -356,6 +356,8 @@ describe('registerCoreTools', () => {
         'docs.share_with_group',
         'shares.revoke',
         'shares.list_my_shares',
+        // Phase 2-4: Owner-Transfer (danger)
+        'groups.transfer_ownership',
         // Credentials
         'credentials.add',
         'credentials.delete',

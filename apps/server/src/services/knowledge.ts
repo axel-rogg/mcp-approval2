@@ -46,6 +46,7 @@ import {
   type SearchHit,
   type SetGroupReadAuditArgs,
   type Share,
+  type TransferGroupOwnershipArgs,
   type UpdateObjectArgs,
 } from '@mcp-approval2/adapters';
 
@@ -651,6 +652,20 @@ export class KnowledgeService {
         return undefined;
       },
       () => ({ details: { targetUserId: args.targetUserId } }),
+    );
+  }
+
+  async transferGroupOwnership(args: TransferGroupOwnershipArgs): Promise<void> {
+    await this.audited(
+      'knowledge.group.owner_transferred',
+      args.userId,
+      undefined,
+      args.groupId,
+      async () => {
+        await this.adapter.transferGroupOwnership(args);
+        return undefined;
+      },
+      () => ({ details: { newOwnerUserId: args.newOwnerUserId } }),
     );
   }
 
