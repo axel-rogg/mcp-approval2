@@ -204,8 +204,8 @@ describe('ToolDefaultsService.resolveForTool', () => {
     expect(out.defaultsApplied).toEqual(
       expect.arrayContaining([
         { field: 'calendarId', from: 'user-input' },
-        { field: 'max_results', from: 'tool-default' },
-        { field: 'time_zone', from: 'tool-default' },
+        { field: 'max_results', from: 'tool-default', profile: 'default' },
+        { field: 'time_zone', from: 'tool-default', profile: 'default' },
       ]),
     );
   });
@@ -327,5 +327,55 @@ describe('ToolDefaultsService.resolveForTool', () => {
       args: {},
     });
     expect(out.resolvedInput['category']).toBe('note');
+  });
+
+  it('Phase C: __profile-Override gets stripped from args + appears in attribution', async () => {
+    const db = makeMemoryDb([]);
+    const svc = createToolDefaultsService({ db });
+    const out = await svc.resolveForTool({
+      userId: 'u1',
+      toolName: 'gws.calendar.list',
+      args: { __profile: 'test', sql: 'SELECT 1' },
+      subMcpServerNames: new Set(['gws']),
+    });
+    expect(out.resolvedInput).toEqual({ sql: 'SELECT 1' }); // __profile gestripped
+    expect(out.profileName).toBe('test');
+    expect(out.defaultsApplied.find((d) => d.field === '__profile')?.profile).toBe('test');
+  });
+
+  it('Phase C: ignores __profile with invalid slug pattern', async () => {
+    const db = makeMemoryDb([]);
+    const svc = createToolDefaultsService({ db });
+    const out = await svc.resolveForTool({
+      userId: 'u1',
+      toolName: 'gws.calendar.list',
+      args: { __profile: 'INVALID Name', sql: 'x' },
+      subMcpServerNames: new Set(['gws']),
+    });
+    // ignored: profile bleibt default; __profile aber trotzdem gestripped
+    // (Resolver vertraut User nicht den Worker mit dem dirty value zu fluten).
+    expect(out.resolvedInput).toEqual({ sql: 'x' });
+    expect(out.profileName).toBe('default');
+  });
+
+  it('Phase C: attribution carries profile-name for tool-default fields', async () => {
+    const db = makeMemoryDb([
+      {
+        user_id: 'u1',
+        sub_mcp_name: 'gws',
+        tool_name: 'gws.calendar.list',
+        field_name: 'max_results',
+        value_text: '25',
+      },
+    ]);
+    const svc = createToolDefaultsService({ db });
+    const out = await svc.resolveForTool({
+      userId: 'u1',
+      toolName: 'gws.calendar.list',
+      args: {},
+      subMcpServerNames: new Set(['gws']),
+    });
+    const def = out.defaultsApplied.find((d) => d.field === 'max_results');
+    expect(def?.profile).toBe('default');
   });
 });

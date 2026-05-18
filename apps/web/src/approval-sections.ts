@@ -49,7 +49,10 @@ export function renderSections(approval: PendingApproval): HTMLElement {
 function renderDefaultsCard(approval: PendingApproval): HTMLElement | null {
   const applied = approval.defaultsApplied ?? [];
   const fromDefaults = applied.filter((d) => d.from === 'tool-default');
-  if (fromDefaults.length === 0) return null;
+  const profileOverride = applied.find(
+    (d) => d.field === '__profile' && d.from === 'user-input',
+  );
+  if (fromDefaults.length === 0 && !profileOverride) return null;
 
   const card = document.createElement('div');
   card.className = 'sec-card sec-card-defaults';
@@ -59,30 +62,49 @@ function renderDefaultsCard(approval: PendingApproval): HTMLElement | null {
   label.textContent = 'Defaults applied';
   card.appendChild(label);
 
-  const list = document.createElement('ul');
-  list.className = 'sec-defaults-list';
-  for (const d of fromDefaults) {
-    const li = document.createElement('li');
-    li.className = 'sec-defaults-item';
-
-    const fieldEl = document.createElement('code');
-    fieldEl.className = 'sec-defaults-field';
-    fieldEl.textContent = d.field;
-    li.appendChild(fieldEl);
-
-    const sep = document.createElement('span');
-    sep.className = 'muted small';
-    sep.textContent = ' — ';
-    li.appendChild(sep);
-
-    const src = document.createElement('span');
-    src.className = 'pill pill-info sec-defaults-source';
-    src.textContent = d.profile ? `from profile=${d.profile}` : 'from tool-default';
-    li.appendChild(src);
-
-    list.appendChild(li);
+  // Phase C: Profile-Override-Banner (wenn Caller __profile geschickt hat).
+  // Macht WYSIWYS-explizit: User sieht, dass der Tool-Call mit einem
+  // anderen als dem default-aktiven Profil ausgefuehrt wird.
+  if (profileOverride?.profile) {
+    const banner = document.createElement('div');
+    banner.className = 'sec-defaults-override';
+    const pill = document.createElement('span');
+    pill.className = 'pill pill-warn';
+    pill.textContent = `__profile override: ${profileOverride.profile}`;
+    banner.appendChild(pill);
+    const note = document.createElement('span');
+    note.className = 'muted small';
+    note.textContent = ' (per-call, statt aktivem Profil)';
+    banner.appendChild(note);
+    card.appendChild(banner);
   }
-  card.appendChild(list);
+
+  if (fromDefaults.length > 0) {
+    const list = document.createElement('ul');
+    list.className = 'sec-defaults-list';
+    for (const d of fromDefaults) {
+      const li = document.createElement('li');
+      li.className = 'sec-defaults-item';
+
+      const fieldEl = document.createElement('code');
+      fieldEl.className = 'sec-defaults-field';
+      fieldEl.textContent = d.field;
+      li.appendChild(fieldEl);
+
+      const sep = document.createElement('span');
+      sep.className = 'muted small';
+      sep.textContent = ' — ';
+      li.appendChild(sep);
+
+      const src = document.createElement('span');
+      src.className = 'pill pill-info sec-defaults-source';
+      src.textContent = d.profile ? `from profile=${d.profile}` : 'from tool-default';
+      li.appendChild(src);
+
+      list.appendChild(li);
+    }
+    card.appendChild(list);
+  }
   return card;
 }
 

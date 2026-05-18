@@ -135,6 +135,16 @@ export type ToolDefaultValueKind =
   | 'boolean'
   | 'enum';
 
+export interface ToolDefaultProfile {
+  readonly userId: string;
+  readonly subMcpName: string;
+  readonly profileName: string;
+  readonly description: string;
+  readonly isActive: boolean;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
 export interface ToolDefault {
   readonly userId: string;
   readonly subMcpName: string;
@@ -256,6 +266,20 @@ export interface ApiClient {
     fieldName: string;
     profile?: string;
   }): Promise<void>;
+  /** Phase C: Profile listen pro Server. */
+  listProfiles(serverName: string): Promise<ReadonlyArray<ToolDefaultProfile>>;
+  /** Phase C: neues Profil anlegen, optional aus copyFrom kopieren + aktivieren. */
+  createProfile(args: {
+    serverName: string;
+    name: string;
+    description?: string;
+    copyFrom?: string;
+    activate?: boolean;
+  }): Promise<ToolDefaultProfile>;
+  /** Phase C: Profil als aktiv setzen (flip-flop atomar). */
+  activateProfile(serverName: string, profileName: string): Promise<void>;
+  /** Phase C: Profil + alle Defaults loeschen. Refuse wenn aktiv. */
+  deleteProfile(serverName: string, profileName: string): Promise<void>;
 
   // Credentials
   listCredentials(): Promise<CredentialMeta[]>;
@@ -603,6 +627,38 @@ export function createApiClient(baseUrl?: string): ApiClient {
       const q = args.profile ? `?profile=${encodeURIComponent(args.profile)}` : '';
       await request<void>(
         `/v1/me/servers/${encodeURIComponent(args.serverName)}/tool-defaults/${encodeURIComponent(args.toolName)}/${encodeURIComponent(args.fieldName)}${q}`,
+        { method: 'DELETE' },
+      );
+    },
+
+    async listProfiles(serverName) {
+      const out = await request<{ profiles: ToolDefaultProfile[] }>(
+        `/v1/me/servers/${encodeURIComponent(serverName)}/default-profiles`,
+      );
+      return out.profiles;
+    },
+
+    async createProfile(args) {
+      const body: Record<string, unknown> = { name: args.name };
+      if (args.description !== undefined) body['description'] = args.description;
+      if (args.copyFrom !== undefined) body['copyFrom'] = args.copyFrom;
+      if (args.activate !== undefined) body['activate'] = args.activate;
+      return await request<ToolDefaultProfile>(
+        `/v1/me/servers/${encodeURIComponent(args.serverName)}/default-profiles`,
+        { method: 'POST', body },
+      );
+    },
+
+    async activateProfile(serverName, profileName) {
+      await request<void>(
+        `/v1/me/servers/${encodeURIComponent(serverName)}/default-profiles/${encodeURIComponent(profileName)}/activate`,
+        { method: 'POST' },
+      );
+    },
+
+    async deleteProfile(serverName, profileName) {
+      await request<void>(
+        `/v1/me/servers/${encodeURIComponent(serverName)}/default-profiles/${encodeURIComponent(profileName)}`,
         { method: 'DELETE' },
       );
     },

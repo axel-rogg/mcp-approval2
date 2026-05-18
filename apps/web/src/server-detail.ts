@@ -811,7 +811,9 @@ async function renderDefaultsTab(
   desc.className = 'muted small';
   desc.textContent =
     'Pro Tool kannst du Default-Werte hinterlegen. Sie werden automatisch in jeden ' +
-    'Tool-Call eingefüllt, sofern der Caller keinen eigenen Wert übergibt.';
+    'Tool-Call eingefüllt, sofern der Caller keinen eigenen Wert übergibt. ' +
+    'Profile erlauben mehrere Default-Sätze (z.B. prod / test) — der Tool-Call ' +
+    'nutzt das aktive Profil; mit __profile als Arg kann per-Call überschrieben werden.';
   card.appendChild(desc);
 
   if (!gw || (gw.tools?.length ?? 0) === 0) {
@@ -824,21 +826,33 @@ async function renderDefaultsTab(
     return;
   }
 
-  // Bestehende Defaults laden
-  let existing: ReadonlyArray<import('./api.js').ToolDefault> = [];
+  // Profile + Defaults parallel laden.
+  let profiles: ReadonlyArray<import('./api.js').ToolDefaultProfile> = [];
+  let allDefaults: ReadonlyArray<import('./api.js').ToolDefault> = [];
   try {
-    existing = await api.listToolDefaults(serverName);
+    [profiles, allDefaults] = await Promise.all([
+      api.listProfiles(serverName),
+      api.listToolDefaults(serverName),
+    ]);
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {
       renderSessionExpired(document.getElementById('app') ?? document.body);
       return;
     }
-    // 404 = keine Defaults gespeichert; weiter mit []
+    // 404 = nichts gespeichert; weiter mit leerem State.
   }
 
-  // Map: toolName -> ToolDefault[] (typed, mit valueKind + orphanSince).
+  // Aktives Profil bestimmen — fallback 'default' wenn keines existiert.
+  const activeProfile = profiles.find((p) => p.isActive)?.profileName ?? 'default';
+
+  // Profile-Switcher-Bar (Phase C).
+  const switcher = renderProfileSwitcher(api, serverName, profiles, activeProfile, body);
+  card.appendChild(switcher);
+
+  // Map: toolName -> ToolDefault[] (NUR active profile gefiltert).
   const byTool = new Map<string, import('./api.js').ToolDefault[]>();
-  for (const e of existing) {
+  for (const e of allDefaults) {
+    if (e.profileName !== activeProfile) continue;
     const arr = byTool.get(e.toolName) ?? [];
     arr.push(e);
     byTool.set(e.toolName, arr);
@@ -851,6 +865,7 @@ async function renderDefaultsTab(
     const block = renderToolDefaultsBlock(
       api,
       serverName,
+      activeProfile,
       tool.name,
       tool.description ?? '',
       (tool.inputSchema ?? null) as Record<string, unknown> | null,
@@ -863,9 +878,222 @@ async function renderDefaultsTab(
   body.appendChild(card);
 }
 
+function renderProfileSwitcher(
+  api: ApiClient,
+  serverName: string,
+  profiles: ReadonlyArray<import('./api.js').ToolDefaultProfile>,
+  activeProfile: string,
+  detailRoot: HTMLElement,
+): HTMLElement {
+  const bar = document.createElement('div');
+  bar.className = 'tool-defaults-profile-bar';
+
+  const label = document.createElement('span');
+  label.className = 'muted small';
+  label.textContent = 'Profil:';
+  bar.appendChild(label);
+
+  // Wenn keine Profile in der DB sind (frischer User), zeigen wir
+  // 'default' als implizites Profil-Pill.
+  const visibleProfiles = profiles.length > 0
+    ? profiles
+    : ([{ profileName: 'default', isActive: true } as import('./api.js').ToolDefaultProfile]);
+
+  for (const p of visibleProfiles) {
+    const pill = document.createElement('button');
+    pill.type = 'button';
+    pill.className = 'pill tool-defaults-profile-pill';
+    if (p.profileName === activeProfile) pill.classList.add('pill-ok', 'is-active');
+    pill.textContent = (p.profileName === activeProfile ? '● ' : '○ ') + p.profileName;
+    pill.title = p.description || `Profil "${p.profileName}"`;
+    pill.addEventListener('click', async () => {
+      if (p.profileName === activeProfile) return;
+      pill.disabled = true;
+      try {
+        await api.activateProfile(serverName, p.profileName);
+        showToast(`Profil "${p.profileName}" aktiviert.`, 'success');
+        await refreshDefaultsTab(api, serverName, detailRoot);
+      } catch (err) {
+        pill.disabled = false;
+        showToast(`Fehler: ${(err as Error).message}`, 'error');
+      }
+    });
+    bar.appendChild(pill);
+
+    // Delete-Button nur fuer nicht-aktive + nicht-'default'.
+    if (p.profileName !== activeProfile && p.profileName !== 'default' && profiles.length > 0) {
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'btn btn-secondary btn-small btn-danger';
+      del.textContent = '×';
+      del.title = `Profil "${p.profileName}" entfernen`;
+      del.addEventListener('click', async () => {
+        if (!window.confirm(`Profil "${p.profileName}" + alle Defaults darin entfernen?`))
+          return;
+        try {
+          await api.deleteProfile(serverName, p.profileName);
+          showToast('Profil entfernt.', 'success');
+          await refreshDefaultsTab(api, serverName, detailRoot);
+        } catch (err) {
+          showToast(`Fehler: ${(err as Error).message}`, 'error');
+        }
+      });
+      bar.appendChild(del);
+    }
+  }
+
+  const addBtn = document.createElement('button');
+  addBtn.type = 'button';
+  addBtn.className = 'btn btn-secondary btn-small';
+  addBtn.textContent = '+ Profil';
+  addBtn.addEventListener('click', () =>
+    openNewProfileModal(api, serverName, profiles, detailRoot),
+  );
+  bar.appendChild(addBtn);
+
+  return bar;
+}
+
+function openNewProfileModal(
+  api: ApiClient,
+  serverName: string,
+  existingProfiles: ReadonlyArray<import('./api.js').ToolDefaultProfile>,
+  detailRoot: HTMLElement,
+): void {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+
+  const modal = document.createElement('div');
+  modal.className = 'modal card';
+
+  const h = document.createElement('h3');
+  h.textContent = 'Neues Profil';
+  modal.appendChild(h);
+
+  const form = document.createElement('form');
+  form.className = 'col';
+
+  function mkField(labelText: string, input: HTMLElement, hint?: string): HTMLElement {
+    const wrap = document.createElement('div');
+    wrap.className = 'field';
+    const lbl = document.createElement('label');
+    lbl.textContent = labelText;
+    wrap.appendChild(lbl);
+    wrap.appendChild(input);
+    if (hint) {
+      const h2 = document.createElement('div');
+      h2.className = 'muted small';
+      h2.textContent = hint;
+      wrap.appendChild(h2);
+    }
+    return wrap;
+  }
+
+  const nameIn = document.createElement('input');
+  nameIn.type = 'text';
+  nameIn.required = true;
+  nameIn.pattern = '[a-z][a-z0-9_-]{0,63}';
+  nameIn.placeholder = 'z.B. test';
+  form.appendChild(mkField('Name (Slug)', nameIn, 'Kleinbuchstaben, Ziffern, _ und -'));
+
+  const descIn = document.createElement('input');
+  descIn.type = 'text';
+  descIn.placeholder = 'z.B. Lokale Postgres';
+  descIn.maxLength = 256;
+  form.appendChild(mkField('Beschreibung (optional)', descIn));
+
+  const copySelect = document.createElement('select');
+  const noneOpt = document.createElement('option');
+  noneOpt.value = '';
+  noneOpt.textContent = '— leer anlegen —';
+  copySelect.appendChild(noneOpt);
+  for (const p of existingProfiles) {
+    const opt = document.createElement('option');
+    opt.value = p.profileName;
+    opt.textContent = p.profileName;
+    copySelect.appendChild(opt);
+  }
+  form.appendChild(
+    mkField(
+      'Kopieren aus',
+      copySelect,
+      'Optional: bestehendes Profil als Vorlage. Defaults werden mitkopiert.',
+    ),
+  );
+
+  const activateLbl = document.createElement('label');
+  activateLbl.className = 'row';
+  const activateIn = document.createElement('input');
+  activateIn.type = 'checkbox';
+  activateLbl.appendChild(activateIn);
+  const activateTxt = document.createElement('span');
+  activateTxt.textContent = ' Direkt aktivieren';
+  activateLbl.appendChild(activateTxt);
+  form.appendChild(activateLbl);
+
+  const actions = document.createElement('div');
+  actions.className = 'row form-actions';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'btn btn-secondary';
+  cancel.textContent = 'Abbrechen';
+  cancel.addEventListener('click', () => overlay.remove());
+  const submit = document.createElement('button');
+  submit.type = 'submit';
+  submit.className = 'btn';
+  submit.textContent = 'Anlegen';
+  actions.appendChild(cancel);
+  actions.appendChild(submit);
+  form.appendChild(actions);
+
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    submit.disabled = true;
+    try {
+      await api.createProfile({
+        serverName,
+        name: nameIn.value.trim(),
+        ...(descIn.value.trim() ? { description: descIn.value.trim() } : {}),
+        ...(copySelect.value ? { copyFrom: copySelect.value } : {}),
+        ...(activateIn.checked ? { activate: true } : {}),
+      });
+      showToast(`Profil "${nameIn.value.trim()}" angelegt.`, 'success');
+      overlay.remove();
+      await refreshDefaultsTab(api, serverName, detailRoot);
+    } catch (err) {
+      submit.disabled = false;
+      showToast(`Fehler: ${(err as Error).message}`, 'error');
+    }
+  });
+
+  modal.appendChild(form);
+  overlay.appendChild(modal);
+  overlay.addEventListener('click', (ev) => {
+    if (ev.target === overlay) overlay.remove();
+  });
+  document.body.appendChild(overlay);
+  nameIn.focus();
+}
+
+async function refreshDefaultsTab(
+  api: ApiClient,
+  serverName: string,
+  detailRoot: HTMLElement,
+): Promise<void> {
+  // Triggern via custom-event — Server-Detail-Renderer hoert mit und
+  // re-rendert. Wird in renderServerDetail() (am Top) registriert.
+  detailRoot.dispatchEvent(
+    new CustomEvent('tool-defaults:refresh', { bubbles: true, detail: { serverName } }),
+  );
+  // Fallback fuer den ersten Render-Pfad (kein Listener registriert):
+  // wir machen einen page-reload-equivalent durch hash-Bounce.
+  void api;
+}
+
 function renderToolDefaultsBlock(
   api: ApiClient,
   serverName: string,
+  activeProfile: string,
   toolName: string,
   toolDesc: string,
   toolSchema: Record<string, unknown> | null,
@@ -1022,6 +1250,7 @@ function renderToolDefaultsBlock(
         fieldName,
         value,
         valueKind: currentHandle.valueKind,
+        profile: activeProfile,
       });
       showToast(`Default ${fieldName} gespeichert.`, 'success');
       // Statt manuell DOM-Manipulation: ganze Tab neu rendern (einfacher + konsistent
@@ -1246,6 +1475,16 @@ export async function renderServerDetail(
     // Re-render full page (einfacher als state-diff)
     await renderServerDetail(root, api, session, serverName);
   };
+
+  // Phase C: Profile-Switcher + Profile-CRUD + Set/Delete-Defaults
+  // dispatchen 'tool-defaults:refresh' nach Aenderungen.
+  const refreshListener = (): void => {
+    void onChanged();
+  };
+  // Register on root + bubble-fenster damit Modal-Overlay-Sources auch
+  // erreicht werden.
+  root.addEventListener('tool-defaults:refresh', refreshListener);
+  window.addEventListener('tool-defaults:refresh', refreshListener);
 
   switch (activeTab) {
     case 'overview':

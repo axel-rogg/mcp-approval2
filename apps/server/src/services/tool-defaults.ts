@@ -25,6 +25,8 @@
  */
 import type { DbAdapter, ScopedDb } from '@mcp-approval2/adapters';
 import type { AppliedDefaultRow } from '../schema/postgres/approvals.js';
+import type { ToolDefaultProfilesService } from './tool-default-profiles.js';
+import { HttpError } from '../lib/errors.js';
 
 // ---------------------------------------------------------------------------
 // Konstanten — Entscheidungen 2026-05-18 (siehe PLAN-tool-defaults-v2.md §10)
@@ -105,6 +107,8 @@ export interface ResolveForToolResult {
   readonly defaultsApplied: AppliedDefaultRow[];
   /** Sub-MCP-Server, dem dieser Tool-Call zugeordnet wurde. */
   readonly subMcpName: string;
+  /** Aktives Profil (Phase C). 'default' wenn keines explizit aktiviert. */
+  readonly profileName: string;
 }
 
 export interface ToolDefaultsService {
@@ -115,6 +119,12 @@ export interface ToolDefaultsServiceOpts {
   readonly db: DbAdapter;
   /** Optional Drift-Detection-Callback. Siehe SchemaFieldsCallback. */
   readonly schemaFields?: SchemaFieldsCallback;
+  /**
+   * Phase C: ToolDefaultProfilesService fuer Active-Profile-Lookup.
+   * Wenn nicht gesetzt, faellt der Resolver auf `profile_name='default'`
+   * zurueck (Phase-B-Behavior).
+   */
+  readonly profiles?: ToolDefaultProfilesService;
   /** Optional Clock fuer Tests. */
   readonly now?: () => number;
 }
@@ -176,17 +186,15 @@ function effectiveValue(row: DefaultRow): unknown {
 export function createToolDefaultsService(
   opts: ToolDefaultsServiceOpts,
 ): ToolDefaultsService {
-  const { db, schemaFields, now = () => Date.now() } = opts;
+  const { db, schemaFields, profiles, now = () => Date.now() } = opts;
 
   async function loadDefaults(
     scoped: ScopedDb,
     userId: string,
     subMcpName: string,
     toolName: string,
+    profileName: string,
   ): Promise<ReadonlyArray<DefaultRow>> {
-    // Phase B: liest aktiv-Profil falls vorhanden. Bis Phase C lebt
-    // jeder User nur mit `profile_name='default'` (Mig 0028 seedet das fuer
-    // alle existing Rows). Wir filtern also explizit:
     return await scoped.query<DefaultRow>(
       `SELECT tool_name, field_name, profile_name,
               value_text, value_json, value_kind, orphan_since
@@ -194,8 +202,8 @@ export function createToolDefaultsService(
         WHERE user_id = $1
           AND sub_mcp_name = $2
           AND tool_name = $3
-          AND profile_name = 'default'`,
-      [userId, subMcpName, toolName],
+          AND profile_name = $4`,
+      [userId, subMcpName, toolName, profileName],
     );
   }
 
@@ -205,6 +213,7 @@ export function createToolDefaultsService(
     subMcpName: string,
     toolName: string,
     fieldName: string,
+    profileName: string,
     orphanSince: number | null,
   ): Promise<void> {
     await scoped.query(
@@ -212,8 +221,8 @@ export function createToolDefaultsService(
           SET orphan_since = $1
         WHERE user_id = $2 AND sub_mcp_name = $3
           AND tool_name = $4 AND field_name = $5
-          AND profile_name = 'default'`,
-      [orphanSince, userId, subMcpName, toolName, fieldName],
+          AND profile_name = $6`,
+      [orphanSince, userId, subMcpName, toolName, fieldName, profileName],
     );
   }
 
@@ -222,12 +231,49 @@ export function createToolDefaultsService(
       const subMcpName = subMcpFromToolName(args.toolName, args.subMcpServerNames);
       const knownFields = schemaFields ? schemaFields(args.toolName) : null;
 
-      // User-Input first abbilden (Attribution: 'user-input' pro nicht-
-      // undefined-Field). null-Values gelten als nicht gesetzt → Default
-      // darf einspringen (gleiche Convention wie v1 PrefsService).
-      const userInput = args.args;
+      // Phase C: __profile-Override extrahieren + aus den User-Args strippen
+      // bevor das Tool dispatched wird. Wenn das Profil nicht existiert
+      // (user hat sich vertippt), werfen wir 400 statt silent fallback —
+      // sonst kriegt der Tool-Call mysteriös andere Defaults.
+      const userArgsRaw = args.args;
+      const profileOverride = extractProfileOverride(userArgsRaw);
+      const userInput: Record<string, unknown> = { ...userArgsRaw };
+      delete userInput[RESERVED_PROFILE_ARG];
+
+      let profileName = 'default';
+      if (profiles) {
+        if (profileOverride !== null) {
+          const exists = await profiles.exists(args.userId, subMcpName, profileOverride);
+          if (!exists) {
+            throw HttpError.badRequest(
+              'invalid_request',
+              `profile '${profileOverride}' does not exist for server '${subMcpName}'`,
+            );
+          }
+          profileName = profileOverride;
+        } else {
+          profileName = await profiles.activeProfileNameFor(args.userId, subMcpName);
+        }
+      } else if (profileOverride !== null) {
+        // Caller setzt __profile aber Service hat keinen ProfilesService.
+        // Wir akzeptieren das (Tests / dev-Mode) — der Wert wird in
+        // loadDefaults via SELECT-Filter genutzt.
+        profileName = profileOverride;
+      }
+
+      // User-Input-Attribution. null-Values gelten als nicht gesetzt →
+      // Default darf einspringen.
       const resolvedInput: Record<string, unknown> = { ...userInput };
       const defaultsApplied: AppliedDefaultRow[] = [];
+      // __profile selbst ist 'user-input' damit Approval-Display den Override
+      // sichtbar dokumentiert (WYSIWYS).
+      if (profileOverride !== null) {
+        defaultsApplied.push({
+          field: RESERVED_PROFILE_ARG,
+          from: 'user-input',
+          profile: profileOverride,
+        });
+      }
       for (const [field, value] of Object.entries(userInput)) {
         if (value !== undefined && value !== null) {
           defaultsApplied.push({ field, from: 'user-input' });
@@ -236,13 +282,16 @@ export function createToolDefaultsService(
 
       // Defaults laden + Args-WIN-Merge + Orphan-Lazy-Write.
       await db.transaction(args.userId, async (scoped) => {
-        const rows = await loadDefaults(scoped, args.userId, subMcpName, args.toolName);
+        const rows = await loadDefaults(
+          scoped,
+          args.userId,
+          subMcpName,
+          args.toolName,
+          profileName,
+        );
         const ts = now();
         for (const row of rows) {
-          // Drift-Detection (Plan §10 Entscheidung ⑤): wenn das Schema
-          // bekannt ist und das Field fehlt → orphan markieren, skip merge.
-          // Wenn das Schema das Field hat aber die Row orphan_since≠NULL
-          // hatte → unset (Field ist zurueck).
+          // Drift-Detection (Plan §10 Entscheidung ⑤).
           if (knownFields) {
             const fieldKnown = knownFields.has(row.field_name);
             if (!fieldKnown) {
@@ -253,10 +302,11 @@ export function createToolDefaultsService(
                   subMcpName,
                   args.toolName,
                   row.field_name,
+                  profileName,
                   ts,
                 );
               }
-              continue; // skip merge — Worker wuerde unknown-property werfen
+              continue;
             }
             if (row.orphan_since !== null) {
               await markOrphan(
@@ -265,6 +315,7 @@ export function createToolDefaultsService(
                 subMcpName,
                 args.toolName,
                 row.field_name,
+                profileName,
                 null,
               );
             }
@@ -277,12 +328,29 @@ export function createToolDefaultsService(
             defaultsApplied.push({
               field: row.field_name,
               from: 'tool-default',
+              profile: profileName,
             });
           }
         }
       });
 
-      return { resolvedInput, defaultsApplied, subMcpName };
+      return { resolvedInput, defaultsApplied, subMcpName, profileName };
     },
   };
+}
+
+/**
+ * Liest `__profile` aus den User-Args. Akzeptiert nur String-Werte mit
+ * passendem Slug-Pattern. Returnt `null` wenn nicht gesetzt oder ungueltig
+ * (Caller faellt auf Active-Profile zurueck).
+ *
+ * Validation gegen Profile-Name-Pattern verhindert SQL-Pollution durch
+ * unkontrollierte User-Args (auch wenn Drizzle parametrisiert — Defense-
+ * in-Depth).
+ */
+function extractProfileOverride(args: Record<string, unknown>): string | null {
+  const raw = args[RESERVED_PROFILE_ARG];
+  if (typeof raw !== 'string') return null;
+  if (!/^[a-z][a-z0-9_-]{0,63}$/.test(raw)) return null;
+  return raw;
 }

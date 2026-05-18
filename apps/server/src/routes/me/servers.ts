@@ -26,6 +26,7 @@ import type { UserSubscriptionsService } from '../../services/user-subscriptions
 import type { UserServerConfigService } from '../../services/user-server-config.js';
 import type { UserServerOAuthService } from '../../services/user-server-oauth.js';
 import type { UserServerToolDefaultsService } from '../../services/user-server-tool-defaults.js';
+import type { ToolDefaultProfilesService } from '../../services/tool-default-profiles.js';
 import type { UserDiscoveryArgs } from '../../mcp/gateway/discovery.js';
 
 /**
@@ -55,6 +56,11 @@ export interface MyServersRouteDeps {
    * tool-defaults-Endpoints nicht verfuegbar.
    */
   readonly toolDefaults?: UserServerToolDefaultsService;
+  /**
+   * Phase C (PLAN-tool-defaults-v2.md): Profile-CRUD pro Server. Wenn nicht
+   * gesetzt, sind die default-profiles-Endpoints nicht verfuegbar.
+   */
+  readonly toolDefaultProfiles?: ToolDefaultProfilesService;
   /**
    * Optional: nach erfolgreichem OAuth-callback per-User-Discovery
    * triggern. wired in app-factory zu refreshUserSubMcpToolCache().
@@ -534,6 +540,83 @@ export function myServersRoutes(deps: MyServersRouteDeps): Hono<AppBindings> {
       const profileRaw = c.req.query('profile');
       const profile = profileRaw && PROFILE_RE.test(profileRaw) ? profileRaw : 'default';
       await tdSvc.remove(user.userId, name, tool, field, profile);
+      return c.body(null, 204);
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Phase C (PLAN-tool-defaults-v2.md): Default-Profile-CRUD
+  // ─────────────────────────────────────────────────────────────────────
+  // GET    /v1/me/servers/:srv/default-profiles
+  // POST   /v1/me/servers/:srv/default-profiles            body: {name, description?, copyFrom?, activate?}
+  // POST   /v1/me/servers/:srv/default-profiles/:name/activate
+  // DELETE /v1/me/servers/:srv/default-profiles/:name
+  if (deps.toolDefaultProfiles) {
+    const profilesSvc = deps.toolDefaultProfiles;
+    const PROFILE_NAME_RE = /^[a-z][a-z0-9_-]{0,63}$/;
+    const ProfileCreateBody = z
+      .object({
+        name: z.string().regex(PROFILE_NAME_RE),
+        description: z.string().max(256).optional(),
+        copyFrom: z.string().regex(PROFILE_NAME_RE).optional(),
+        activate: z.boolean().optional(),
+      })
+      .strict();
+
+    app.get('/v1/me/servers/:name/default-profiles', guard, async (c) => {
+      const user = c.get('user');
+      if (!user) throw HttpError.unauthorized('authentication required');
+      const name = c.req.param('name');
+      const profiles = await profilesSvc.list(user.userId, name);
+      return c.json({ profiles });
+    });
+
+    app.post(
+      '/v1/me/servers/:name/default-profiles',
+      guard,
+      zValidator('json', ProfileCreateBody),
+      async (c) => {
+        const user = c.get('user');
+        if (!user) throw HttpError.unauthorized('authentication required');
+        const name = c.req.param('name');
+        const body = c.req.valid('json');
+        const profile = await profilesSvc.create({
+          userId: user.userId,
+          subMcpName: name,
+          profileName: body.name,
+          ...(body.description !== undefined ? { description: body.description } : {}),
+          ...(body.copyFrom !== undefined ? { copyFrom: body.copyFrom } : {}),
+          ...(body.activate !== undefined ? { activate: body.activate } : {}),
+        });
+        return c.json(profile, 201);
+      },
+    );
+
+    app.post(
+      '/v1/me/servers/:name/default-profiles/:profile/activate',
+      guard,
+      async (c) => {
+        const user = c.get('user');
+        if (!user) throw HttpError.unauthorized('authentication required');
+        const name = c.req.param('name');
+        const profile = c.req.param('profile');
+        if (!PROFILE_NAME_RE.test(profile)) {
+          throw HttpError.badRequest('invalid_request', `invalid profile name '${profile}'`);
+        }
+        await profilesSvc.activate(user.userId, name, profile);
+        return c.json({ name, profile, activated: true });
+      },
+    );
+
+    app.delete('/v1/me/servers/:name/default-profiles/:profile', guard, async (c) => {
+      const user = c.get('user');
+      if (!user) throw HttpError.unauthorized('authentication required');
+      const name = c.req.param('name');
+      const profile = c.req.param('profile');
+      if (!PROFILE_NAME_RE.test(profile)) {
+        throw HttpError.badRequest('invalid_request', `invalid profile name '${profile}'`);
+      }
+      await profilesSvc.delete(user.userId, name, profile);
       return c.body(null, 204);
     });
   }
