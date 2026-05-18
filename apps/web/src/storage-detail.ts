@@ -19,6 +19,7 @@ import { logout } from './auth.js';
 import { renderHeader } from './components/header.js';
 import { dispatchRenderer } from './renderers/index.js';
 import { decodeBody } from './renderers/utils.js';
+import { openShareWithGroupModal } from './share-with-group-modal.js';
 
 function formatBytes(n: number | undefined): string {
   if (n === undefined || n === null) return '–';
@@ -274,6 +275,18 @@ export async function renderStorageDetail(
     }
   });
   actions.appendChild(copyBtn);
+
+  // P2-5: Share-with-Group-Button (vor Delete im action-bar)
+  const shareBtn = document.createElement('button');
+  shareBtn.type = 'button';
+  shareBtn.className = 'icon-btn storage-share-btn';
+  shareBtn.setAttribute('aria-label', 'Mit Gruppe teilen');
+  shareBtn.setAttribute('title', 'Mit Gruppe teilen');
+  shareBtn.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>`;
+  shareBtn.addEventListener('click', () => {
+    void openShareWithGroupModal(obj);
+  });
+  actions.appendChild(shareBtn);
 
   const delBtn = document.createElement('button');
   delBtn.type = 'button';
