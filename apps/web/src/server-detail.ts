@@ -418,6 +418,40 @@ function renderTokenForm(
   card.appendChild(form);
 }
 
+/**
+ * Defensive Help-URL-Renderer: nur als <a> rendern wenn `value` eine gueltige
+ * absolute URL ist und keine Whitespaces enthaelt. Sonst Plain-Text Paragraph.
+ * Hintergrund: legacy-DB-Eintraege haben help_url als ganzen Satz inkl. URL
+ * gespeichert ("https://… — OAuth-Client-ID erzeugen, Type …"), das ergab
+ * kaputte <a href="ganzer satz">-Tags.
+ */
+function renderHelpUrl(card: HTMLElement, value: string, label: string): void {
+  const p = document.createElement('p');
+  p.className = 'muted small';
+  const trimmed = value.trim();
+  const looksLikeUrl =
+    /^https?:\/\/\S+$/.test(trimmed) && (() => {
+      try {
+        new URL(trimmed);
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+  if (looksLikeUrl) {
+    const a = document.createElement('a');
+    a.href = trimmed;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.textContent = `${label}: ${trimmed}`;
+    p.appendChild(a);
+  } else {
+    // Plain-Text-Fallback fuer kaputte Eintraege oder Satz-Hinweise
+    p.textContent = `${label}: ${trimmed}`;
+  }
+  card.appendChild(p);
+}
+
 async function renderOAuthFlow(
   card: HTMLElement,
   api: ApiClient,
@@ -439,15 +473,7 @@ async function renderOAuthFlow(
   card.appendChild(desc);
 
   if (oauth?.help_url) {
-    const help = document.createElement('p');
-    help.className = 'muted small';
-    const a = document.createElement('a');
-    a.href = oauth.help_url;
-    a.target = '_blank';
-    a.rel = 'noopener noreferrer';
-    a.textContent = `Setup-Hilfe: ${oauth.help_url}`;
-    help.appendChild(a);
-    card.appendChild(help);
+    renderHelpUrl(card, oauth.help_url, 'Setup-Hilfe');
   }
   if (oauth?.scopes && oauth.scopes.length > 0) {
     const scopesP = document.createElement('p');

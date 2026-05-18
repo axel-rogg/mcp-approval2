@@ -13,7 +13,7 @@
 
 // Bump bei jedem PWA-Asset-Update. Activate-Hook purged alle Caches mit
 // anderem Key, install-Hook precached die STATIC_ASSETS-Liste neu.
-const CACHE_VERSION = 'mcp-approval2-v11-2026-05-18-dcr-auth-view';
+const CACHE_VERSION = 'mcp-approval2-v12-2026-05-18-help-url-safe';
 
 // index.html / '/' bewusst NICHT precached — sie werden network-first geholt,
 // damit Vite-Builds mit neuen Asset-Hash-Verweisen sofort sichtbar werden.
