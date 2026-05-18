@@ -194,6 +194,32 @@ class InMemoryKnowledgeAdapter implements KnowledgeAdapter {
   async syncUser(_args: SyncUserArgs): Promise<SyncUserResult> {
     return { status: 'created', kcUserId: 'kc-stub-1' };
   }
+
+  // Phase 1 sharing stubs — apps-tests touchen Group-Sharing nicht.
+  async createGroup(): Promise<never> {
+    throw new Error('InMemoryKnowledgeAdapter: createGroup not implemented for apps-tests');
+  }
+  async listGroups(): Promise<ReadonlyArray<never>> {
+    return [];
+  }
+  async getGroup(): Promise<never> {
+    throw new Error('InMemoryKnowledgeAdapter: getGroup not implemented');
+  }
+  async archiveGroup(): Promise<void> {
+    /* no-op */
+  }
+  async addGroupMember(): Promise<never> {
+    throw new Error('InMemoryKnowledgeAdapter: addGroupMember not implemented');
+  }
+  async removeGroupMember(): Promise<void> {
+    /* no-op */
+  }
+  async setGroupReadAudit(): Promise<void> {
+    /* no-op */
+  }
+  async createShareWithGroup(): Promise<never> {
+    throw new Error('InMemoryKnowledgeAdapter: createShareWithGroup not implemented');
+  }
 }
 
 // ---------------------------------------------------------------------------

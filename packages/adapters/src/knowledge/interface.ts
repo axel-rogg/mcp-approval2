@@ -28,6 +28,9 @@
 
 import type {
   CreateObjectArgs,
+  Group,
+  GroupMember,
+  GroupShare,
   KnowledgeObject,
   ObjectsList,
   SearchHit,
@@ -225,6 +228,57 @@ export interface RemoveRefArgs extends OnBehalfOfFields {
   readonly role: string;
 }
 
+// ---------- Phase 1: Group-Sharing Args (Item 6d) ----------
+
+export interface CreateGroupArgs extends OnBehalfOfFields {
+  readonly userId: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly readAuditEnabled?: boolean;
+  readonly cascadeOnShareDefault?: boolean;
+}
+
+export interface ListGroupsArgs extends OnBehalfOfFields {
+  readonly userId: string;
+}
+
+export interface GetGroupArgs extends OnBehalfOfFields {
+  readonly userId: string;
+  readonly groupId: string;
+}
+
+export interface ArchiveGroupArgs extends OnBehalfOfFields {
+  readonly userId: string;
+  readonly groupId: string;
+}
+
+export interface AddGroupMemberArgs extends OnBehalfOfFields {
+  readonly userId: string;
+  readonly groupId: string;
+  readonly targetUserId: string;
+  readonly role?: 'admin' | 'member';
+}
+
+export interface RemoveGroupMemberArgs extends OnBehalfOfFields {
+  readonly userId: string;
+  readonly groupId: string;
+  readonly targetUserId: string;
+}
+
+export interface SetGroupReadAuditArgs extends OnBehalfOfFields {
+  readonly userId: string;
+  readonly groupId: string;
+  readonly enabled: boolean;
+}
+
+export interface CreateShareWithGroupArgs extends OnBehalfOfFields {
+  readonly userId: string;
+  readonly resourceId: string;
+  readonly groupId: string;
+  readonly scope: 'read'; // Phase 1: nur read (write kommt Phase 2)
+  readonly expiresAt?: number | null;
+}
+
 export interface KnowledgeAdapter {
   // ---------- Objects ----------
   createObject(args: CreateObjectArgs): Promise<KnowledgeObject>;
@@ -246,6 +300,19 @@ export interface KnowledgeAdapter {
   createShare(args: CreateShareArgs): Promise<Share>;
   listShares(args: ListSharesArgs): Promise<ReadonlyArray<Share>>;
   revokeShare(args: RevokeShareArgs): Promise<void>;
+
+  // ---------- Phase 1 Group-Sharing (Item 6d) ----------
+  createGroup(args: CreateGroupArgs): Promise<Group>;
+  listGroups(args: ListGroupsArgs): Promise<ReadonlyArray<Group>>;
+  getGroup(args: GetGroupArgs): Promise<{
+    group: Group;
+    members: ReadonlyArray<GroupMember>;
+  }>;
+  archiveGroup(args: ArchiveGroupArgs): Promise<void>;
+  addGroupMember(args: AddGroupMemberArgs): Promise<GroupMember>;
+  removeGroupMember(args: RemoveGroupMemberArgs): Promise<void>;
+  setGroupReadAudit(args: SetGroupReadAuditArgs): Promise<void>;
+  createShareWithGroup(args: CreateShareWithGroupArgs): Promise<GroupShare>;
 
   // ---------- Search ----------
   search(args: SearchArgs): Promise<ReadonlyArray<SearchHit>>;

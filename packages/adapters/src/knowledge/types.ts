@@ -164,16 +164,53 @@ export interface ObjectsList {
  * `resourceKind` mehr — Caller laesst sich via JOIN auf `objects.subtype`
  * den Discriminator nachziehen, falls noetig. `grantedAt` (NICHT
  * `createdAt`) — D-7.
+ *
+ * Phase 1 sharing (Migration 0019): `grantedTo` ist jetzt nullable
+ * (Group-Grants haben statt grantedTo ein grantedToGroupId).
  */
 export interface Share {
   readonly id: string;
   readonly resourceId: string;
   readonly grantedBy: string;
-  readonly grantedTo: string;
+  readonly grantedTo: string | null;
   readonly scope: ShareScope;
   readonly grantedAt: number;
   readonly expiresAt: number | null;
   readonly revokedAt: number | null;
+}
+
+/**
+ * GroupShare — Phase 1 sharing Erweiterung. Wird zurueckgegeben von
+ * `createShareWithGroup` und `listShares` (wenn der Grant ein Group-
+ * Grant ist statt User-Grant).
+ */
+export interface GroupShare extends Share {
+  readonly grantedToGroupId: string;
+  readonly viaCascadeFromObjectId: string | null;
+  readonly groupMasterVersion: number | null;
+}
+
+/**
+ * Group — Phase 1 sharing.
+ */
+export interface Group {
+  readonly id: string;
+  readonly ownerId: string;
+  readonly name: string;
+  readonly description: string | null;
+  readonly masterVersion: number;
+  readonly readAuditEnabled: boolean;
+  readonly cascadeOnShareDefault: boolean;
+  readonly createdAt: number;
+  readonly archivedAt: number | null;
+}
+
+export interface GroupMember {
+  readonly groupId: string;
+  readonly userId: string;
+  readonly role: 'admin' | 'member';
+  readonly joinedAt: number;
+  readonly removedAt: number | null;
 }
 
 /**

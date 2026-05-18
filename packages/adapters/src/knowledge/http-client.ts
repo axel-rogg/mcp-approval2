@@ -23,23 +23,34 @@
  */
 
 import type {
+  AddGroupMemberArgs,
   AddRefArgs,
+  ArchiveGroupArgs,
+  CreateGroupArgs,
   CreateShareArgs,
+  CreateShareWithGroupArgs,
   EraseUserArgs,
   EraseUserResult,
+  GetGroupArgs,
   GetObjectArgs,
   KnowledgeAdapter,
+  ListGroupsArgs,
   ListObjectsArgs,
   ListSharesArgs,
+  RemoveGroupMemberArgs,
   RemoveRefArgs,
   RevokeShareArgs,
   SearchArgs,
+  SetGroupReadAuditArgs,
   SyncUserArgs,
   SyncUserResult,
   UpdateObjectArgs,
 } from './interface.js';
 import type {
   CreateObjectArgs,
+  Group,
+  GroupMember,
+  GroupShare,
   KnowledgeObject,
   ObjectsList,
   SearchHit,
@@ -587,6 +598,118 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
       method: 'DELETE',
       path: `/v1/shares/${encodeURIComponent(args.shareId)}`,
       userId: args.userId,
+      scope: 'shares:write',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Phase 1: Group-Sharing (Item 6d)
+  // ---------------------------------------------------------------------------
+
+  async createGroup(args: CreateGroupArgs): Promise<Group> {
+    const body: Record<string, unknown> = { name: args.name };
+    if (args.description !== undefined) body['description'] = args.description;
+    if (args.readAuditEnabled !== undefined) body['read_audit_enabled'] = args.readAuditEnabled;
+    if (args.cascadeOnShareDefault !== undefined) {
+      body['cascade_on_share_default'] = args.cascadeOnShareDefault;
+    }
+    return this.authedFetch<Group>({
+      method: 'POST',
+      path: '/v1/groups',
+      userId: args.userId,
+      body,
+      scope: 'groups:write',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
+    });
+  }
+
+  async listGroups(args: ListGroupsArgs): Promise<ReadonlyArray<Group>> {
+    const res = await this.authedFetch<{ items: ReadonlyArray<Group> }>({
+      method: 'GET',
+      path: '/v1/groups',
+      userId: args.userId,
+      scope: 'groups:read',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
+    });
+    return res.items;
+  }
+
+  async getGroup(
+    args: GetGroupArgs,
+  ): Promise<{ group: Group; members: ReadonlyArray<GroupMember> }> {
+    return this.authedFetch<{ group: Group; members: ReadonlyArray<GroupMember> }>({
+      method: 'GET',
+      path: `/v1/groups/${encodeURIComponent(args.groupId)}`,
+      userId: args.userId,
+      scope: 'groups:read',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
+    });
+  }
+
+  async archiveGroup(args: ArchiveGroupArgs): Promise<void> {
+    await this.authedFetch<void>({
+      method: 'DELETE',
+      path: `/v1/groups/${encodeURIComponent(args.groupId)}`,
+      userId: args.userId,
+      scope: 'groups:write',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
+    });
+  }
+
+  async addGroupMember(args: AddGroupMemberArgs): Promise<GroupMember> {
+    const body: Record<string, unknown> = { user_id: args.targetUserId };
+    if (args.role !== undefined) body['role'] = args.role;
+    return this.authedFetch<GroupMember>({
+      method: 'POST',
+      path: `/v1/groups/${encodeURIComponent(args.groupId)}/members`,
+      userId: args.userId,
+      body,
+      scope: 'groups:write',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
+    });
+  }
+
+  async removeGroupMember(args: RemoveGroupMemberArgs): Promise<void> {
+    await this.authedFetch<void>({
+      method: 'DELETE',
+      path: `/v1/groups/${encodeURIComponent(args.groupId)}/members/${encodeURIComponent(args.targetUserId)}`,
+      userId: args.userId,
+      scope: 'groups:write',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
+    });
+  }
+
+  async setGroupReadAudit(args: SetGroupReadAuditArgs): Promise<void> {
+    await this.authedFetch<void>({
+      method: 'PATCH',
+      path: `/v1/groups/${encodeURIComponent(args.groupId)}/read-audit`,
+      userId: args.userId,
+      body: { enabled: args.enabled },
+      scope: 'groups:write',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
+    });
+  }
+
+  async createShareWithGroup(args: CreateShareWithGroupArgs): Promise<GroupShare> {
+    const body: Record<string, unknown> = {
+      group_id: args.groupId,
+      scope: args.scope,
+    };
+    if (args.expiresAt !== undefined) body['expires_at'] = args.expiresAt;
+    return this.authedFetch<GroupShare>({
+      method: 'POST',
+      path: `/v1/objects/${encodeURIComponent(args.resourceId)}/share-with-group`,
+      userId: args.userId,
+      body,
       scope: 'shares:write',
       ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
       ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),

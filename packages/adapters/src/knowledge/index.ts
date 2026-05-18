@@ -8,6 +8,9 @@
 
 export type {
   CreateObjectArgs,
+  Group,
+  GroupMember,
+  GroupShare,
   KnowledgeObject,
   ObjectsList,
   SearchHit,
@@ -16,16 +19,24 @@ export type {
 } from './types.js';
 
 export type {
+  AddGroupMemberArgs,
+  ArchiveGroupArgs,
+  CreateGroupArgs,
   CreateShareArgs,
+  CreateShareWithGroupArgs,
   EraseUserArgs,
   EraseUserResult,
+  GetGroupArgs,
   GetObjectArgs,
   KnowledgeAdapter,
+  ListGroupsArgs,
   ListObjectsArgs,
   ListSharesArgs,
   OnBehalfOfFields,
+  RemoveGroupMemberArgs,
   RevokeShareArgs,
   SearchArgs,
+  SetGroupReadAuditArgs,
   SyncUserArgs,
   SyncUserResult,
   UpdateObjectArgs,
