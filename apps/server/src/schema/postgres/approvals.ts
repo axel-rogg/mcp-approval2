@@ -52,6 +52,24 @@ const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
 });
 
 /**
+ * Eintrag in `pending_approvals.defaults_applied` (Mig 0027).
+ *
+ * Plan-Ref: PLAN-tool-defaults-v2.md (Phase A Attribution).
+ *
+ * Pro Feld in `tool_input` ein Eintrag, der dokumentiert woher der Wert kam:
+ *   - `from='user-input'`: Caller hat das Feld explizit gesetzt.
+ *   - `from='tool-default'`: Hub hat den Wert aus user_server_tool_defaults
+ *     gemerged (Args-WIN-Regel: User-Input ueberschreibt).
+ *
+ * `profile` ist optional gefuellt sobald Phase C (Multi-Profile) live ist.
+ */
+export interface AppliedDefaultRow {
+  readonly field: string;
+  readonly from: 'user-input' | 'tool-default';
+  readonly profile?: string;
+}
+
+/**
  * pending_approvals-Tabelle.
  *
  * Spalten-Gruppen:
@@ -129,6 +147,15 @@ export const pendingApprovalsTable = pgTable(
      * Migration 0025. CAS-Guard in ApprovalService.extendTtl.
      */
     extensionCount: integer('extension_count').notNull().default(0),
+    /**
+     * Attribution-Snapshot fuer WYSIWYS: pro Feld in tool_input, woher kam
+     * der Wert (User-Input vs Tool-Default-System). Migration 0027.
+     * Plan-Ref: PLAN-tool-defaults-v2.md (Phase A).
+     */
+    defaultsApplied: jsonb('defaults_applied')
+      .$type<ReadonlyArray<AppliedDefaultRow>>()
+      .notNull()
+      .default([]),
   },
   (t) => ({
     userPendingIdx: index('idx_approvals_user_pending').on(t.userId, t.status),

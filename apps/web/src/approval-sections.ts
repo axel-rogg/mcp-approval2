@@ -28,10 +28,62 @@ export interface Section {
 export function renderSections(approval: PendingApproval): HTMLElement {
   const rendered = renderDisplay(approval);
   const sections = parseSections(rendered);
-  if (sections) {
-    return renderSectionedView(sections);
+  const mainView = sections ? renderSectionedView(sections) : renderFallbackView(approval);
+  // Phase A (PLAN-tool-defaults-v2.md): Attribution-Section anhaengen wenn
+  // mind. ein Feld aus dem Tool-Default-System kam.
+  const defaultsCard = renderDefaultsCard(approval);
+  if (defaultsCard) {
+    mainView.appendChild(defaultsCard);
   }
-  return renderFallbackView(approval);
+  return mainView;
+}
+
+/**
+ * Phase-A-Card: "Defaults applied" — pro Tool-Default-Feld ein Badge mit
+ * Source. User-Input-Felder werden NICHT in der Card aufgefuehrt (die sind
+ * in den anderen Sections sichtbar als Tool-Input-Werte).
+ *
+ * Returns null wenn `defaultsApplied` leer ist oder nur 'user-input'-Eintraege
+ * enthaelt — kein leerer Card-Container.
+ */
+function renderDefaultsCard(approval: PendingApproval): HTMLElement | null {
+  const applied = approval.defaultsApplied ?? [];
+  const fromDefaults = applied.filter((d) => d.from === 'tool-default');
+  if (fromDefaults.length === 0) return null;
+
+  const card = document.createElement('div');
+  card.className = 'sec-card sec-card-defaults';
+
+  const label = document.createElement('div');
+  label.className = 'sec-label';
+  label.textContent = 'Defaults applied';
+  card.appendChild(label);
+
+  const list = document.createElement('ul');
+  list.className = 'sec-defaults-list';
+  for (const d of fromDefaults) {
+    const li = document.createElement('li');
+    li.className = 'sec-defaults-item';
+
+    const fieldEl = document.createElement('code');
+    fieldEl.className = 'sec-defaults-field';
+    fieldEl.textContent = d.field;
+    li.appendChild(fieldEl);
+
+    const sep = document.createElement('span');
+    sep.className = 'muted small';
+    sep.textContent = ' — ';
+    li.appendChild(sep);
+
+    const src = document.createElement('span');
+    src.className = 'pill pill-info sec-defaults-source';
+    src.textContent = d.profile ? `from profile=${d.profile}` : 'from tool-default';
+    li.appendChild(src);
+
+    list.appendChild(li);
+  }
+  card.appendChild(list);
+  return card;
 }
 
 /**

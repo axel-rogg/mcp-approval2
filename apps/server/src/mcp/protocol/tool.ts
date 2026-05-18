@@ -211,11 +211,18 @@ export class ApprovalRequiredError extends Error {
   public readonly sensitivity: ToolSensitivity;
   public readonly input: unknown;
   public readonly displayTemplate: string | undefined;
+  /**
+   * Attribution-Snapshot (Phase A, PLAN-tool-defaults-v2.md): pro Feld in
+   * `input`, woher der Wert kam (User-Input vs Tool-Default). Default `[]`
+   * fuer Aufrufer ohne ToolDefaultsService.
+   */
+  public readonly defaultsApplied: ReadonlyArray<AppliedDefaultMeta>;
   constructor(
     toolName: string,
     sensitivity: ToolSensitivity,
     input: unknown,
     displayTemplate?: string,
+    defaultsApplied?: ReadonlyArray<AppliedDefaultMeta>,
   ) {
     super(`tool '${toolName}' requires approval (sensitivity=${sensitivity})`);
     this.name = 'ApprovalRequiredError';
@@ -223,5 +230,18 @@ export class ApprovalRequiredError extends Error {
     this.sensitivity = sensitivity;
     this.input = input;
     this.displayTemplate = displayTemplate;
+    this.defaultsApplied = defaultsApplied ?? [];
   }
+}
+
+/**
+ * Lightweight Wire-Struktur fuer Attribution-Meta. Deckungs-gleich mit
+ * `AppliedDefaultRow` in schema/postgres/approvals.ts — wir duplizieren das
+ * hier um Cross-Layer-Imports zu vermeiden (protocol/* darf nicht in schema/*
+ * importieren).
+ */
+export interface AppliedDefaultMeta {
+  readonly field: string;
+  readonly from: 'user-input' | 'tool-default';
+  readonly profile?: string;
 }

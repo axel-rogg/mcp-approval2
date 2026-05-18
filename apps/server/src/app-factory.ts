@@ -70,6 +70,7 @@ import { createUserSubscriptionsService } from './services/user-subscriptions.js
 import { createUserServerConfigService } from './services/user-server-config.js';
 import { createUserServerOAuthService } from './services/user-server-oauth.js';
 import { createUserServerToolDefaultsService } from './services/user-server-tool-defaults.js';
+import { createToolDefaultsService } from './services/tool-defaults.js';
 import { createSubMcpAuthEnricher } from './services/sub-mcp-auth-enricher.js';
 import { createUserSubMcpToolCacheService } from './services/user-sub-mcp-tool-cache.js';
 import { gdprRoutes } from './routes/gdpr.js';
@@ -810,6 +811,12 @@ export async function createApp(
     app.use('/mcp/*', authMiddleware(server, { required: true }), costGate);
   }
 
+  // Phase A (PLAN-tool-defaults-v2.md): Hub-side Tool-Defaults-Resolver.
+  // Mergt Per-User-Defaults aus user_server_tool_defaults in jeden Tool-Call,
+  // bevor registry.dispatch laeuft. Args-WIN. WYSIWYS via defaults_applied
+  // in pending_approvals.
+  const toolDefaultsResolver = createToolDefaultsService({ db: server.db });
+
   // MCP-Protocol-Routes — Auth pro-Route via mcpTransport.
   // Per-User-Subscription-Filter: tools/list zeigt jedem User nur die
   // Sub-MCP-Tools von Servern die er aktiviert hat. Sprint 2026-05-18.
@@ -835,6 +842,7 @@ export async function createApp(
           return new Set<string>();
         }
       },
+      toolDefaults: toolDefaultsResolver,
     }),
   );
 

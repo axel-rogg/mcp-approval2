@@ -161,6 +161,7 @@ function approvalToJson(
     createdAt: a.createdAt,
     expiresAt: a.expiresAt,
     extensionCount: a.extensionCount ?? 0,
+    defaultsApplied: a.defaultsApplied ?? [],
   };
 }
 

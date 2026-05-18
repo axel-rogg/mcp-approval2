@@ -45,6 +45,7 @@ import {
 import { ApprovalRequiredError, type AuditService, type ToolContext } from './tool.js';
 import { enqueueApproval } from './approval-resume.js';
 import type { ApprovalService } from '../../services/approvals.js';
+import type { ToolDefaultsService } from '../../services/tool-defaults.js';
 import { PrfRequiredError } from '../../services/credentials.js';
 import {
   JsonRpcErrorCode,
@@ -99,6 +100,18 @@ export interface McpTransportOptions {
    * oder ein nativer Tool ist. Wenn nicht gesetzt → Filter ausgeschaltet.
    */
   readonly subMcpServerNames?: () => Promise<ReadonlySet<string>>;
+  /**
+   * Optional: Tool-Defaults-Resolver (Plan-Ref: PLAN-tool-defaults-v2.md
+   * Phase A). Wenn gesetzt, mergt der Transport vor jedem tools/call die
+   * gespeicherten Per-User-Defaults in `params.arguments` (Args-WIN) und
+   * persistiert eine Attribution-Liste in `pending_approvals.defaults_applied`.
+   *
+   * Resume-Pfad nutzt den Resolver NICHT — der `toolInput`-Snapshot in der
+   * Approval-Row haelt bereits die resolved Args; Re-Resolve waere Drift-Risiko.
+   *
+   * Wenn `undefined` → Transport laeuft wie Pre-Phase-A (kein Merge).
+   */
+  readonly toolDefaults?: ToolDefaultsService;
 }
 
 // ============================================================================
@@ -172,7 +185,7 @@ class CancelRegistry {
 
 export function mcpTransport(opts: McpTransportOptions): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
-  const { server, registry, approvals, subscriptionFilter, subMcpServerNames } = opts;
+  const { server, registry, approvals, subscriptionFilter, subMcpServerNames, toolDefaults } = opts;
   const serverName = opts.serverName ?? 'mcp-approval2';
   const serverVersion = opts.serverVersion ?? '0.0.1';
   const cancels = new CancelRegistry();
@@ -214,6 +227,7 @@ export function mcpTransport(opts: McpTransportOptions): Hono<AppBindings> {
       ...(approvals ? { approvals } : {}),
       ...(subscriptionFilter ? { subscriptionFilter } : {}),
       ...(subMcpServerNames ? { subMcpServerNames } : {}),
+      ...(toolDefaults ? { toolDefaults } : {}),
       ...(c.req.header('x-forwarded-for')
         ? { ip: (c.req.header('x-forwarded-for') ?? '').split(',')[0]?.trim() }
         : {}),
@@ -259,6 +273,12 @@ interface DispatchEnv {
   /** Per-User Filter fuer tools/list — siehe McpTransportOptions. */
   readonly subscriptionFilter?: (userId: string) => Promise<ReadonlySet<string> | null>;
   readonly subMcpServerNames?: () => Promise<ReadonlySet<string>>;
+  /**
+   * Tool-Defaults-Resolver. Wenn gesetzt, wird vor `registry.dispatch` ein
+   * Merge in die Args durchgefuehrt (Phase A). Bei approval_id-Resume bewusst
+   * uebersprungen — toolInput aus der Approval-Row haelt die signed Args.
+   */
+  readonly toolDefaults?: ToolDefaultsService;
 }
 
 async function dispatchRequest(
@@ -491,6 +511,29 @@ async function handleToolsCall(
     bypassApproval = true;
   }
 
+  // Phase A: Tool-Defaults mergen (vor dispatch, NUR im Nicht-Resume-Pfad).
+  // Resume-Pfad nutzt den toolInput-Snapshot aus der Approval-Row (SEC-004).
+  // Resolver-Fehler sind fail-OPEN: Tool-Call laeuft mit raw args weiter,
+  // damit ein Tool-Defaults-DB-Hiccup den ganzen MCP-Pfad nicht blockiert.
+  let resolvedInput: Record<string, unknown> = params.arguments ?? {};
+  let defaultsApplied: ReadonlyArray<import('./tool.js').AppliedDefaultMeta> = [];
+  if (!bypassApproval && env.toolDefaults) {
+    try {
+      const subMcpSet = env.subMcpServerNames ? await env.subMcpServerNames() : undefined;
+      const res = await env.toolDefaults.resolveForTool({
+        userId: env.principal.userId,
+        toolName: params.name,
+        args: params.arguments ?? {},
+        ...(subMcpSet ? { subMcpServerNames: subMcpSet } : {}),
+      });
+      resolvedInput = res.resolvedInput;
+      defaultsApplied = res.defaultsApplied;
+    } catch {
+      // fail-open — siehe Kommentar oben. Audit-Trail wuerde ueber service-side
+      // Logging laufen.
+    }
+  }
+
   let dispatchResult: DispatchResult;
   try {
     dispatchResult = await env.registry.dispatch({
@@ -499,9 +542,10 @@ async function handleToolsCall(
       // aus der Approval-Row, niemals mit client-supplied arguments.
       input: bypassApproval && approvalRowToolInput !== undefined
         ? approvalRowToolInput
-        : (params.arguments ?? {}),
+        : resolvedInput,
       ctx: toolCtx,
       bypassApproval,
+      defaultsApplied,
     });
   } catch (err) {
     env.cancels.finish(cancelKey);

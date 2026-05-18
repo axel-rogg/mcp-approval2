@@ -74,6 +74,7 @@ export type NewOauthRefreshToken = typeof oauthRefreshTokensTable.$inferInsert;
 // pending_approvals
 export type PendingApproval = typeof pendingApprovalsTable.$inferSelect;
 export type NewPendingApproval = typeof pendingApprovalsTable.$inferInsert;
+export type { AppliedDefaultRow } from './postgres/approvals.js';
 
 // cost_ledger
 export type CostLedgerEntry = typeof costLedgerTable.$inferSelect;

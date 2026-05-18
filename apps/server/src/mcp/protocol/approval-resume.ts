@@ -86,6 +86,9 @@ export async function enqueueApproval(
     ...(args.requestId ? { requestId: args.requestId } : {}),
     ...(args.ip ? { ip: args.ip } : {}),
     ...(args.ttlSec !== undefined ? { ttlSec: args.ttlSec } : {}),
+    ...(args.error.defaultsApplied.length > 0
+      ? { defaultsApplied: args.error.defaultsApplied }
+      : {}),
   };
 
   const approval = await args.approvals.create(createArgs);

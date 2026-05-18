@@ -31,6 +31,7 @@ import { randomBytes } from '@mcp-approval2/core';
 import { AppError, HttpError } from '../lib/errors.js';
 import { emitAudit } from './audit.js';
 import type {
+  AppliedDefaultRow,
   ApprovalSensitivity,
   ApprovalStatus,
   PendingApproval,
@@ -50,6 +51,12 @@ export interface CreateApprovalArgs {
   readonly ip?: string;
   /** TTL in Sekunden. Default: 300 (5 min). */
   readonly ttlSec?: number;
+  /**
+   * Attribution-Snapshot fuer WYSIWYS (Plan-Ref: PLAN-tool-defaults-v2.md
+   * Phase A). Wird in `pending_approvals.defaults_applied` persistiert und
+   * vom PWA-Approval-Display pro Feld als Badge angezeigt.
+   */
+  readonly defaultsApplied?: ReadonlyArray<AppliedDefaultRow>;
 }
 
 export interface GetApprovalArgs {
@@ -169,6 +176,7 @@ interface ApprovalRowRaw {
   readonly created_at: number | string;
   readonly expires_at: number | string;
   readonly extension_count: number | string | null;
+  readonly defaults_applied: ReadonlyArray<AppliedDefaultRow> | null;
 }
 
 const SELECT_COLS = `
@@ -181,7 +189,8 @@ const SELECT_COLS = `
   result_json, result_emitted_at,
   request_id, origin_ip,
   created_at, expires_at,
-  extension_count
+  extension_count,
+  defaults_applied
 `;
 
 function toNumber(v: number | string | null): number | null {
@@ -213,6 +222,7 @@ function rowToApproval(row: ApprovalRowRaw): PendingApproval {
     createdAt: toNumber(row.created_at) ?? 0,
     expiresAt: toNumber(row.expires_at) ?? 0,
     extensionCount: toNumber(row.extension_count) ?? 0,
+    defaultsApplied: row.defaults_applied ?? [],
   };
 }
 
@@ -396,13 +406,15 @@ export function createApprovalService(opts: ApprovalServiceOptions): ApprovalSer
               sensitivity, status,
               approval_challenge,
               request_id, origin_ip,
-              created_at, expires_at)
+              created_at, expires_at,
+              defaults_applied)
            VALUES ($1, $2, $3,
                    $4, $5,
                    $6, 'pending',
                    $7,
                    $8, $9,
-                   $10, $11)
+                   $10, $11,
+                   $12::jsonb)
            RETURNING ${SELECT_COLS}`,
           [
             args.userId,
@@ -416,6 +428,7 @@ export function createApprovalService(opts: ApprovalServiceOptions): ApprovalSer
             args.ip ?? null,
             createdAt,
             expiresAt,
+            JSON.stringify(args.defaultsApplied ?? []),
           ],
         );
         const r = rows[0];

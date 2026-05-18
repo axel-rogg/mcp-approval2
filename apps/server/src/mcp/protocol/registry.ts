@@ -29,6 +29,7 @@
 import { z } from 'zod';
 import {
   type AnyTool,
+  type AppliedDefaultMeta,
   type Tool,
   type ToolContext,
   type ToolSensitivity,
@@ -46,6 +47,34 @@ import type {
 import { ipiFilter } from './ipi-filter.js';
 import { wrapKcUntrusted } from './output-wrapper.js';
 
+/**
+ * Reserved by the tool-defaults resolver (Plan-Ref: PLAN-tool-defaults-v2.md
+ * §10 Entscheidung ①). Tools die diese Property im inputSchema deklarieren
+ * werden bei `register()` fail-CLOSED abgelehnt.
+ */
+const RESERVED_PROFILE_ARG_NAME = '__profile';
+
+/**
+ * Best-effort-Detection ob ein Tool-Schema eine top-level Property mit dem
+ * gegebenen Namen deklariert. Funktioniert fuer Zod-Object-Schemas (native
+ * Tools) und z.unknown()-Schemas (kc_wrappers, sub-mcp-wrappers — in beiden
+ * Faellen ist `_def.shape` undefined und die Funktion gibt false zurueck →
+ * kein false-positive Reject fuer dynamische Tools).
+ */
+function toolDeclaresReservedProperty(tool: AnyTool, propertyName: string): boolean {
+  const schema = tool.inputSchema as unknown as {
+    _def?: { shape?: () => Record<string, unknown> | undefined };
+  };
+  const shapeFn = schema._def?.shape;
+  if (typeof shapeFn !== 'function') return false;
+  try {
+    const shape = shapeFn();
+    return !!shape && Object.prototype.hasOwnProperty.call(shape, propertyName);
+  } catch {
+    return false;
+  }
+}
+
 export interface DispatchArgs {
   readonly name: string;
   readonly input: unknown;
@@ -55,6 +84,13 @@ export interface DispatchArgs {
    * approved hat. Skipt den Approval-Gate-Check.
    */
   readonly bypassApproval?: boolean;
+  /**
+   * Attribution-Snapshot fuer WYSIWYS (Plan-Ref: PLAN-tool-defaults-v2.md
+   * Phase A). Wird durchgereicht in `ApprovalRequiredError` damit der
+   * Transport sie in pending_approvals.defaults_applied persistieren kann.
+   * `[]` fuer Aufrufer ohne Tool-Defaults-Resolver.
+   */
+  readonly defaultsApplied?: ReadonlyArray<AppliedDefaultMeta>;
 }
 
 export interface DispatchResult {
@@ -97,11 +133,23 @@ export class ToolRegistry {
    * Registriere ein Tool. Wirft wenn:
    *   - Name schon belegt
    *   - Tool-Definition strukturell broken (siehe validateToolDefinition)
+   *   - Tool-Schema deklariert eine reservierte Property (z.B. `__profile`,
+   *     siehe PLAN-tool-defaults-v2.md §10 Entscheidung ①).
    */
   register<Input, Output>(tool: Tool<Input, Output>): void {
     validateToolDefinition(tool as AnyTool);
     if (this.tools.has(tool.name)) {
       throw new Error(`tool '${tool.name}' already registered`);
+    }
+    // Fail-CLOSED gegen Tools die `__profile` als Property deklarieren —
+    // der Tool-Defaults-Resolver (Phase A) interpretiert `__profile` als
+    // Per-Call-Profile-Override und strippt es aus den Args; ein Tool
+    // mit eigenem `__profile` wuerde WYSIWYS brechen.
+    if (toolDeclaresReservedProperty(tool as AnyTool, RESERVED_PROFILE_ARG_NAME)) {
+      throw new Error(
+        `tool '${tool.name}': inputSchema declares reserved property '${RESERVED_PROFILE_ARG_NAME}'. ` +
+          `This name is reserved by the tool-defaults resolver (PLAN-tool-defaults-v2.md §10).`,
+      );
     }
     this.tools.set(tool.name, tool as AnyTool);
   }
@@ -161,7 +209,7 @@ export class ToolRegistry {
    *     sie in JSON-RPC-Errors via `mapErrorToJsonRpc`.
    */
   async dispatch(args: DispatchArgs): Promise<DispatchResult> {
-    const { name, input, ctx, bypassApproval } = args;
+    const { name, input, ctx, bypassApproval, defaultsApplied } = args;
     const tool = this.tools.get(name);
     if (!tool) {
       throw new ToolNotFoundError(name);
@@ -202,6 +250,7 @@ export class ToolRegistry {
           tool.sensitivity,
           parsed.data,
           tool.displayTemplate,
+          defaultsApplied,
         );
       }
     }

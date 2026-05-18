@@ -40,6 +40,16 @@ export interface PendingApproval {
   readonly expiresAt?: number | null;
   /** Wie oft hat der User die TTL verlaengert (0..3). Aus Mig 0025. */
   readonly extensionCount?: number;
+  /**
+   * Attribution-Snapshot (PLAN-tool-defaults-v2.md Phase A). Pro Feld in
+   * `input`, woher der Wert kam (User-Input vs Tool-Default-System).
+   * Aus Mig 0027.
+   */
+  readonly defaultsApplied?: ReadonlyArray<{
+    readonly field: string;
+    readonly from: 'user-input' | 'tool-default';
+    readonly profile?: string;
+  }>;
 }
 
 export interface CredentialMeta {
