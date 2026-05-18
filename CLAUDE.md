@@ -1,5 +1,7 @@
 # mcp-approval2 — Kontext für Claude Code
 
+> **🔌 Update 2026-05-18 — Sub-MCP-OAuth-Saga komplett.** 4 Gateways live: `cf` (DCR, 25 tools) + `github` (pre-registered, 41 tools) + `gws` (shared-app, 59 tools, 16 Scopes) + `gcloud` (shared-app oder SA-JSON, 4 tools, 6 Scopes inkl. Vertex AI + Gemini-Tuning/Retriever). **14 Bug-Iterationen** dokumentiert in [docs/runbooks/runbook-sub-mcp-oauth.md](docs/runbooks/runbook-sub-mcp-oauth.md) (Tabelle 6-19 + Anti-Pattern + Provider-Quirks + Drei-Schicht-Modell + Solo-Operator-Checkliste). Key-Findings: CF braucht Streamable-HTTP `/mcp` (NICHT legacy `/sse`) + `Mcp-Session-Id`-Handshake + DCR-Endpoints sind `/register` + `/token` (ohne `/oauth/` prefix). GitHub rotiert refresh-tokens (Persistenz Pflicht). v1-Worker `_meta.oauth.scopes` ist Stub → `updateConfigSchema` MERGE (4053a61), Seed-Scopes gewinnen. PWA: DCR ≠ Pre-Registered View (kein Client-ID/Secret-Form bei DCR). `help_url` defensiv rendern. `shared-app` per-User-Override gewinnt vs env. OAuth-Consent-Screen-Scope-Liste ist NICHT TF-managbar — manuelle Source-of-Truth: [terraform/environments/privat/google-oauth-consent.md](terraform/environments/privat/google-oauth-consent.md).
+>
 > **Greenfield-Successor** zu [mcp-approval](https://github.com/axel-rogg/mcp-approval) (Cloudflare-Workers, single-user).
 > **Drei Deployment-Szenarien** (Strategie 2026-05-17): **Familie im Haushalt** (2-5 Personen, Art. 2(2)c DSGVO greift, primärer Modus), **Self-Host für Freunde** (jeder Freund deployed eigene Instance, Axel raus aus DSGVO-Kette), **Corporate-GCP-VPC** (20-500 User, 4-6 Wochen Compliance-Programm). Postgres + Google Cloud KMS (single-region `europe-west3`, ADR-0011). Mehr in [THREAT-MODEL.md §Deployment-Kontext](THREAT-MODEL.md#deployment-kontext-drei-realistische-szenarien).
 > Schwester-Repo: [mcp-knowledge2](https://github.com/axel-rogg/mcp-knowledge2) (Storage + Search).
@@ -122,18 +124,18 @@ Detail-Status in [docs/STATUS.md](docs/STATUS.md).
 
   **A. Satellite-Worker** (eigener Code, auf Cloudflare Workers, Bearer-outer-auth approval2 ↔ Worker). Bisher `seedCfGateways`/`DEFAULT_CF_GATEWAYS` benannt — irreführend weil "CF" auch den offiziellen Cloudflare-MCP meinte. Sprint 2026-05-18 renamed zu `seedSatelliteWorkers`/`DEFAULT_SATELLITE_WORKERS` (Datei `seed_satellites.ts`):
 
-  | Gateway | URL | Env-Var (Doppler) | Tools | Inner-Auth |
-  |---|---|---|---|---|
-  | `utils` | workers.dev | `SUB_MCP_TOKEN_UTILS` | 8 (now/cal/diagram) | — |
-  | `gws` | workers.dev | `SUB_MCP_TOKEN_GWS` | 59 (Google Workspace) | per-User Google-OAuth (shared-app) → `x-google-access-token` |
-  | `gcloud` | workers.dev | `SUB_MCP_TOKEN_GCLOUD` | 4 (GCP) | per-User Google-OAuth (shared-app) ODER SA-Key (lokal JWT-Bearer-Grant) → `x-google-access-token` + `x-gcp-project-id` |
+  | Gateway | URL | Env-Var (Doppler) | Tools | Inner-Auth | Scopes (Stand 2026-05-18) |
+  |---|---|---|---|---|---|
+  | `utils` | workers.dev | `SUB_MCP_TOKEN_UTILS` | 8 (now/cal/diagram) | — | — |
+  | `gws` | workers.dev | `SUB_MCP_TOKEN_GWS` | 59 (Google Workspace) | per-User Google-OAuth (shared-app, per-User-Override gewinnt vs env) → `x-google-access-token` | 16 (phase8: openid/email/profile + calendar + tasks + gmail.modify/send + spreadsheets + documents + presentations + forms.body/responses + drive/drive.file/activity.readonly + contacts) |
+  | `gcloud` | workers.dev | `SUB_MCP_TOKEN_GCLOUD` | 4 (GCP) | per-User Google-OAuth ODER SA-Key (lokal JWT-Bearer-Grant) → `x-google-access-token` + `x-gcp-project-id` | 6 (openid/email/profile + cloud-platform [Vertex AI inkl.] + generative-language.tuning/.retriever) |
 
   **B. Catalog-OAuth-Server** (externe MCPs, auth_mode='oauth' outer, Datei `seed_oauth_catalog.ts`):
 
   | Gateway | URL | OAuth-Kind | Notes |
   |---|---|---|---|
-  | `cf` | `bindings.mcp.cloudflare.com/sse` | DCR (RFC 7591) | Cloudflare-MCP — approval2 macht auto-Registrierung beim ersten Authorize |
-  | `github` | (user-managed) | pre-registered | User legt eigene GitHub-App an + manuelle config; KEIN Catalog-Seed um existing User-Setup nicht zu überschreiben |
+  | `cf` | `bindings.mcp.cloudflare.com/mcp` (NICHT `/sse`) | DCR (RFC 7591) | Streamable-HTTP + `Mcp-Session-Id`-Handshake. Endpoints: `/oauth/authorize` + `/register` + `/token`. Scope `mcp:tools`. approval2 macht auto-Registrierung beim ersten Authorize |
+  | `github` | `api.githubcopilot.com/mcp/` (user-managed Server) | pre-registered | Rotating refresh-tokens (Persistenz Pflicht). User legt eigene GitHub-**App** an (NICHT OAuth-App — keine Refresh-Tokens für axelrogg-Accounts seit 2026-05). KEIN Catalog-Seed um existing User-Setup nicht zu überschreiben |
 
   Boot-Sequenz: `seedSatelliteWorkers` + `seedOAuthCatalogServers` (idempotent) → initialer `refreshSubMcpToolCache` (global cache für service_bearer-Server) → `buildSubMcpWrapperTools` (registriert wrapper-tools in Haupt-Registry).
 
