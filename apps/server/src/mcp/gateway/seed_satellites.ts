@@ -91,20 +91,45 @@ export interface SatelliteWorkerSeedEntry {
 }
 
 /**
- * Bundle der Google-Workspace-Scopes (analog v1 `src/auth/google_workspace.ts`).
+ * Bundle der Google-Workspace-Scopes — 1:1 Spiegel von v1
+ * `mcp-gws/src/gws/scopes.ts` (phase8, ACTIVE_PHASE).
  * Wenn der User gws verbindet, holt approval2 alle Scopes auf einmal —
  * Worker-Side entscheidet pro Tool welche es braucht.
+ *
+ * Phasen-Coverage:
+ *   - OPENID:   openid/email/profile (Identity-Check)
+ *   - CALENDAR: calendar (umfasst calendar.events)
+ *   - TASKS:    tasks
+ *   - GMAIL:    gmail.modify + gmail.send
+ *   - SHEETS:   spreadsheets
+ *   - DOCS:     documents + presentations + forms.body + forms.responses.readonly + drive.file
+ *   - DRIVE:    drive + drive.activity.readonly
+ *   - CONTACTS: contacts
  */
 const GWS_SCOPES: ReadonlyArray<string> = [
+  // OPENID
   'openid',
   'email',
+  'profile',
+  // CALENDAR
   'https://www.googleapis.com/auth/calendar',
-  'https://www.googleapis.com/auth/calendar.events',
+  // TASKS
   'https://www.googleapis.com/auth/tasks',
+  // GMAIL
   'https://www.googleapis.com/auth/gmail.modify',
+  'https://www.googleapis.com/auth/gmail.send',
+  // SHEETS
   'https://www.googleapis.com/auth/spreadsheets',
+  // DOCS
   'https://www.googleapis.com/auth/documents',
+  'https://www.googleapis.com/auth/presentations',
+  'https://www.googleapis.com/auth/forms.body',
+  'https://www.googleapis.com/auth/forms.responses.readonly',
+  'https://www.googleapis.com/auth/drive.file',
+  // DRIVE
   'https://www.googleapis.com/auth/drive',
+  'https://www.googleapis.com/auth/drive.activity.readonly',
+  // CONTACTS
   'https://www.googleapis.com/auth/contacts',
 ];
 
