@@ -13,6 +13,7 @@ export default defineConfig({
     globals: false,
     environment: 'node',
     include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
+    exclude: ['**/node_modules/**', '**/dist/**', '**/_to_delete/**'],
     coverage: {
       reporter: ['text', 'json-summary'],
     },

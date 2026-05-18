@@ -313,11 +313,13 @@ describe('registerCoreTools', () => {
         // KC-Wrappers — skills.*
         'skills.put',
         'skills.get',
+        'skills.get_bundle',
         'skills.list',
         'skills.delete',
         'skills.search',
         'skills.read_resource',
         'skills.attach_resource',
+        'skills.detach_resource',
         // KC-Wrappers — memorize.*
         'memorize.add',
         'memorize.search',
@@ -339,17 +341,7 @@ describe('registerCoreTools', () => {
         'notes.list',
         'notes.get',
         'notes.delete',
-        // KC-Wrappers — bookmarks.*
-        'bookmarks.create',
-        'bookmarks.list',
-        'bookmarks.get',
-        'bookmarks.delete',
-        // KC-Wrappers — recipes.*
-        'recipes.create',
-        'recipes.update',
-        'recipes.list',
-        'recipes.get',
-        'recipes.delete',
+        // bookmarks.* + recipes.* entfernt 2026-05-17 (siehe kc-wrappers-index.ts)
         // Credentials
         'credentials.add',
         'credentials.delete',
