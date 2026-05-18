@@ -1,0 +1,35 @@
+-- =============================================================================
+-- 0030_drop_legacy_prefs.sql.deferred — DROP user_tool_prefs + user_prefs
+-- =============================================================================
+--
+-- !!! DEFERRED — NICHT durch `npm run db:migrate` apply !!!
+-- ----------------------------------------------------------------------------
+-- Diese Datei traegt die `.sql.deferred`-Extension damit der Migration-Runner
+-- (apps/server/scripts/migrate.ts) sie ueberspringt — Filter ist .sql + ^NNNN_.
+--
+-- Apply-Pfad (bewusst manuell):
+--   1. Mind. 30 Tage nach 0027/0028/0029 Deploy abwarten (= ab 2026-06-17).
+--   2. SELECT count(*) FROM user_tool_prefs → 0 erwartet (kein Code-Pfad schreibt
+--      mehr in diese Tabelle nach Phase F; prefs.set hat Deprecated-Banner).
+--   3. Datei umbenennen: 0030_drop_legacy_prefs.sql.deferred → 0030_drop_legacy_prefs.sql
+--   4. Auf Branch + via [deploy]-Commit auf prod releasen.
+--   5. release_command laeuft das DROP automatisch.
+--
+-- Plan-Ref: docs/plans/active/PLAN-tool-defaults-v2.md (Phase F + §13 ">30d" Schritt).
+--
+-- Was wird gedroppt:
+--   - user_tool_prefs (Mig 0009) — abgeloest durch user_server_tool_defaults
+--     (Mig 0024 + 0028) als aktiver Resolver-Storage.
+--   - user_prefs (Mig 0008) — totes Encrypted-Blob-Schema; nie aktiver Caller.
+-- =============================================================================
+
+BEGIN;
+
+DROP TABLE IF EXISTS user_tool_prefs;
+DROP TABLE IF EXISTS user_prefs;
+
+COMMIT;
+
+-- =============================================================================
+-- END 0030_drop_legacy_prefs.sql.deferred
+-- =============================================================================

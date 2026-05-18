@@ -1,6 +1,18 @@
 # PLAN: Tool-Defaults v2 — vollständige Umsetzung
 
-> **Status:** ⚠️ Entwurf 2026-05-18 (Implementation-Ready) — Phase A in Umsetzung
+> **Status:** ✅ **COMPLETE 2026-05-18** — Phasen A bis F live auf `mcp2.ai-toolhub.org`.
+>
+> | Phase | Commit | Inhalt |
+> |---|---|---|
+> | A — Wire-In + WYSIWYS | `6a70010` | resolveForTool aktiv im transport; defaults_applied in pending_approvals (Mig 0027); Approval-PWA Attribution-Card |
+> | B — Typed Storage + UX | `428dad0`, `ac3f7ad` | Mig 0028 (profile_name, value_json, value_kind, orphan_since + 3 Tabellen); Schema-Form-Library mit 5 Widgets; Field-Picker; schema-Validation gegen Tool-inputSchema |
+> | C — Multi-Profile | `0fd630a` | ToolDefaultProfilesService (CRUD/activate/copyFrom); __profile-Override mit Strip; Profile-Switcher-Bar + Modal in PWA; WYSIWYS profile-attribution |
+> | D — LLM-Initiation | `9520bb0` | natives `tools.help` (read); `_meta.defaults_summary` Aggregat in tools/list (eine Query, fail-OPEN) |
+> | E — Hints + Elicitation | `780f553` | Hints-Service + REST + 2 MCP-Tools (write+Approval); UserSettings-Store (Mig 0029); transport-Hook `elicitation_required` (Capability+Setting-gated, Default OFF); PWA 💡-Editor pro Field |
+> | F — BC + Cleanup | _(dieser Commit)_ | prefs.*-Tools Deprecated-Banner; PWA defaults-tab Redirect-Stub; Mig 0030.deferred (DROP user_tool_prefs+user_prefs) |
+>
+> **Tests:** 707 server (+46 vs Pre-Phase-A 661) + 53 web grün, typecheck alle 4 Workspaces clean.
+> **Deploy:** Mig 0027/0028/0029 angewendet; Mig 0030 deferred (apply >=2026-06-17 nach 30-Tage-Beobachtung).
 >
 > **Entscheidungen 2026-05-18 (User):**
 > 1. `__profile`-Schutz: Lint + Runtime-Reject (fail-CLOSED) + Reservierungs-Liste für Sub-MCP-Server-Names (`apps`, `docs`, `skills`, `kc`, `tools`, `prefs`, `tool_defaults`, `groups`, `native`, `memorize`).

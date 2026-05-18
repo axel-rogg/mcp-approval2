@@ -75,7 +75,7 @@ export function makePrefsGetTool(
   return {
     name: 'prefs.get',
     description:
-      "Read tool-default preferences. Optional filter by toolName/field. Read-only.",
+      "[DEPRECATED 2026-06-15: use tools.help / tool_defaults.*] Read tool-default preferences from legacy user_tool_prefs. New surface: tools.help (read) + tool_defaults.* (write) — they operate on the typed user_server_tool_defaults table with profile support. This tool stays available for read-only BC until the user_tool_prefs table is dropped (Mig 0030, deferred).",
     sensitivity: 'read',
     inputSchema: PrefsGetInput,
     async execute(ctx: ToolContext, input): Promise<PrefsGetResult> {
@@ -96,7 +96,7 @@ export function makePrefsSetTool(
   return {
     name: 'prefs.set',
     description:
-      'Set a tool-default at (toolName, field). Future tool-calls auto-fill the field. Requires approval.',
+      '[DEPRECATED 2026-06-15: use PWA #/tools/servers/<srv>/defaults for typed defaults + Profile, or PUT /v1/me/servers/:srv/tool-defaults/:tool/:field via REST] Set a tool-default at (toolName, field) in legacy user_tool_prefs. Future tool-calls auto-fill the field — BUT: the Phase-A resolver merges from user_server_tool_defaults (Mig 0024+0028), NOT from user_tool_prefs. So values set here are stored but NOT applied. Use the new surface for actual effect.',
     sensitivity: 'write',
     displayTemplate:
       'Set default for {{toolName}}.{{field}} (scope={{scope}}) to: {{value}}',
@@ -127,7 +127,7 @@ export function makePrefsRemoveTool(
   return {
     name: 'prefs.remove',
     description:
-      'Remove a previously-stored tool-default. Future calls will not auto-fill the field. Requires approval.',
+      '[DEPRECATED 2026-06-15: use PWA defaults-tab or DELETE /v1/me/servers/:srv/tool-defaults/:tool/:field] Remove a previously-stored tool-default from legacy user_tool_prefs. No-op if not present. Note: this only affects user_tool_prefs (Mig 0009), NOT the active resolver-table user_server_tool_defaults — see prefs.set deprecation note.',
     sensitivity: 'write',
     displayTemplate:
       'Remove default for {{toolName}}.{{field}} (scope={{scope}})',
