@@ -200,12 +200,33 @@ export function googleAuthRoutes(server: ServerContext): Hono<AppBindings> {
     } else {
       const existingByEmail = await findUserByEmail(server.db, profile.email);
       if (stateCookie.inviteToken) {
-        const accepted = await acceptInvite(server.db, server.config, {
-          rawToken: stateCookie.inviteToken,
-          externalId: profile.externalId,
-          email: profile.email,
-          displayName: profile.displayName,
-        });
+        // P2-6 v2: optionales auto-add zur Group nach signup. Hook ist nur
+        // verkabelt wenn KnowledgeService verfuegbar ist; sonst klassischer
+        // signup-only Pfad.
+        const accepted = await acceptInvite(
+          server.db,
+          server.config,
+          {
+            rawToken: stateCookie.inviteToken,
+            externalId: profile.externalId,
+            email: profile.email,
+            displayName: profile.displayName,
+          },
+          server.knowledge
+            ? {
+                addToGroup: async (args) => {
+                  // actor=invitedBy (Group-Owner); target=newUserId.
+                  // KC2-RLS verlangt actor==group.owner_id.
+                  await server.knowledge!.addGroupMember({
+                    userId: args.invitedBy,
+                    groupId: args.groupId,
+                    targetUserId: args.newUserId,
+                    role: args.role,
+                  });
+                },
+              }
+            : {},
+        );
         userId = accepted.userId;
         role = accepted.role;
         kcSyncNeeded = true;

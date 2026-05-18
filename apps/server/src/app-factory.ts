@@ -411,6 +411,11 @@ export async function createApp(
   if (userSyncService) {
     (server as { userSync?: UserSyncService }).userSync = userSyncService;
   }
+  // P2-6 v2: KnowledgeService auf den server-Container stash damit
+  // googleAuthRoutes (bidirectional-invite-Hook) zugreifen kann.
+  if (deps.knowledge) {
+    (server as { knowledge?: typeof deps.knowledge }).knowledge = deps.knowledge;
+  }
 
   // AS-3 (§1.3): /admin/kc-proxy/* — PWA-Same-Origin-Proxy zu KC2.
   // Nur gemountet wenn beide Felder gesetzt sind (graceful ohne KC-Anbindung).

@@ -21,6 +21,9 @@ import { renderInviteEmail } from '../../auth/invite/email-template.js';
 
 const createInviteSchema = z.object({
   email: z.string().email(),
+  // P2-6 v2: optional bidirectional invite (signup + group-add Ceremony)
+  target_group_id: z.string().uuid().optional(),
+  target_group_role: z.enum(['admin', 'member']).optional(),
 });
 
 export function inviteRoutes(server: ServerContext): Hono<AppBindings> {
@@ -41,6 +44,8 @@ export function inviteRoutes(server: ServerContext): Hono<AppBindings> {
       const result = await createInvite(server.db, server.config, {
         email: body.email,
         invitedBy: principal.userId,
+        ...(body.target_group_id ? { targetGroupId: body.target_group_id } : {}),
+        ...(body.target_group_role ? { targetGroupRole: body.target_group_role } : {}),
       });
 
       // Email-Versand (fail-soft: wenn das fail't, geht die Response trotzdem

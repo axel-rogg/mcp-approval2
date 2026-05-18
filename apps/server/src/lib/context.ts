@@ -48,4 +48,10 @@ export interface ServerContext {
    * attached (line ~383), daher hier optional statt Pflicht.
    */
   userSync?: import('../services/user-sync.js').UserSyncService;
+  /**
+   * P2-6 v2: KnowledgeService fuer bidirectional-Invite-Group-Add nach
+   * signup. Wenn `MCP_KNOWLEDGE_URL` nicht gesetzt: undefined; klassischer
+   * signup-only-Pfad. Wird in app-factory.ts attached (analog userSync).
+   */
+  knowledge?: import('../services/knowledge.js').KnowledgeService;
 }
