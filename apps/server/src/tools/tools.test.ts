@@ -342,6 +342,12 @@ describe('registerCoreTools', () => {
         'notes.get',
         'notes.delete',
         // bookmarks.* + recipes.* entfernt 2026-05-17 (siehe kc-wrappers-index.ts)
+        // Phase 1: Group-Sharing Kern-Tools
+        'groups.create',
+        'groups.list',
+        'groups.add_member',
+        'groups.remove_member',
+        'skills.share_with_group',
         // Credentials
         'credentials.add',
         'credentials.delete',

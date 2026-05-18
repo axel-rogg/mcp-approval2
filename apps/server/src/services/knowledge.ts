@@ -21,18 +21,29 @@ import { signJwt } from '@mcp-approval2/core/crypto';
 import { getSigningKey } from '../auth/jwt-signing.js';
 import {
   HttpKnowledgeAdapter,
+  type AddGroupMemberArgs,
+  type ArchiveGroupArgs,
+  type CreateGroupArgs,
   type CreateObjectArgs,
   type CreateShareArgs,
+  type CreateShareWithGroupArgs,
   type EraseUserArgs,
   type EraseUserResult,
+  type GetGroupArgs,
+  type Group,
+  type GroupMember,
+  type GroupShare,
   type JwtSigner,
   type KnowledgeAdapter,
   type KnowledgeObject,
+  type ListGroupsArgs,
   type ListObjectsArgs,
   type ObjectsList,
+  type RemoveGroupMemberArgs,
   type RevokeShareArgs,
   type SearchArgs,
   type SearchHit,
+  type SetGroupReadAuditArgs,
   type Share,
   type UpdateObjectArgs,
 } from '@mcp-approval2/adapters';
@@ -549,6 +560,116 @@ export class KnowledgeService {
         return undefined;
       },
       () => ({}),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Phase 1: Group-Sharing (Item 6e)
+  // ---------------------------------------------------------------------------
+
+  async createGroup(args: CreateGroupArgs): Promise<Group> {
+    return this.audited(
+      'knowledge.group.created',
+      args.userId,
+      undefined,
+      undefined,
+      () => this.adapter.createGroup(args),
+      (result) => ({ details: { groupId: result.id, name: result.name } }),
+    );
+  }
+
+  async listGroups(args: ListGroupsArgs): Promise<ReadonlyArray<Group>> {
+    return this.audited(
+      'knowledge.group.list',
+      args.userId,
+      undefined,
+      undefined,
+      () => this.adapter.listGroups(args),
+      (result) => ({ details: { count: result.length } }),
+    );
+  }
+
+  async getGroup(args: GetGroupArgs): Promise<{
+    group: Group;
+    members: ReadonlyArray<GroupMember>;
+  }> {
+    return this.audited(
+      'knowledge.group.get',
+      args.userId,
+      undefined,
+      args.groupId,
+      () => this.adapter.getGroup(args),
+      (result) => ({ details: { memberCount: result.members.length } }),
+    );
+  }
+
+  async archiveGroup(args: ArchiveGroupArgs): Promise<void> {
+    await this.audited(
+      'knowledge.group.archived',
+      args.userId,
+      undefined,
+      args.groupId,
+      async () => {
+        await this.adapter.archiveGroup(args);
+        return undefined;
+      },
+      () => ({}),
+    );
+  }
+
+  async addGroupMember(args: AddGroupMemberArgs): Promise<GroupMember> {
+    return this.audited(
+      'knowledge.group.member.added',
+      args.userId,
+      undefined,
+      args.groupId,
+      () => this.adapter.addGroupMember(args),
+      () => ({ details: { targetUserId: args.targetUserId, role: args.role ?? 'member' } }),
+    );
+  }
+
+  async removeGroupMember(args: RemoveGroupMemberArgs): Promise<void> {
+    await this.audited(
+      'knowledge.group.member.removed',
+      args.userId,
+      undefined,
+      args.groupId,
+      async () => {
+        await this.adapter.removeGroupMember(args);
+        return undefined;
+      },
+      () => ({ details: { targetUserId: args.targetUserId } }),
+    );
+  }
+
+  async setGroupReadAudit(args: SetGroupReadAuditArgs): Promise<void> {
+    await this.audited(
+      'knowledge.group.read_audit_toggled',
+      args.userId,
+      undefined,
+      args.groupId,
+      async () => {
+        await this.adapter.setGroupReadAudit(args);
+        return undefined;
+      },
+      () => ({ details: { enabled: args.enabled } }),
+    );
+  }
+
+  async createShareWithGroup(args: CreateShareWithGroupArgs): Promise<GroupShare> {
+    return this.audited<GroupShare>(
+      'knowledge.share.granted_to_group',
+      args.userId,
+      undefined,
+      args.resourceId,
+      () => this.adapter.createShareWithGroup(args),
+      (result) => ({
+        details: {
+          groupId: result.grantedToGroupId,
+          scope: result.scope,
+          shareId: result.id,
+        },
+      }),
     );
   }
 

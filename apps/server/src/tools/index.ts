@@ -46,6 +46,13 @@ import {
   type KnowledgeToolsDeps,
 } from './knowledge-tools.js';
 import {
+  makeGroupsAddMemberTool,
+  makeGroupsCreateTool,
+  makeGroupsListTool,
+  makeGroupsRemoveMemberTool,
+  makeSkillsShareWithGroupTool,
+} from './groups-tools.js';
+import {
   makeSystemEchoTool,
   makeSystemHealthTool,
 } from './system-tools.js';
@@ -117,6 +124,13 @@ export function registerCoreTools(registry: ToolRegistry, deps: ToolDeps): void 
   registry.register(makeKnowledgeDocsListTool(knowledgeDeps));
   registry.register(makeKnowledgeSkillsListTool(knowledgeDeps));
   registry.register(makeKnowledgeSearchTool(knowledgeDeps));
+
+  // Phase 1: Group-Sharing-Tools (Item 6e — 5 Kern-Tools)
+  registry.register(makeGroupsCreateTool({ knowledge: deps.knowledge }));
+  registry.register(makeGroupsListTool({ knowledge: deps.knowledge }));
+  registry.register(makeGroupsAddMemberTool({ knowledge: deps.knowledge }));
+  registry.register(makeGroupsRemoveMemberTool({ knowledge: deps.knowledge }));
+  registry.register(makeSkillsShareWithGroupTool({ knowledge: deps.knowledge }));
 
   // KC-Wrappers (docs.*, skills.*, memorize.*, objects.*)
   registerKcWrapperTools(registry, { knowledge: deps.knowledge });
