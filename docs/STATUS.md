@@ -1,4 +1,21 @@
-# Status: mcp-approval2 (2026-05-17 abend, Family-Hardening LIVE)
+# Status: mcp-approval2 (2026-05-18 spätabend, Tool-Defaults v2 COMPLETE)
+
+> **⚙️ Tool-Defaults v2 LIVE 2026-05-18 (Phasen A–F deployed).** Sechs
+> sequenzielle Commits (`6a70010` A → `0362c7f` F) liefern: Hub-side
+> Resolver mit Args-WIN-Merge + WYSIWYS-Attribution (Mig 0027), typed
+> jsonb-Storage + Schema-Validation gegen Tool-`inputSchema` (Mig 0028),
+> Multi-Profile pro `(user × sub_mcp_name)` mit `__profile`-Per-Call-Override,
+> natives `tools.help`-Tool für LLM-Initiation + `_meta.defaults_summary`-
+> Aggregat in `tools/list`, Hints + Elicitation-Hook (Default OFF,
+> Capability-gated, Mig 0029 user_settings), `prefs.*`-Tools deprecated mit
+> Banner. **Strikte Per-User-Isolation** via RLS + `user_id` in jedem PK
+> (Family-Mode-Pflicht, kein Group/Tenant). 707 server + 53 web Tests
+> grün, typecheck alle 4 Workspaces clean. Mig 0030 (DROP legacy
+> `user_tool_prefs` + `user_prefs`) als `.sql.deferred` parked — Apply
+> ab 2026-06-17 nach 30-Tage-Beobachtung. **AI-Agent-Guide:** [guides/agent-guide-tool-defaults.md](guides/agent-guide-tool-defaults.md).
+> **Plan:** [plans/active/PLAN-tool-defaults-v2.md](plans/active/PLAN-tool-defaults-v2.md).
+>
+> # Status: mcp-approval2 (2026-05-17 abend, Family-Hardening LIVE)
 
 > **🏠 Family-Hardening Sprint LIVE 2026-05-17 abend (Commit 95e1997 auf main).**
 > THREAT-MODEL umgestellt auf **3-Szenarien-Modell** (Familie im Haushalt /
@@ -235,6 +252,7 @@ Redirect-URI von `https://knowledge.ai-toolhub.org/auth/google/callback` auf
 9. STATUS.md (diese Datei) regelmäßig synchron halten — Datum oben bumpen wenn sich was bewegt.
 10. **GCP-Phase-2** (Business-Workspace): `terraform/environments/business/` Module ist seit `544041d` da (Cloud SQL + GCS + KMS Spec), aber noch unangewendet — Apply erst wenn Pilot-Erfolg.
 11. **Sub-MCP-Server-Migration** (cf/github/gws/gcloud/utils Worker auf X-User-JWT-Header in [docs/migration/sub-mcp-server-migration-guide.md](migration/sub-mcp-server-migration-guide.md)) — separate Repos, separat zu treiben.
+12. **Tool-Defaults v2 — Mig 0030 Apply** (ab 2026-06-17, nach 30-Tage-Beobachtung): Datei `apps/server/migrations/0030_drop_legacy_prefs.sql.deferred` zu `.sql` umbenennen, vorher `SELECT count(*) FROM user_tool_prefs` == 0 verifizieren, dann `[deploy]`-Commit. Plan-Datei verschieben: `docs/plans/active/PLAN-tool-defaults-v2.md` → `docs/plans/done/`.
 
 ## Boot-Reihenfolge (Node-Pfad)
 
