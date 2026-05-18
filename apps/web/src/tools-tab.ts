@@ -305,13 +305,18 @@ function renderServerCard(
   const details = document.createElement('details');
   details.className = 'server-card card';
 
-  // Problem-Highlight: Gateway/KC2 ist enabled aber liefert 0 Tools — typisch
-  // Discovery-Error (Worker 403, KC2 401, OAuth-Token fehlt). Native nicht
-  // highlighten (hat immer tools). Catalog-Defaults die der User noch nicht
-  // aktiviert hat (in available[]) sind auch keine "Probleme" — die landen
-  // in einer eigenen Section, nicht hier.
-  if (s.isGateway && s.enabled && s.tools.length === 0) {
-    details.classList.add('has-problem');
+  // Problem-Highlight (rot um die ganze Card):
+  // - Gateway/KC2 ist enabled aber liefert 0 Tools → Discovery-Error
+  // - Gateway hat requiredCredentials die NICHT alle im credential-store
+  //   vorhanden sind → Forward-Fail beim ersten Tool-Call
+  // Native + noch-nicht-aktivierte Server (available[]) sind keine Probleme.
+  if (s.isGateway && s.enabled) {
+    const hasNoTools = s.tools.length === 0;
+    const hasMissingCreds =
+      (s.requiredCredentials ?? []).some((rc) => !haveProviders.has(rc.provider));
+    if (hasNoTools || hasMissingCreds) {
+      details.classList.add('has-problem');
+    }
   }
 
   const summary = document.createElement('summary');

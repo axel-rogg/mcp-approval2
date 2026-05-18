@@ -1562,14 +1562,13 @@ code {
   padding: 0 1rem 0.85rem;
 }
 
-/* Problem-State — Gateway ist subscribed aber liefert 0 Tools (Discovery-
-   Fehler, fehlender Token, OAuth nicht abgeschlossen).
-   - Light-Mode: weicher pastell-roter Hintergrund + linker Akzent-Bar.
-   - Dark-Mode: dunkler bordeaux-Hintergrund (--danger-bg = #3a0f12), KEIN
-     heller pastell-Tint der im dark contrast saugt.
-   Border-left ist der primaere Anzeiger, BG ist optional + subtil. */
+/* Problem-State — Gateway ist subscribed aber unbenutzbar:
+   - 0 Tools (Discovery-Fehler, fehlender SERVICE_TOKEN, OAuth nicht abgeschlossen)
+   - oder requiredCredentials fehlen (Forward-Fail beim ersten Tool-Call)
+   Indikator: feiner durchgehender Rand rundherum in --danger + subtiler
+   bordeaux-Tint. Dark-Mode-tauglich, kein heller Pastell-Tint. */
 .server-card.has-problem {
-  border-left: 3px solid var(--danger);
+  border: 1px solid var(--danger);
   background: color-mix(in srgb, var(--danger-bg) 60%, var(--bg-elev) 40%);
 }
 
