@@ -111,8 +111,40 @@ export interface ResolveForToolResult {
   readonly profileName: string;
 }
 
+/**
+ * Pro-Tool-Summary fuer `_meta.defaults_summary` in `tools/list` (Phase D).
+ * Eine Map<toolName, {active_profile, fields_with_defaults[]}> pro User.
+ *
+ * `active_profile` ist der Profile-Name dessen Defaults gerade greifen
+ * (Active-Profile-Resolution via ToolDefaultProfilesService.activeProfileNameFor).
+ *
+ * `fields_with_defaults` enthaelt nur Felder mit `orphan_since IS NULL` —
+ * orphan-markierte Defaults werden vom Resolver eh skipped, damit Listing
+ * sie auch nicht als "configured" zeigt.
+ */
+export interface ToolDefaultsSummary {
+  readonly activeProfile: string;
+  readonly fieldsWithDefaults: ReadonlyArray<string>;
+}
+
 export interface ToolDefaultsService {
   resolveForTool(args: ResolveForToolArgs): Promise<ResolveForToolResult>;
+  /**
+   * Phase D: Aggregat fuer `tools/list._meta.defaults_summary`.
+   *
+   * Macht EINE Aggregat-Query: alle `user_server_tool_defaults`-Rows des
+   * Users JOIN `user_tool_default_profiles is_active=TRUE` → pro
+   * (sub_mcp_name, tool_name) ein Eintrag mit dem active-profile-Namen +
+   * array_agg(field_name).
+   *
+   * Caller cached das Result request-lokal (kein cross-request-Cache wegen
+   * RLS-Sicherheit).
+   *
+   * Returnt Map<toolName, ToolDefaultsSummary>. Tools ohne Defaults sind
+   * NICHT in der Map — Caller checkt `summary.has(name)` und liefert null
+   * im _meta sonst.
+   */
+  summarizeForUser(userId: string): Promise<ReadonlyMap<string, ToolDefaultsSummary>>;
 }
 
 export interface ToolDefaultsServiceOpts {
@@ -166,6 +198,13 @@ interface DefaultRow {
   readonly value_json: unknown;
   readonly value_kind: string;
   readonly orphan_since: number | string | null;
+}
+
+interface SummaryRow {
+  readonly sub_mcp_name: string;
+  readonly tool_name: string;
+  readonly active_profile: string;
+  readonly fields: ReadonlyArray<string> | null;
 }
 
 /**
@@ -226,7 +265,51 @@ export function createToolDefaultsService(
     );
   }
 
+  async function loadSummary(
+    scoped: ScopedDb,
+    userId: string,
+  ): Promise<ReadonlyArray<SummaryRow>> {
+    // Phase D Aggregat-Query: pro (sub_mcp_name, tool_name) der active-profile
+    // Name + alle field_name die einen Default haben (orphan-Rows excluded).
+    //
+    // LEFT JOIN auf user_tool_default_profiles is_active=TRUE damit auch
+    // Profile-lose Defaults ('default'-Fallback ohne profiles-Row, frische
+    // User) sichtbar bleiben — wir geben dann 'default' als active zurueck.
+    return await scoped.query<SummaryRow>(
+      `SELECT d.sub_mcp_name AS sub_mcp_name,
+              d.tool_name    AS tool_name,
+              COALESCE(p.profile_name, 'default') AS active_profile,
+              array_agg(d.field_name ORDER BY d.field_name) AS fields
+         FROM user_server_tool_defaults d
+         LEFT JOIN user_tool_default_profiles p
+                ON p.user_id      = d.user_id
+               AND p.sub_mcp_name = d.sub_mcp_name
+               AND p.is_active    = TRUE
+        WHERE d.user_id = $1
+          AND d.orphan_since IS NULL
+          AND d.profile_name = COALESCE(p.profile_name, 'default')
+        GROUP BY d.sub_mcp_name, d.tool_name, p.profile_name`,
+      [userId],
+    );
+  }
+
   return {
+    async summarizeForUser(userId) {
+      const out = new Map<string, ToolDefaultsSummary>();
+      await db.transaction(userId, async (scoped) => {
+        const rows = await loadSummary(scoped, userId);
+        for (const row of rows) {
+          out.set(row.tool_name, {
+            activeProfile: row.active_profile,
+            fieldsWithDefaults: Array.isArray(row.fields)
+              ? row.fields.filter((f): f is string => typeof f === 'string')
+              : [],
+          });
+        }
+      });
+      return out;
+    },
+
     async resolveForTool(args) {
       const subMcpName = subMcpFromToolName(args.toolName, args.subMcpServerNames);
       const knownFields = schemaFields ? schemaFields(args.toolName) : null;

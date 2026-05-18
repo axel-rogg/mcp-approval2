@@ -535,6 +535,23 @@ export async function createApp(
   // ─────────────────────────────────────────────────────────────────────
   const optionalServices = buildOptionalServices(server, deps, registry);
 
+  // Phase A/B/C/D (PLAN-tool-defaults-v2.md): Tool-Defaults-Services frueh
+  // genug bauen damit das natives `tools.help` (Phase D) bei der Registry-
+  // Population sie bereits hat.
+  const earlyToolDefaultProfilesService = createToolDefaultProfilesService({
+    db: server.db,
+  });
+  const earlyUserServerToolDefaultsService = createUserServerToolDefaultsService({
+    db: server.db,
+    schemaValidate: (toolName, fieldName, value) =>
+      validateAgainstToolSchema(registry, toolName, fieldName, value),
+  });
+  const earlyToolDefaultsResolver = createToolDefaultsService({
+    db: server.db,
+    schemaFields: (toolName) => extractTopLevelSchemaFields(registry, toolName),
+    profiles: earlyToolDefaultProfilesService,
+  });
+
   if (!deps.skipToolRegistration) {
     populateToolRegistry(registry, {
       ...(deps.knowledge ? { knowledge: deps.knowledge } : {}),
@@ -559,6 +576,20 @@ export async function createApp(
       ...(optionalServices.federatedSearch
         ? { federatedSearch: optionalServices.federatedSearch }
         : {}),
+      // Phase D: tools.help liest die hier vorgebauten Tool-Defaults-Services.
+      toolHelp: {
+        toolDefaults: earlyToolDefaultsResolver,
+        userServerToolDefaults: earlyUserServerToolDefaultsService,
+        toolDefaultProfiles: earlyToolDefaultProfilesService,
+        subMcpServerNames: async () => {
+          try {
+            const all = await subMcpReg.listAll();
+            return new Set(all.map((s) => s.name));
+          } catch {
+            return new Set<string>();
+          }
+        },
+      },
     });
 
     // AS-3 (§1.4 + A8): KC-Wrapper-Tools aus KC2's tools/list-Manifest
@@ -819,22 +850,10 @@ export async function createApp(
   }
 
   // Phase C (PLAN-tool-defaults-v2.md): Profile-CRUD pro (user, sub_mcp_name).
-  // Wird vom Resolver fuer Active-Profile-Lookup + vom REST-Layer fuer
-  // Profile-CRUD genutzt.
-  const toolDefaultProfilesService = createToolDefaultProfilesService({
-    db: server.db,
-  });
-
-  // Phase A+B+C (PLAN-tool-defaults-v2.md): Hub-side Tool-Defaults-Resolver.
-  // Mergt Per-User-Defaults aus user_server_tool_defaults in jeden Tool-Call,
-  // bevor registry.dispatch laeuft. Args-WIN. WYSIWYS via defaults_applied
-  // in pending_approvals. + Orphan-Detection via schemaFields-Callback (Phase B).
-  // + Multi-Profile-Resolution mit __profile-Override (Phase C).
-  const toolDefaultsResolver = createToolDefaultsService({
-    db: server.db,
-    schemaFields: (toolName) => extractTopLevelSchemaFields(registry, toolName),
-    profiles: toolDefaultProfilesService,
-  });
+  // Wir reuse die early-gebauten Instanzen damit nicht zwei parallele
+  // Service-Lifecycles ueber dieselbe DB laufen.
+  const toolDefaultProfilesService = earlyToolDefaultProfilesService;
+  const toolDefaultsResolver = earlyToolDefaultsResolver;
 
   // MCP-Protocol-Routes — Auth pro-Route via mcpTransport.
   // Per-User-Subscription-Filter: tools/list zeigt jedem User nur die
@@ -884,14 +903,8 @@ export async function createApp(
       })
     : undefined;
   // Phase D UX-Refactor: per-Tool Defaults pro Server (Mig 0024).
-  // Phase B finalize (PLAN-tool-defaults-v2.md): schemaValidate-Callback
-  // gegen das Zod-Schema des Tools — verhindert dass User unzulaessige
-  // Werte als Default speichert (z.B. max_results=200 wenn Schema max=100).
-  const userServerToolDefaultsService = createUserServerToolDefaultsService({
-    db: server.db,
-    schemaValidate: (toolName, fieldName, value) =>
-      validateAgainstToolSchema(registry, toolName, fieldName, value),
-  });
+  // Wir reuse die early-gebaute Instanz.
+  const userServerToolDefaultsService = earlyUserServerToolDefaultsService;
 
   app.route(
     '/',
@@ -1201,6 +1214,11 @@ interface PopulateDeps {
   };
   readonly capabilitySearch?: CapabilitySearchService;
   readonly federatedSearch?: FederatedSearchService;
+  /**
+   * Phase D (PLAN-tool-defaults-v2.md): tools.help-Deps. Optional damit
+   * Tests + Boot-ohne-Profile-Service durchlaufen.
+   */
+  readonly toolHelp?: import('./tools/index.js').ToolDeps['toolHelp'];
 }
 
 /**
@@ -1234,6 +1252,7 @@ function populateToolRegistry(registry: ToolRegistry, deps: PopulateDeps): void 
         ...(deps.federatedSearch
           ? { federatedSearch: deps.federatedSearch }
           : {}),
+        ...(deps.toolHelp ? { toolHelp: deps.toolHelp } : {}),
       });
     }
     return;

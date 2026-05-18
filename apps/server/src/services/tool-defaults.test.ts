@@ -93,6 +93,41 @@ function makeMemoryDb(seed: ReadonlyArray<Row> = []): DbAdapter {
   return adapter;
 }
 
+interface SummarySeedRow {
+  readonly sub_mcp_name: string;
+  readonly tool_name: string;
+  readonly active_profile: string;
+  readonly fields: ReadonlyArray<string>;
+}
+
+function makeMemoryDbForSummary(seed: ReadonlyArray<SummarySeedRow>): DbAdapter {
+  const scoped: ScopedDb = {
+    async query<T>(sql: string, _params?: ReadonlyArray<unknown>): Promise<T[]> {
+      const t = sql.replace(/\s+/g, ' ').trim();
+      if (t.startsWith('SELECT d.sub_mcp_name AS sub_mcp_name')) {
+        return seed.map((r) => ({ ...r })) as unknown as T[];
+      }
+      return [] as unknown as T[];
+    },
+  } as unknown as ScopedDb;
+  return {
+    async scoped<T>(_u: string, fn: (s: ScopedDb) => Promise<T>): Promise<T> {
+      return fn(scoped);
+    },
+    async transaction<T>(
+      _u: string,
+      fn: (s: ScopedDb, tx: TransactionCtx) => Promise<T>,
+    ): Promise<T> {
+      const tx: TransactionCtx = { rollback: async () => {} } as unknown as TransactionCtx;
+      return fn(scoped, tx);
+    },
+    async raw<T>(_fn: (db: RawDb) => Promise<T>): Promise<T> {
+      throw new Error('raw not implemented in mock');
+    },
+    async close(): Promise<void> {},
+  } as unknown as DbAdapter;
+}
+
 describe('subMcpFromToolName', () => {
   it('returns "native" for bare names', () => {
     expect(subMcpFromToolName('tools.help')).toBe('native');
@@ -356,6 +391,42 @@ describe('ToolDefaultsService.resolveForTool', () => {
     // (Resolver vertraut User nicht den Worker mit dem dirty value zu fluten).
     expect(out.resolvedInput).toEqual({ sql: 'x' });
     expect(out.profileName).toBe('default');
+  });
+
+  it('Phase D: summarizeForUser returns Map<toolName, {activeProfile, fieldsWithDefaults}>', async () => {
+    const db = makeMemoryDbForSummary([
+      // alice + gws.calendar.list im profile 'prod' (aktiv)
+      {
+        sub_mcp_name: 'gws',
+        tool_name: 'gws.calendar.list',
+        active_profile: 'prod',
+        fields: ['max_results', 'time_zone'],
+      },
+      // alice + db.query im profile 'default' (kein active-Profil → COALESCE)
+      {
+        sub_mcp_name: 'db',
+        tool_name: 'db.query',
+        active_profile: 'default',
+        fields: ['connection_string'],
+      },
+    ]);
+    const svc = createToolDefaultsService({ db });
+    const summary = await svc.summarizeForUser('alice');
+    expect(summary.size).toBe(2);
+    expect(summary.get('gws.calendar.list')).toEqual({
+      activeProfile: 'prod',
+      fieldsWithDefaults: ['max_results', 'time_zone'],
+    });
+    expect(summary.get('db.query')).toEqual({
+      activeProfile: 'default',
+      fieldsWithDefaults: ['connection_string'],
+    });
+  });
+
+  it('Phase D: summarizeForUser returns empty Map for fresh user', async () => {
+    const svc = createToolDefaultsService({ db: makeMemoryDbForSummary([]) });
+    const summary = await svc.summarizeForUser('alice');
+    expect(summary.size).toBe(0);
   });
 
   it('Phase C: attribution carries profile-name for tool-default fields', async () => {

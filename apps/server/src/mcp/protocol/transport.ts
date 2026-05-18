@@ -323,7 +323,36 @@ async function dispatchRequest(
           // ueber das Standard-Logging der Subscription-Service.
         }
       }
-      const result: ToolsListResult = { tools };
+
+      // Phase D (PLAN-tool-defaults-v2.md): _meta.defaults_summary pro Tool.
+      // EINE Aggregat-Query gegen user_server_tool_defaults — kein N+1.
+      // Wenn toolDefaults nicht verkabelt ist (Tests), liefern wir tools
+      // ohne defaults_summary aus (BC).
+      let toolsWithMeta: typeof tools = tools;
+      if (env.toolDefaults) {
+        try {
+          const summary = await env.toolDefaults.summarizeForUser(env.principal.userId);
+          toolsWithMeta = tools.map((meta) => {
+            const s = summary.get(meta.name);
+            if (!s) return meta;
+            return {
+              ...meta,
+              annotations: {
+                ...(meta.annotations ?? {}),
+                defaults_summary: {
+                  active_profile: s.activeProfile,
+                  fields_with_defaults: s.fieldsWithDefaults,
+                },
+              },
+            };
+          });
+        } catch {
+          // Aggregat-Query-Fehler → fail-open ohne summary. Resolver-Pfad
+          // ist davon nicht betroffen.
+        }
+      }
+
+      const result: ToolsListResult = { tools: toolsWithMeta };
       return rpcSuccess(req.id, result);
     }
     case McpMethods.ToolsCall: {

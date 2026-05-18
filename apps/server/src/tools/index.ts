@@ -83,6 +83,7 @@ import { makeUserGetTool, makeUserSetTool } from './user-extended-tools.js';
 import { registerGatewayMgmtTools } from './gateway-mgmt-tools.js';
 import { makeCapabilitySearchTool } from './capability-search-tool.js';
 import { makeFederatedSearchTool } from './federated-search-tool.js';
+import { makeToolHelpTool, type ToolHelpDeps } from './tool-help.js';
 
 export interface ToolDeps {
   readonly knowledge: KnowledgeService;
@@ -108,6 +109,15 @@ export interface ToolDeps {
   };
   readonly config?: AppConfig;
   readonly db?: DbAdapter;
+  /**
+   * Phase D (PLAN-tool-defaults-v2.md): natives `tools.help`-Tool.
+   * Wenn gesetzt, wird das Tool registriert. Requires:
+   *   - registry (= dieselbe ToolRegistry, fuer Schema-Introspection)
+   *   - toolDefaults (Aggregat-Query + Resolver-Sicht)
+   *   - userServerToolDefaults (CRUD-listByTool fuer effective-Defaults)
+   *   - toolDefaultProfiles (active-profile-Lookup + available_profiles)
+   */
+  readonly toolHelp?: Omit<ToolHelpDeps, 'registry'>;
 }
 
 export function registerCoreTools(registry: ToolRegistry, deps: ToolDeps): void {
@@ -203,6 +213,17 @@ export function registerCoreTools(registry: ToolRegistry, deps: ToolDeps): void 
   if (deps.federatedSearch) {
     registry.register(
       makeFederatedSearchTool({ federatedSearch: deps.federatedSearch }) as Tool<unknown, unknown>,
+    );
+  }
+
+  // Phase D (PLAN-tool-defaults-v2.md): tools.help — Read-only LLM-Initiation
+  // fuer Tool-Defaults-Discovery.
+  if (deps.toolHelp) {
+    registry.register(
+      makeToolHelpTool({
+        registry,
+        ...deps.toolHelp,
+      }),
     );
   }
 
