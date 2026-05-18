@@ -51,6 +51,7 @@ import {
   makeGroupsArchiveTool,
   makeGroupsCreateTool,
   makeGroupsGetTool,
+  makeGroupsInviteEmailTool,
   makeGroupsListMembersTool,
   makeGroupsListTool,
   makeGroupsRemoveMemberTool,
@@ -151,6 +152,13 @@ export function registerCoreTools(registry: ToolRegistry, deps: ToolDeps): void 
 
   // Phase 2-4: Owner-Transfer (danger)
   registry.register(makeGroupsTransferOwnershipTool({ knowledge: deps.knowledge }));
+
+  // Phase 2-6: Email-Invite (needs db for email→userId lookup)
+  if (deps.db) {
+    registry.register(
+      makeGroupsInviteEmailTool({ knowledge: deps.knowledge, db: deps.db }),
+    );
+  }
 
   // KC-Wrappers (docs.*, skills.*, memorize.*, objects.*)
   registerKcWrapperTools(registry, { knowledge: deps.knowledge });

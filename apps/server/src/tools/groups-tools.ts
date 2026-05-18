@@ -27,6 +27,7 @@
  */
 import { z } from 'zod';
 import type {
+  DbAdapter,
   Group,
   GroupMember,
   GroupShare,
@@ -34,9 +35,12 @@ import type {
 } from '@mcp-approval2/adapters';
 import type { Tool, ToolContext } from '../mcp/protocol/tool.js';
 import type { KnowledgeService } from '../services/knowledge.js';
+import { findUserByEmail } from '../services/user.js';
 
 export interface GroupsToolsDeps {
   readonly knowledge: KnowledgeService;
+  /** P2-6: optional DB-Handle fuer email→userId-Lookup in groups.invite_email. */
+  readonly db?: DbAdapter;
 }
 
 // ─── Zod-Schemas (inline) ──────────────────────────────────────────────────
@@ -141,6 +145,15 @@ const GroupsTransferOwnershipInput = z
   })
   .strict();
 type GroupsTransferOwnershipInputT = z.infer<typeof GroupsTransferOwnershipInput>;
+
+const GroupsInviteEmailInput = z
+  .object({
+    group_id: z.string().uuid(),
+    email: z.string().email(),
+    role: z.enum(['admin', 'member']).optional(),
+  })
+  .strict();
+type GroupsInviteEmailInputT = z.infer<typeof GroupsInviteEmailInput>;
 
 // ─── Helper: KC-Auth aus Context ───────────────────────────────────────────
 
@@ -422,6 +435,66 @@ export function makeSharesListMySharesTool(
         ...kcAuth(ctx),
       });
       return { items };
+    },
+  };
+}
+
+/**
+ * P2-6: Tool fuer Email-basierten Group-Invite.
+ *
+ * MVP-Verhalten:
+ *   - Lookup User by email (via approval2-users-Tabelle)
+ *   - User found + active → KnowledgeService.addGroupMember(group_id, user.id, role)
+ *   - User found + nicht active → Fehler ("User noch nicht aktiv, Admin muss
+ *     Platform-Invite senden")
+ *   - User not found → Fehler ("Email nicht im System; Admin muss zuerst
+ *     /admin/invites verwenden um Platform-Invite zu erstellen")
+ *
+ * Nicht-MVP (Future): bidirectional Invite (Platform-Signup + Group-Add
+ * in einer Ceremony) ueber Erweiterung der invites-Tabelle um
+ * target_group_id + target_group_role. Out-of-Scope fuer P2-6-MVP.
+ */
+export function makeGroupsInviteEmailTool(
+  deps: GroupsToolsDeps,
+): Tool<GroupsInviteEmailInputT, { added: GroupMember; resolvedUserId: string }> {
+  return {
+    name: 'groups.invite_email',
+    description:
+      'Add a user to a group by email (MVP: user must already exist as active platform user). Look up the user via the users table, then call groups.add_member with their userId. If the email is not yet registered, an admin must first send a platform invite via /admin/invites. Future versions will fold platform-invite + group-add into a single ceremony.',
+    sensitivity: 'write',
+    displayTemplate:
+      'Invite {{email}} as {{role}} to group {{group_id}} (resolves email→userId; user must already exist).',
+    inputSchema: GroupsInviteEmailInput,
+    async execute(
+      ctx: ToolContext,
+      input,
+    ): Promise<{ added: GroupMember; resolvedUserId: string }> {
+      if (!deps.db) {
+        throw new Error(
+          'groups.invite_email: DbAdapter not wired into tool deps — cannot look up user by email',
+        );
+      }
+      const user = await findUserByEmail(deps.db, input.email);
+      if (!user) {
+        throw new Error(
+          `no user found with email ${input.email}. ` +
+            `Ask an admin to send a platform invite via POST /admin/invites first.`,
+        );
+      }
+      if (user.status !== 'active') {
+        throw new Error(
+          `user ${input.email} exists but status='${user.status}' (not active). ` +
+            `Wait until they accept the platform invite, then retry.`,
+        );
+      }
+      const added = await deps.knowledge.addGroupMember({
+        userId: ctx.userId,
+        groupId: input.group_id,
+        targetUserId: user.id,
+        ...(input.role !== undefined ? { role: input.role } : {}),
+        ...kcAuth(ctx),
+      });
+      return { added, resolvedUserId: user.id };
     },
   };
 }
