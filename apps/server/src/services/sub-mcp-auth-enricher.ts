@@ -84,6 +84,9 @@ export const DEFAULT_AUTH_STRATEGIES: ReadonlyMap<string, AuthStrategy> = new Ma
   ['gws', 'google-oauth'],
   ['gcloud', 'google-oauth-or-sa'],
   ['github', 'oauth-bearer'],
+  // cf (Cloudflare-MCP, DCR-OAuth): gleicher refresh_token-grant-Mechanismus
+  // wie github. Token-URL kommt aus OAUTH_BEARER_TOKEN_ENDPOINTS (s.u.).
+  ['cf', 'oauth-bearer'],
 ]);
 
 export interface SubMcpAuthEnricher {
@@ -107,6 +110,7 @@ const GOOGLE_TOKEN_CACHE_MS = 50 * 60 * 1000;
  */
 const OAUTH_BEARER_TOKEN_ENDPOINTS: ReadonlyMap<string, string> = new Map([
   ['github', 'https://github.com/login/oauth/access_token'],
+  ['cf', 'https://bindings.mcp.cloudflare.com/oauth/token'],
 ]);
 
 /** Standard OAuth-Access-Token cache duration. 50 min entspricht GitHub
