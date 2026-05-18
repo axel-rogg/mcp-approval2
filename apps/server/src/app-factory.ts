@@ -1066,6 +1066,8 @@ export async function createApp(
     );
 
     // P2-7: rewrap-tick-Proxy fuer GH-Actions-Cron → Flycast → KC2
+    app.use('/internal/v1/rewrap-tick', serviceTokenGuard);
+    app.use('/internal/v1/rewrap-jobs', serviceTokenGuard);
     app.route('/', internalRewrapTickRoutes({ server }));
 
     // POST /internal/v1/apps/import — One-Shot v1→v2 App-Migration
