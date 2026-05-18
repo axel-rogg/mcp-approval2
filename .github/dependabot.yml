@@ -3,8 +3,14 @@
 # Gruppen reduzieren PR-Lärm: zusammengehörige Pakete (drizzle*, @types/*,
 # hono*, jose/@noble/*) landen in einer PR statt 5+.
 #
-# Limit 5 offene PRs verhindert Backlog-Stau. GH-Actions-Updates separat,
-# damit Workflow-Bumps nicht zwischen npm-Updates untergehen.
+# Limit 5 offene PRs verhindert Backlog-Stau.
+#
+# github-actions-Updates 2026-05-18 deaktiviert — der wöchentliche Pulk
+# (Montag 06:00 Berlin) erzeugte 5+ CI-Bursts und PR-Lärm ohne dass die
+# Bumps Production-Impact hätten. Action-Pins veralten jetzt manuell;
+# Faustregel: 2× pro Jahr in .github/workflows/*.yml die @vN-Tags
+# inspizieren und bei Deprecation-Warnings handeln. Security-CVE-Alerts
+# (Dependabot security updates) bleiben unabhängig davon aktiv.
 
 version: 2
 updates:
@@ -37,18 +43,3 @@ updates:
         patterns:
           - 'jose'
           - '@noble/*'
-
-  - package-ecosystem: github-actions
-    directory: /
-    schedule:
-      interval: weekly
-      day: monday
-      time: '06:00'
-      timezone: Europe/Berlin
-    open-pull-requests-limit: 5
-    labels:
-      - dependencies
-      - github-actions
-    commit-message:
-      prefix: chore(ci)
-      include: scope
