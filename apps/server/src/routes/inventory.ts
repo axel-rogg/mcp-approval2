@@ -305,15 +305,30 @@ async function mapGateways(
     }));
     // alphabetisch sortiert — analog zu native registry.list()
     tools.sort((a, b) => a.name.localeCompare(b.name));
+    // requiredCredentials aus Tool-Annotations sind ein v1-Mechanismus
+    // (legacy `credentials`-Tabelle, provider-Lookup). v2 nutzt entweder
+    // OAuth (refresh_token in user_sub_mcp_config) oder Service-Bearer
+    // (sub_mcp_servers.auth_config). Wenn der Gateway eine OAuth-Config hat
+    // (auth_mode='oauth' ODER configSchema.oauth ODER innerOAuth), ist die
+    // legacy `requiredCredentials`-Liste falsch verdrahtet — sie zeigt
+    // "1 fehlt" obwohl der User den OAuth-Flow erfolgreich durchlaufen hat.
+    // Drum: bei OAuth-Gateways requiredCredentials weglassen, die PWA stellt
+    // den OAuth-Status getrennt im Server-Detail dar.
+    const schema = (s.configSchema as { oauth?: unknown; innerOAuth?: unknown } | null) ?? null;
+    const hasOAuthConfig =
+      s.authMode === 'oauth' || !!schema?.oauth || !!schema?.innerOAuth;
+    const requiredCredentials = hasOAuthConfig
+      ? []
+      : aggregateRequiredCredentials(
+          toolsCache.map((t) => ({ annotations: t.annotations })),
+        );
     return {
       name: s.name,
       displayName: s.displayName,
       enabled: s.enabled,
       toolsCachedAt: s.toolsCachedAt,
       tools,
-      requiredCredentials: aggregateRequiredCredentials(
-        toolsCache.map((t) => ({ annotations: t.annotations })),
-      ),
+      requiredCredentials,
       configSchema: s.configSchema,
       isUserOwned: s.ownerUserId === userId,
     };
