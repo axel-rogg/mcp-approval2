@@ -20,7 +20,11 @@
  */
 import type { Session } from './api.js';
 import { showToast } from './components/toast.js';
-import { createGroupsApi, type Group, type GroupMember } from './api-groups.js';
+import {
+  createGroupsApi,
+  type Group,
+  type GroupMember,
+} from './api-groups.js';
 
 const groupsApi = createGroupsApi();
 
@@ -57,6 +61,23 @@ export async function renderAdminGroupsSub(
   };
   newGroupRow.appendChild(newGroupBtn);
   container.appendChild(newGroupRow);
+
+  // P2-5: "Shared with me"-Section (Inbound-Shares).
+  const sharedWithMeSection = document.createElement('div');
+  sharedWithMeSection.className = 'shared-with-me-section';
+  sharedWithMeSection.innerHTML = `
+    <details class="shared-with-me-details">
+      <summary><strong>📥 Mit mir geteilt</strong> <span class="shared-with-me-count"></span></summary>
+      <div class="shared-with-me-list"><p class="loading">Lade…</p></div>
+    </details>
+  `;
+  container.appendChild(sharedWithMeSection);
+  void loadSharedWithMe(sharedWithMeSection);
+
+  const listHeader = document.createElement('h3');
+  listHeader.className = 'groups-list-header';
+  listHeader.textContent = 'Meine Gruppen';
+  container.appendChild(listHeader);
 
   const listEl = document.createElement('div');
   listEl.className = 'groups-list';
@@ -161,6 +182,54 @@ async function openCreateGroupModal(
   };
 }
 
+async function loadSharedWithMe(section: HTMLElement): Promise<void> {
+  const listEl = section.querySelector<HTMLElement>('.shared-with-me-list');
+  const countEl = section.querySelector<HTMLElement>('.shared-with-me-count');
+  if (!listEl || !countEl) return;
+  try {
+    const items = await groupsApi.listSharedWithMe();
+    countEl.textContent = `(${items.length})`;
+    if (items.length === 0) {
+      listEl.innerHTML = '<p class="empty">Niemand hat dir Inhalte direkt geteilt.</p>';
+      return;
+    }
+    listEl.innerHTML = '';
+    const ul = document.createElement('ul');
+    ul.className = 'shared-with-me-ul';
+    for (const s of items) {
+      const li = document.createElement('li');
+      const via = s.grantedToGroupId
+        ? `via Group <code>${escape(s.grantedToGroupId.slice(0, 8))}…</code>`
+        : 'direkt';
+      const scope = s.scope === 'write' ? '✏️ write' : '👁 read';
+      li.innerHTML = `
+        <a href="#/storage/${escape(s.resourceId)}" class="shared-with-me-link">
+          ${escape(s.resourceId.slice(0, 8))}…
+        </a>
+        <span class="shared-with-me-meta">${scope} · ${via} · von ${escape(s.grantedBy.slice(0, 8))}…</span>
+      `;
+      ul.appendChild(li);
+    }
+    listEl.appendChild(ul);
+  } catch (err) {
+    listEl.innerHTML = `<div class="card err">${escape((err as Error).message)}</div>`;
+  }
+}
+
+// Cascade-Preview-Helper, in Use bei spaeteren share-skill-modal-Surfaces.
+// API-Surface bereits in api-groups.ts.cascadePreview(skillId).
+export async function cascadePreviewLabel(objectId: string): Promise<string> {
+  try {
+    const r = await groupsApi.cascadePreview(objectId);
+    if (r.cascadedCount === 0) return 'Kein Cascade — nur dieses Objekt.';
+    return r.truncated
+      ? `Cascade: ${r.cascadedCount}+ verknüpfte Dokumente`
+      : `Cascade: ${r.cascadedCount} verknüpfte Dokumente`;
+  } catch {
+    return 'Cascade-Preview nicht verfügbar';
+  }
+}
+
 async function openGroupDetail(
   parent: HTMLElement,
   session: Session,
@@ -180,7 +249,7 @@ async function openGroupDetail(
         ${isOwner ? '<div class="add-member-row"><input type="text" placeholder="User-ID (UUID)" class="member-userid" /><select class="member-role"><option value="member">Member</option><option value="admin">Admin</option></select><button class="btn primary add-member-btn">+ Hinzufügen</button></div>' : ''}
         ${isOwner ? '<p class="warn-text">⚠ Mitglieder können nach dem Hinzufügen ALLE in der Gruppe geteilten Inhalte lesen. Das ist umkehrbar (Master-Key rotiert), aber bereits gelesene Inhalte können nicht zurückgerufen werden.</p>' : ''}
       </div>
-      ${isOwner && !group.archivedAt ? '<div class="group-detail-section danger-zone"><h3>Gefahrenzone</h3><button class="btn danger archive-btn">Gruppe archivieren</button></div>' : ''}
+      ${isOwner && !group.archivedAt ? '<div class="group-detail-section danger-zone"><h3>Gefahrenzone</h3><button class="btn danger transfer-btn">Eigentümer-Transfer</button><button class="btn danger archive-btn">Gruppe archivieren</button></div>' : ''}
       <div class="modal-actions">
         <button type="button" class="btn ghost" data-action="close">Schließen</button>
       </div>
@@ -301,6 +370,39 @@ async function openGroupDetail(
         } catch (err) {
           showToast(`Fehler: ${(err as Error).message}`, 'error');
         }
+      };
+    }
+
+    // P2-4: Eigentümer-Transfer
+    const transferBtn = modal.querySelector<HTMLButtonElement>('.transfer-btn');
+    if (transferBtn) {
+      transferBtn.onclick = () => {
+        const newOwnerUserId = prompt(
+          `Eigentümer von "${group.name}" auf welchen User übertragen?\n\n` +
+            `Hinweis: Der neue Owner MUSS bereits aktives Mitglied dieser Gruppe sein.\n` +
+            `Du behältst Admin-Status, verlierst aber Owner-Privilegien (Mitglieder hinzu/entfernen, archivieren).\n\n` +
+            `Gib die User-ID (UUID) ein:`,
+          '',
+        );
+        if (!newOwnerUserId || newOwnerUserId.trim() === '') return;
+        const target = newOwnerUserId.trim();
+        if (
+          !confirm(
+            `Wirklich Eigentümer auf ${target} übertragen?\n\nDiese Aktion ist nur durch den neuen Owner rücktransferierbar.`,
+          )
+        ) {
+          return;
+        }
+        void (async () => {
+          try {
+            await groupsApi.transferOwnership(group.id, target);
+            showToast(`Eigentum auf ${target.slice(0, 8)}… übertragen`, 'success');
+            close();
+            onDone();
+          } catch (err) {
+            showToast(`Fehler: ${(err as Error).message}`, 'error');
+          }
+        })();
       };
     }
   }
