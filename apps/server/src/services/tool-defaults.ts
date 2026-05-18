@@ -1,7 +1,7 @@
 /**
  * ToolDefaultsService — Hub-side `applyDefaults`-Layer fuer Tool-Calls.
  *
- * Plan-Ref: docs/plans/active/PLAN-tool-defaults-v2.md (Phase A).
+ * Plan-Ref: docs/plans/active/PLAN-tool-defaults-v2.md (Phase A + B).
  *
  * Verantwortung:
  *   - `resolveForTool({userId, toolName, args})` wird vom MCP-Transport vor
@@ -9,6 +9,10 @@
  *     `user_server_tool_defaults` in den Tool-Input (Args-WIN — explizit
  *     gesetzte Werte ueberschreiben Defaults). Liefert `defaultsApplied[]`
  *     fuer WYSIWYS-Display in der Approval-PWA.
+ *   - Phase B: typed `value_json` wird statt `value_text` gelesen. Drift-
+ *     Detection via optional `schemaFields`-Callback: ein Default-Row dessen
+ *     Field-Name nicht im Tool-Schema vorkommt wird lazy als `orphan_since`
+ *     markiert und beim Merge uebersprungen (Plan §10 Entscheidung ⑤).
  *   - Sub-MCP-Routing via `subMcpFromToolName(name)`:
  *       prefix in subMcpServerNames → prefix
  *       prefix === 'kc'             → 'knowledge2'
@@ -16,8 +20,8 @@
  *     Reservierungs-Liste (Entscheidung 2026-05-18) verhindert Konflikte mit
  *     nativen Tool-Namespaces (apps.*, docs.*, ...).
  *
- * Phase A bleibt minimal — nur `profile_name='default'` wird gelesen, keine
- * Multi-Profile-Resolution (kommt in Phase C).
+ * Phase A blieb auf `profile_name='default'` hardcoded; Phase B liest noch
+ * weiterhin nur 'default' (Profile-Multi-Resolution kommt in Phase C).
  */
 import type { DbAdapter, ScopedDb } from '@mcp-approval2/adapters';
 import type { AppliedDefaultRow } from '../schema/postgres/approvals.js';
@@ -50,17 +54,33 @@ export const RESERVED_SUB_MCP_NAMES: ReadonlySet<string> = new Set([
  * Per-Call-Override-Argument-Name. Wenn ein Tool-Call `arguments.__profile`
  * setzt, nutzt der Resolver dieses Profil statt des aktiven (Phase C). Der
  * Wert wird vor `registry.dispatch` aus den Args entfernt damit der Worker
- * keinen unbekannten Schlüssel sieht.
+ * keinen unbekannten Schluessel sieht.
  *
  * Tools, die `__profile` als Property im inputSchema deklarieren, werden
- * vom Linter (`scripts/lint-tools.mjs`) und vom Registry-Register-Hook
- * abgelehnt (Plan-Entscheidung ①).
+ * vom Linter und vom Registry-Register-Hook abgelehnt (Plan-Entscheidung ①).
  */
 export const RESERVED_PROFILE_ARG = '__profile';
 
 // ---------------------------------------------------------------------------
 // Public Types
 // ---------------------------------------------------------------------------
+
+/**
+ * Optionaler Schema-Callback fuer Orphan-Detection.
+ *
+ * Plan §10 Entscheidung ⑤: wenn der Resolver beim Merge ein Default-Field
+ * sieht, das nicht im Tool-Schema vorkommt, wird die DB-Row lazy als orphan
+ * markiert und beim Merge uebersprungen (Worker bekommt keinen unknown-
+ * property).
+ *
+ * Callback liefert die top-level property-Namen des Tool-`inputSchema`.
+ * Returnt `null` wenn das Schema nicht analysierbar ist (z.B. `z.unknown()`
+ * bei kc_wrappers) — Resolver skipt dann die Orphan-Detection und merged
+ * naive (Pre-Phase-B Verhalten).
+ */
+export type SchemaFieldsCallback = (
+  toolName: string,
+) => ReadonlySet<string> | null;
 
 export interface ResolveForToolArgs {
   readonly userId: string;
@@ -78,7 +98,7 @@ export interface ResolveForToolArgs {
 export interface ResolveForToolResult {
   /**
    * `args ∪ defaults` mit Args-WIN-Regel.
-   * `__profile` ist hier bereits entfernt (Phase C).
+   * `__profile` wird vor dem Dispatch entfernt (Phase C).
    */
   readonly resolvedInput: Record<string, unknown>;
   /** Attribution-Liste fuer WYSIWYS, persistierbar in pending_approvals. */
@@ -93,6 +113,10 @@ export interface ToolDefaultsService {
 
 export interface ToolDefaultsServiceOpts {
   readonly db: DbAdapter;
+  /** Optional Drift-Detection-Callback. Siehe SchemaFieldsCallback. */
+  readonly schemaFields?: SchemaFieldsCallback;
+  /** Optional Clock fuer Tests. */
+  readonly now?: () => number;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,7 +151,22 @@ export function subMcpFromToolName(
 interface DefaultRow {
   readonly tool_name: string;
   readonly field_name: string;
+  readonly profile_name: string;
   readonly value_text: string;
+  readonly value_json: unknown;
+  readonly value_kind: string;
+  readonly orphan_since: number | string | null;
+}
+
+/**
+ * Bevorzugt `value_json` (typed, Phase B), faellt zurueck auf `value_text`
+ * (legacy bei pre-0028-Rows).
+ */
+function effectiveValue(row: DefaultRow): unknown {
+  if (row.value_json !== null && row.value_json !== undefined) {
+    return row.value_json;
+  }
+  return row.value_text;
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +176,7 @@ interface DefaultRow {
 export function createToolDefaultsService(
   opts: ToolDefaultsServiceOpts,
 ): ToolDefaultsService {
-  const { db } = opts;
+  const { db, schemaFields, now = () => Date.now() } = opts;
 
   async function loadDefaults(
     scoped: ScopedDb,
@@ -145,19 +184,43 @@ export function createToolDefaultsService(
     subMcpName: string,
     toolName: string,
   ): Promise<ReadonlyArray<DefaultRow>> {
-    // Phase A: nur profile_name='default' lesen. Phase C erweitert um
-    // Per-Tool/Per-Server Active-Profile-Resolution.
+    // Phase B: liest aktiv-Profil falls vorhanden. Bis Phase C lebt
+    // jeder User nur mit `profile_name='default'` (Mig 0028 seedet das fuer
+    // alle existing Rows). Wir filtern also explizit:
     return await scoped.query<DefaultRow>(
-      `SELECT tool_name, field_name, value_text
+      `SELECT tool_name, field_name, profile_name,
+              value_text, value_json, value_kind, orphan_since
          FROM user_server_tool_defaults
-        WHERE user_id = $1 AND sub_mcp_name = $2 AND tool_name = $3`,
+        WHERE user_id = $1
+          AND sub_mcp_name = $2
+          AND tool_name = $3
+          AND profile_name = 'default'`,
       [userId, subMcpName, toolName],
+    );
+  }
+
+  async function markOrphan(
+    scoped: ScopedDb,
+    userId: string,
+    subMcpName: string,
+    toolName: string,
+    fieldName: string,
+    orphanSince: number | null,
+  ): Promise<void> {
+    await scoped.query(
+      `UPDATE user_server_tool_defaults
+          SET orphan_since = $1
+        WHERE user_id = $2 AND sub_mcp_name = $3
+          AND tool_name = $4 AND field_name = $5
+          AND profile_name = 'default'`,
+      [orphanSince, userId, subMcpName, toolName, fieldName],
     );
   }
 
   return {
     async resolveForTool(args) {
       const subMcpName = subMcpFromToolName(args.toolName, args.subMcpServerNames);
+      const knownFields = schemaFields ? schemaFields(args.toolName) : null;
 
       // User-Input first abbilden (Attribution: 'user-input' pro nicht-
       // undefined-Field). null-Values gelten als nicht gesetzt → Default
@@ -171,21 +234,53 @@ export function createToolDefaultsService(
         }
       }
 
-      // Defaults laden + Args-WIN-Merge.
-      const rows = await db.transaction(args.userId, (scoped) =>
-        loadDefaults(scoped, args.userId, subMcpName, args.toolName),
-      );
-      for (const row of rows) {
-        const userVal = resolvedInput[row.field_name];
-        if (userVal === undefined || userVal === null) {
-          // Phase A: value_text TEXT (Plain-String). Phase B macht value_json typed.
-          resolvedInput[row.field_name] = row.value_text;
-          defaultsApplied.push({
-            field: row.field_name,
-            from: 'tool-default',
-          });
+      // Defaults laden + Args-WIN-Merge + Orphan-Lazy-Write.
+      await db.transaction(args.userId, async (scoped) => {
+        const rows = await loadDefaults(scoped, args.userId, subMcpName, args.toolName);
+        const ts = now();
+        for (const row of rows) {
+          // Drift-Detection (Plan §10 Entscheidung ⑤): wenn das Schema
+          // bekannt ist und das Field fehlt → orphan markieren, skip merge.
+          // Wenn das Schema das Field hat aber die Row orphan_since≠NULL
+          // hatte → unset (Field ist zurueck).
+          if (knownFields) {
+            const fieldKnown = knownFields.has(row.field_name);
+            if (!fieldKnown) {
+              if (row.orphan_since === null) {
+                await markOrphan(
+                  scoped,
+                  args.userId,
+                  subMcpName,
+                  args.toolName,
+                  row.field_name,
+                  ts,
+                );
+              }
+              continue; // skip merge — Worker wuerde unknown-property werfen
+            }
+            if (row.orphan_since !== null) {
+              await markOrphan(
+                scoped,
+                args.userId,
+                subMcpName,
+                args.toolName,
+                row.field_name,
+                null,
+              );
+            }
+          }
+
+          // Args-WIN: nur fuellen wenn User-Wert undefined oder null.
+          const userVal = resolvedInput[row.field_name];
+          if (userVal === undefined || userVal === null) {
+            resolvedInput[row.field_name] = effectiveValue(row);
+            defaultsApplied.push({
+              field: row.field_name,
+              from: 'tool-default',
+            });
+          }
         }
-      }
+      });
 
       return { resolvedInput, defaultsApplied, subMcpName };
     },

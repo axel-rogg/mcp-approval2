@@ -79,6 +79,12 @@ export interface InventoryGatewayTool {
   readonly name: string;
   readonly description: string | null;
   readonly sensitivity: 'read' | 'write' | 'danger';
+  /**
+   * JSON-Schema des Tool-Inputs (Phase B, PLAN-tool-defaults-v2.md). Wird
+   * vom Defaults-Tab fuer den Field-Picker konsumiert. `null` wenn nicht
+   * verfuegbar.
+   */
+  readonly inputSchema?: Record<string, unknown> | null;
 }
 
 export interface InventoryRequiredCredential {
@@ -122,13 +128,26 @@ export interface AddUserServerResult {
   readonly subscribed: boolean;
 }
 
+export type ToolDefaultValueKind =
+  | 'text'
+  | 'json'
+  | 'number'
+  | 'boolean'
+  | 'enum';
+
 export interface ToolDefault {
   readonly userId: string;
   readonly subMcpName: string;
+  /** Phase C: per-Profil isoliert. Default `'default'`. */
+  readonly profileName: string;
   readonly toolName: string;
   readonly fieldName: string;
-  readonly value: string;
+  /** Phase B: typed (string|number|boolean|object|array|null). */
+  readonly value: unknown;
+  readonly valueKind: ToolDefaultValueKind;
   readonly isSecret: boolean;
+  /** Set wenn das Feld nicht (mehr) im aktuellen Tool-Schema vorkommt. */
+  readonly orphanSince: number | null;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
@@ -220,10 +239,23 @@ export interface ApiClient {
   deleteUserServer(name: string): Promise<void>;
   /** Phase D UX-Refactor: per-Tool Defaults listen. */
   listToolDefaults(name: string): Promise<ReadonlyArray<ToolDefault>>;
-  /** Phase D UX-Refactor: per-Tool Default upserten. */
-  setToolDefault(name: string, tool: string, field: string, value: string, isSecret?: boolean): Promise<ToolDefault>;
-  /** Phase D UX-Refactor: per-Tool Default entfernen. */
-  deleteToolDefault(name: string, tool: string, field: string): Promise<void>;
+  /** Phase B (typed): per-Tool Default upserten. value ist beliebiger JSON-Type. */
+  setToolDefault(args: {
+    serverName: string;
+    toolName: string;
+    fieldName: string;
+    value: unknown;
+    valueKind?: ToolDefaultValueKind;
+    profile?: string;
+    isSecret?: boolean;
+  }): Promise<ToolDefault>;
+  /** Phase B: per-Tool Default entfernen (optional profile-scoped). */
+  deleteToolDefault(args: {
+    serverName: string;
+    toolName: string;
+    fieldName: string;
+    profile?: string;
+  }): Promise<void>;
 
   // Credentials
   listCredentials(): Promise<CredentialMeta[]>;
@@ -556,16 +588,21 @@ export function createApiClient(baseUrl?: string): ApiClient {
       return out.defaults;
     },
 
-    async setToolDefault(name: string, tool: string, field: string, value: string, isSecret?: boolean) {
+    async setToolDefault(args) {
+      const body: Record<string, unknown> = { value: args.value };
+      if (args.valueKind !== undefined) body['valueKind'] = args.valueKind;
+      if (args.profile !== undefined) body['profile'] = args.profile;
+      if (args.isSecret !== undefined) body['isSecret'] = args.isSecret;
       return await request<ToolDefault>(
-        `/v1/me/servers/${encodeURIComponent(name)}/tool-defaults/${encodeURIComponent(tool)}/${encodeURIComponent(field)}`,
-        { method: 'PUT', body: { value, ...(isSecret !== undefined ? { isSecret } : {}) } },
+        `/v1/me/servers/${encodeURIComponent(args.serverName)}/tool-defaults/${encodeURIComponent(args.toolName)}/${encodeURIComponent(args.fieldName)}`,
+        { method: 'PUT', body },
       );
     },
 
-    async deleteToolDefault(name: string, tool: string, field: string) {
+    async deleteToolDefault(args) {
+      const q = args.profile ? `?profile=${encodeURIComponent(args.profile)}` : '';
       await request<void>(
-        `/v1/me/servers/${encodeURIComponent(name)}/tool-defaults/${encodeURIComponent(tool)}/${encodeURIComponent(field)}`,
+        `/v1/me/servers/${encodeURIComponent(args.serverName)}/tool-defaults/${encodeURIComponent(args.toolName)}/${encodeURIComponent(args.fieldName)}${q}`,
         { method: 'DELETE' },
       );
     },

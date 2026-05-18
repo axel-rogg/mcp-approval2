@@ -27,3 +27,10 @@ export { pendingApprovalsTable } from './approvals.js';
 export { costLedgerTable } from './cost.js';
 export { userPrefsTable } from './prefs.js';
 export { pushSubscriptionsTable, type PushSubscriptionRow } from './push.js';
+export {
+  userToolDefaultProfilesTable,
+  userToolDefaultHintsTable,
+  userToolActiveProfileTable,
+  TOOL_DEFAULT_VALUE_KINDS,
+  type ToolDefaultValueKind,
+} from './tool-defaults-v2.js';

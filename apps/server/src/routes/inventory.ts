@@ -72,6 +72,14 @@ interface GatewayToolEntry {
   readonly name: string;
   readonly description: string | null;
   readonly sensitivity: 'read' | 'write' | 'danger';
+  /**
+   * JSON-Schema des Tool-Inputs (Phase B, PLAN-tool-defaults-v2.md). Wird
+   * vom PWA-Field-Picker in `#/tools/servers/<srv>/defaults` konsumiert um
+   * pro Property das passende Widget zu rendern. `null` wenn nicht
+   * verfuegbar (z.B. native-Tool noch nicht migriert, Worker liefert kein
+   * Schema mit).
+   */
+  readonly inputSchema: Record<string, unknown> | null;
 }
 
 /**
@@ -269,6 +277,10 @@ function mapKnowledge2Gateway(
       name: meta.name,
       description: meta.description ?? null,
       sensitivity: sensitivityFromAnnotations(meta.annotations),
+      inputSchema:
+        meta.inputSchema && typeof meta.inputSchema === 'object'
+          ? (meta.inputSchema as Record<string, unknown>)
+          : null,
     });
     annotationsForAgg.push({ annotations: meta.annotations });
   }
@@ -302,6 +314,10 @@ async function mapGateways(
       name: t.name,
       description: t.description ?? null,
       sensitivity: sensitivityFromAnnotations(t.annotations),
+      inputSchema:
+        t.inputSchema && typeof t.inputSchema === 'object'
+          ? (t.inputSchema as Record<string, unknown>)
+          : null,
     }));
     // alphabetisch sortiert — analog zu native registry.list()
     tools.sort((a, b) => a.name.localeCompare(b.name));

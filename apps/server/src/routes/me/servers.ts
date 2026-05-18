@@ -465,9 +465,17 @@ export function myServersRoutes(deps: MyServersRouteDeps): Hono<AppBindings> {
     const tdSvc = deps.toolDefaults;
     const TOOL_RE = /^[a-zA-Z_][a-zA-Z0-9_.:-]{0,127}$/;
     const FIELD_RE = /^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/;
+    const PROFILE_RE = /^[a-z][a-z0-9_-]{0,63}$/;
+    // Phase B (PLAN-tool-defaults-v2.md): typed value + profile + valueKind.
+    // value ist `unknown` damit Caller jeden JSON-Type schicken kann; der
+    // Service validiert gegen valueKind.
     const ToolDefaultPutBody = z
       .object({
-        value: z.string().max(8 * 1024),
+        value: z.unknown(),
+        valueKind: z
+          .enum(['text', 'json', 'number', 'boolean', 'enum'])
+          .optional(),
+        profile: z.string().regex(PROFILE_RE).default('default'),
         isSecret: z.boolean().optional(),
       })
       .strict();
@@ -497,14 +505,16 @@ export function myServersRoutes(deps: MyServersRouteDeps): Hono<AppBindings> {
           throw HttpError.badRequest('invalid_request', `invalid field name '${field}'`);
         }
         const body = c.req.valid('json');
-        const entry = await tdSvc.set(
-          user.userId,
-          name,
-          tool,
-          field,
-          body.value,
-          body.isSecret ?? false,
-        );
+        const entry = await tdSvc.set({
+          userId: user.userId,
+          subMcpName: name,
+          profileName: body.profile,
+          toolName: tool,
+          fieldName: field,
+          value: body.value,
+          ...(body.valueKind ? { valueKind: body.valueKind } : {}),
+          ...(body.isSecret !== undefined ? { isSecret: body.isSecret } : {}),
+        });
         return c.json(entry);
       },
     );
@@ -521,7 +531,9 @@ export function myServersRoutes(deps: MyServersRouteDeps): Hono<AppBindings> {
       if (!FIELD_RE.test(field)) {
         throw HttpError.badRequest('invalid_request', `invalid field name '${field}'`);
       }
-      await tdSvc.remove(user.userId, name, tool, field);
+      const profileRaw = c.req.query('profile');
+      const profile = profileRaw && PROFILE_RE.test(profileRaw) ? profileRaw : 'default';
+      await tdSvc.remove(user.userId, name, tool, field, profile);
       return c.body(null, 204);
     });
   }

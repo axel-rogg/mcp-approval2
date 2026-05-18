@@ -40,7 +40,7 @@ function makeMemoryDb(seed: ReadonlyArray<Row> = []): DbAdapter {
     params: ReadonlyArray<unknown> = [],
   ): T[] {
     const t = text.replace(/\s+/g, ' ').trim();
-    if (t.startsWith('SELECT tool_name, field_name, value_text')) {
+    if (t.startsWith('SELECT tool_name, field_name, profile_name')) {
       const [uid, sub, tool] = params as readonly unknown[];
       return rows
         .filter(
@@ -52,8 +52,16 @@ function makeMemoryDb(seed: ReadonlyArray<Row> = []): DbAdapter {
         .map((r) => ({
           tool_name: r.tool_name,
           field_name: r.field_name,
+          profile_name: 'default',
           value_text: r.value_text,
+          value_json: null,
+          value_kind: 'text',
+          orphan_since: null,
         })) as unknown as T[];
+    }
+    // UPDATE orphan_since (lazy-write) — no-op im Mock
+    if (t.startsWith('UPDATE user_server_tool_defaults')) {
+      return [] as unknown as T[];
     }
     return [] as unknown as T[];
   }
@@ -264,5 +272,60 @@ describe('ToolDefaultsService.resolveForTool', () => {
     });
     expect(bob.resolvedInput).toEqual({});
     expect(bob.defaultsApplied).toEqual([]);
+  });
+
+  it('skips orphan defaults (schema-callback says field unknown)', async () => {
+    const db = makeMemoryDb([
+      {
+        user_id: 'u1',
+        sub_mcp_name: 'gws',
+        tool_name: 'gws.calendar.list',
+        field_name: 'gone_field',  // not in schema anymore
+        value_text: 'wert',
+      },
+      {
+        user_id: 'u1',
+        sub_mcp_name: 'gws',
+        tool_name: 'gws.calendar.list',
+        field_name: 'max_results',
+        value_text: '25',
+      },
+    ]);
+    // Schema kennt nur max_results, nicht gone_field.
+    const svc = createToolDefaultsService({
+      db,
+      schemaFields: () => new Set(['max_results']),
+    });
+    const out = await svc.resolveForTool({
+      userId: 'u1',
+      toolName: 'gws.calendar.list',
+      args: {},
+      subMcpServerNames: new Set(['gws']),
+    });
+    // gone_field wird NICHT gemerged, max_results schon.
+    expect(out.resolvedInput).toEqual({ max_results: '25' });
+    expect(out.defaultsApplied.find((d) => d.field === 'gone_field')).toBeUndefined();
+  });
+
+  it('does NOT skip when schema-callback returns null (dynamic kc_wrappers)', async () => {
+    const db = makeMemoryDb([
+      {
+        user_id: 'u1',
+        sub_mcp_name: 'knowledge2',
+        tool_name: 'kc.docs.put',
+        field_name: 'category',
+        value_text: 'note',
+      },
+    ]);
+    const svc = createToolDefaultsService({
+      db,
+      schemaFields: () => null, // simulate kc.* z.unknown()
+    });
+    const out = await svc.resolveForTool({
+      userId: 'u1',
+      toolName: 'kc.docs.put',
+      args: {},
+    });
+    expect(out.resolvedInput['category']).toBe('note');
   });
 });

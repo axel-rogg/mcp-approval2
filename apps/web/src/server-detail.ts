@@ -30,6 +30,11 @@ import { ApiError } from './api.js';
 import { logout, renderSessionExpired } from './auth.js';
 import { renderHeader } from './components/header.js';
 import { showToast } from './components/toast.js';
+import {
+  extractFieldsFromSchema,
+  pickWidget,
+  renderWidget,
+} from './components/schema-form.js';
 
 type DetailTab = 'overview' | 'auth' | 'defaults' | 'diagnostics';
 
@@ -831,18 +836,26 @@ async function renderDefaultsTab(
     // 404 = keine Defaults gespeichert; weiter mit []
   }
 
-  // Map: toolName -> fieldName -> value
-  const valueMap = new Map<string, Map<string, string>>();
+  // Map: toolName -> ToolDefault[] (typed, mit valueKind + orphanSince).
+  const byTool = new Map<string, import('./api.js').ToolDefault[]>();
   for (const e of existing) {
-    if (!valueMap.has(e.toolName)) valueMap.set(e.toolName, new Map());
-    valueMap.get(e.toolName)!.set(e.fieldName, e.value);
+    const arr = byTool.get(e.toolName) ?? [];
+    arr.push(e);
+    byTool.set(e.toolName, arr);
   }
 
   const toolsHost = document.createElement('div');
   toolsHost.className = 'tool-defaults-list';
 
   for (const tool of gw.tools) {
-    const block = renderToolDefaultsBlock(api, serverName, tool.name, tool.description ?? '', valueMap.get(tool.name));
+    const block = renderToolDefaultsBlock(
+      api,
+      serverName,
+      tool.name,
+      tool.description ?? '',
+      (tool.inputSchema ?? null) as Record<string, unknown> | null,
+      byTool.get(tool.name) ?? [],
+    );
     toolsHost.appendChild(block);
   }
 
@@ -855,12 +868,12 @@ function renderToolDefaultsBlock(
   serverName: string,
   toolName: string,
   toolDesc: string,
-  existing: Map<string, string> | undefined,
+  toolSchema: Record<string, unknown> | null,
+  existing: ReadonlyArray<import('./api.js').ToolDefault>,
 ): HTMLElement {
   const wrap = document.createElement('details');
   wrap.className = 'tool-defaults-tool card-section';
-  // Erst-aufklappen wenn schon defaults existieren
-  if (existing && existing.size > 0) wrap.open = true;
+  if (existing.length > 0) wrap.open = true;
 
   const summary = document.createElement('summary');
   summary.className = 'tool-defaults-tool-head';
@@ -868,10 +881,10 @@ function renderToolDefaultsBlock(
   nameEl.className = 'tool-name';
   nameEl.textContent = toolName;
   summary.appendChild(nameEl);
-  if (existing && existing.size > 0) {
+  if (existing.length > 0) {
     const pill = document.createElement('span');
     pill.className = 'pill pill-ok';
-    pill.textContent = `${existing.size} default${existing.size === 1 ? '' : 's'}`;
+    pill.textContent = `${existing.length} default${existing.length === 1 ? '' : 's'}`;
     summary.appendChild(pill);
   }
   wrap.appendChild(summary);
@@ -883,97 +896,191 @@ function renderToolDefaultsBlock(
     wrap.appendChild(desc);
   }
 
-  // Render existing fields + Add-Form
+  // Existing defaults rendern (typed, mit orphan-Badge wenn relevant).
   const list = document.createElement('div');
   list.className = 'tool-defaults-fields';
-  if (existing) {
-    for (const [field, value] of existing.entries()) {
-      list.appendChild(renderDefaultRow(api, serverName, toolName, field, value));
-    }
+  const schemaFields = extractFieldsFromSchema(toolSchema);
+  const schemaFieldMap = new Map(schemaFields.map((f) => [f.name, f]));
+  const usedFieldNames = new Set<string>();
+  for (const def of existing) {
+    list.appendChild(
+      renderDefaultRowTyped(api, serverName, toolName, def, schemaFieldMap.get(def.fieldName) ?? null),
+    );
+    usedFieldNames.add(def.fieldName);
   }
   wrap.appendChild(list);
 
-  // Add new field
+  // Field-Picker statt freier text-input
+  if (schemaFields.length === 0) {
+    const hint = document.createElement('p');
+    hint.className = 'muted small';
+    hint.textContent =
+      'Kein inputSchema verfuegbar — Defaults sind nicht typsicher setzbar fuer dieses Tool.';
+    wrap.appendChild(hint);
+    return wrap;
+  }
+
   const addForm = document.createElement('form');
-  addForm.className = 'tool-defaults-add-form row';
-  const addField = document.createElement('input');
-  addField.type = 'text';
-  addField.placeholder = 'field_name';
-  addField.pattern = '[a-zA-Z_][a-zA-Z0-9_]*';
-  addField.required = true;
-  const addValue = document.createElement('input');
-  addValue.type = 'text';
-  addValue.placeholder = 'default value';
-  addValue.required = true;
+  addForm.className = 'tool-defaults-add-form col';
+
+  const remaining = schemaFields.filter((f) => !usedFieldNames.has(f.name));
+  if (remaining.length === 0) {
+    const done = document.createElement('p');
+    done.className = 'muted small';
+    done.textContent = 'Alle Schema-Felder haben bereits Defaults.';
+    wrap.appendChild(done);
+    return wrap;
+  }
+
+  // Field-Selector
+  const fieldRow = document.createElement('div');
+  fieldRow.className = 'row tool-defaults-add-field';
+  const fieldLbl = document.createElement('label');
+  fieldLbl.textContent = 'Parameter wählen: ';
+  fieldRow.appendChild(fieldLbl);
+  const fieldSelect = document.createElement('select');
+  fieldSelect.className = 'tool-defaults-field-select';
+  for (const f of remaining) {
+    const opt = document.createElement('option');
+    opt.value = f.name;
+    opt.textContent = `${f.name}${f.required ? ' *' : ''}`;
+    fieldSelect.appendChild(opt);
+  }
+  fieldRow.appendChild(fieldSelect);
+  addForm.appendChild(fieldRow);
+
+  // Widget-Container (re-rendert sich beim Field-Wechsel)
+  const widgetHost = document.createElement('div');
+  widgetHost.className = 'tool-defaults-add-widget';
+  addForm.appendChild(widgetHost);
+
+  // Submit-Reihe
+  const submitRow = document.createElement('div');
+  submitRow.className = 'row tool-defaults-add-submit';
   const addBtn = document.createElement('button');
   addBtn.type = 'submit';
   addBtn.className = 'btn btn-secondary btn-small';
-  addBtn.textContent = '+ Default';
-  addForm.appendChild(addField);
-  addForm.appendChild(addValue);
-  addForm.appendChild(addBtn);
+  addBtn.textContent = '+ Default speichern';
+  submitRow.appendChild(addBtn);
+  const status = document.createElement('span');
+  status.className = 'muted small';
+  submitRow.appendChild(status);
+  addForm.appendChild(submitRow);
+
+  let currentHandle: ReturnType<typeof renderWidget> | null = null;
+
+  function rebuildWidget(): void {
+    widgetHost.innerHTML = '';
+    const fieldName = fieldSelect.value;
+    const field = schemaFieldMap.get(fieldName);
+    if (!field) return;
+    const spec = pickWidget(field.schema);
+    currentHandle = renderWidget(spec);
+    widgetHost.appendChild(currentHandle.element);
+    if (field.schema.description) {
+      const d = document.createElement('div');
+      d.className = 'muted small';
+      d.textContent = String(field.schema.description);
+      widgetHost.appendChild(d);
+    }
+    // Vorschlag-Default
+    if (field.schema.default !== undefined) {
+      try {
+        currentHandle.setValue(field.schema.default);
+      } catch {
+        // ignore
+      }
+    }
+  }
+  fieldSelect.addEventListener('change', rebuildWidget);
+  rebuildWidget();
+
   addForm.addEventListener('submit', async (ev) => {
     ev.preventDefault();
-    const field = addField.value.trim();
-    const value = addValue.value;
-    if (!field || !value) return;
-    addBtn.disabled = true;
+    if (!currentHandle) return;
+    const fieldName = fieldSelect.value;
+    const err = currentHandle.validate();
+    if (err) {
+      status.textContent = err;
+      status.className = 'err small';
+      return;
+    }
+    let value: unknown;
     try {
-      await api.setToolDefault(serverName, toolName, field, value);
-      const row = renderDefaultRow(api, serverName, toolName, field, value);
-      list.appendChild(row);
-      addField.value = '';
-      addValue.value = '';
-      showToast('Default gesetzt.', 'success');
-    } catch (err) {
-      showToast(`Fehler: ${(err as Error).message}`, 'error');
+      value = currentHandle.getValue();
+    } catch (e) {
+      status.textContent = (e as Error).message;
+      status.className = 'err small';
+      return;
+    }
+    addBtn.disabled = true;
+    status.textContent = '';
+    try {
+      await api.setToolDefault({
+        serverName,
+        toolName,
+        fieldName,
+        value,
+        valueKind: currentHandle.valueKind,
+      });
+      showToast(`Default ${fieldName} gespeichert.`, 'success');
+      // Statt manuell DOM-Manipulation: ganze Tab neu rendern (einfacher + konsistent
+      // mit Orphan-Banner-Logik).
+      window.dispatchEvent(new CustomEvent('tool-defaults:refresh'));
+    } catch (e) {
+      status.textContent = `Fehler: ${(e as Error).message}`;
+      status.className = 'err small';
     } finally {
       addBtn.disabled = false;
     }
   });
-  wrap.appendChild(addForm);
 
+  wrap.appendChild(addForm);
   return wrap;
 }
 
-function renderDefaultRow(
+function renderDefaultRowTyped(
   api: ApiClient,
   serverName: string,
   toolName: string,
-  fieldName: string,
-  currentValue: string,
+  def: import('./api.js').ToolDefault,
+  field: import('./components/schema-form.js').SchemaField | null,
 ): HTMLElement {
   const row = document.createElement('div');
   row.className = 'tool-defaults-row';
-  row.dataset['field'] = fieldName;
+  row.dataset['field'] = def.fieldName;
+
+  // Orphan-Marker (Plan §10 Entscheidung ⑤)
+  if (def.orphanSince !== null) {
+    row.classList.add('tool-defaults-row-orphan');
+    const badge = document.createElement('span');
+    badge.className = 'pill pill-warn';
+    badge.textContent = 'orphan';
+    badge.title =
+      'Dieses Feld ist nicht (mehr) im Schema des Tools. Der Resolver ignoriert es. Entweder löschen oder Server-Tools neu entdecken.';
+    row.appendChild(badge);
+  }
 
   const lbl = document.createElement('label');
   lbl.className = 'tool-defaults-field-name';
-  lbl.textContent = fieldName;
+  lbl.textContent = `${def.fieldName} `;
+  const kindHint = document.createElement('span');
+  kindHint.className = 'muted small';
+  kindHint.textContent = `(${def.valueKind})`;
+  lbl.appendChild(kindHint);
   row.appendChild(lbl);
 
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.value = currentValue;
-  input.className = 'tool-defaults-value-input';
-  row.appendChild(input);
+  // Werte-Anzeige: einfaches read-only-Element. Edit-in-place via 🗑 + neu setzen.
+  const valEl = document.createElement('code');
+  valEl.className = 'tool-defaults-value';
+  valEl.textContent = formatValue(def.value);
+  row.appendChild(valEl);
 
-  const saveBtn = document.createElement('button');
-  saveBtn.type = 'button';
-  saveBtn.className = 'btn btn-secondary btn-small';
-  saveBtn.textContent = 'Speichern';
-  saveBtn.addEventListener('click', async () => {
-    saveBtn.disabled = true;
-    try {
-      await api.setToolDefault(serverName, toolName, fieldName, input.value);
-      showToast(`Default ${fieldName} gespeichert.`, 'success');
-    } catch (err) {
-      showToast(`Fehler: ${(err as Error).message}`, 'error');
-    } finally {
-      saveBtn.disabled = false;
-    }
-  });
-  row.appendChild(saveBtn);
+  // Tools optional fuer Edit: bei Klick auf valEl Inline-Edit via passendem Widget.
+  // Phase B minimal: nur Delete + Neu-Setzen via Field-Picker.
+  // (Edit-in-place ist nice-to-have, kommt in Phase C zusammen mit Profile-Switch.)
+  void field; // referenced for future inline edit
+  void api;
 
   const delBtn = document.createElement('button');
   delBtn.type = 'button';
@@ -981,11 +1088,17 @@ function renderDefaultRow(
   delBtn.textContent = '×';
   delBtn.title = 'Default entfernen';
   delBtn.addEventListener('click', async () => {
-    if (!window.confirm(`Default '${fieldName}' entfernen?`)) return;
+    if (!window.confirm(`Default '${def.fieldName}' entfernen?`)) return;
     try {
-      await api.deleteToolDefault(serverName, toolName, fieldName);
+      await api.deleteToolDefault({
+        serverName,
+        toolName,
+        fieldName: def.fieldName,
+        profile: def.profileName,
+      });
       row.remove();
       showToast('Default entfernt.', 'success');
+      window.dispatchEvent(new CustomEvent('tool-defaults:refresh'));
     } catch (err) {
       showToast(`Fehler: ${(err as Error).message}`, 'error');
     }
@@ -993,6 +1106,16 @@ function renderDefaultRow(
   row.appendChild(delBtn);
 
   return row;
+}
+
+function formatValue(v: unknown): string {
+  if (v === null || v === undefined) return '∅';
+  if (typeof v === 'string') return v;
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
 }
 
 function renderDiagnosticsTab(body: HTMLElement, gw: InventoryGateway | null, serverName: string): void {
