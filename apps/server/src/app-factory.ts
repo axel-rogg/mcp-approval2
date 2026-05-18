@@ -502,6 +502,24 @@ export async function createApp(
     db: server.db,
   });
 
+  // userSubscriptionsService — wir brauchen ihn schon vor dem Sub-MCP-
+  // Boot-Build damit die Wrapper-Tools den Subscription-Check kennen
+  // (Defense-in-Depth: tool/call wird verweigert wenn User nicht subscribed).
+  const userSubscriptionsService = createUserSubscriptionsService({
+    db: server.db,
+  });
+  const subscriptionCheck = async (
+    userId: string,
+    subMcpName: string,
+  ): Promise<boolean> => {
+    try {
+      const subs = await userSubscriptionsService.list(userId);
+      return subs.some((s) => s.subMcpName === subMcpName && s.enabled);
+    } catch {
+      return true; // fail-open
+    }
+  };
+
   // ─────────────────────────────────────────────────────────────────────
   // Burst-7: Optional Services (Apps / Prefs / Push / OutputRefs / Search).
   // Capability-Search needs the live tool-registry, so we build services
@@ -652,6 +670,7 @@ export async function createApp(
         forwarder: subMcpForwarder,
         config: server.config,
         ...(subMcpAuthEnricher ? { authEnricher: subMcpAuthEnricher } : {}),
+        subscriptionCheck,
       });
       let registered = 0;
       const perServerToolNames = new Map<string, string[]>();
@@ -703,6 +722,8 @@ export async function createApp(
       cache: subMcpWrappersCache,
       config: server.config,
       ...(subMcpAuthEnricher ? { authEnricher: subMcpAuthEnricher } : {}),
+      userToolCache: userSubMcpToolCacheService,
+      subscriptionCheck,
     }),
   );
 
@@ -790,9 +811,31 @@ export async function createApp(
   }
 
   // MCP-Protocol-Routes — Auth pro-Route via mcpTransport.
+  // Per-User-Subscription-Filter: tools/list zeigt jedem User nur die
+  // Sub-MCP-Tools von Servern die er aktiviert hat. Sprint 2026-05-18.
   app.route(
     '/',
-    mcpProtocolRoutes({ server, registry, approvals: approvalService }),
+    mcpProtocolRoutes({
+      server,
+      registry,
+      approvals: approvalService,
+      subscriptionFilter: async (userId) => {
+        try {
+          const subs = await userSubscriptionsService.list(userId);
+          return new Set(subs.filter((s) => s.enabled).map((s) => s.subMcpName));
+        } catch {
+          return null; // fail-open
+        }
+      },
+      subMcpServerNames: async () => {
+        try {
+          const all = await subMcpReg.listAll();
+          return new Set(all.map((s) => s.name));
+        } catch {
+          return new Set<string>();
+        }
+      },
+    }),
   );
 
   // PWA-Tools-View: GET /v1/inventory — authenticated, read-only Liste der
@@ -801,12 +844,8 @@ export async function createApp(
   // knowledge2-Snapshot wird per-Request aus dem module-scoped
   // `kcWrappersCache` gelesen — kc-manifest-refresh updated den Cache, der
   // Inventory-Endpoint sieht das ohne Re-Mount.
-  // UserSubscriptionsService: per-User-Subscription auf Sub-MCP-Server.
-  // PLAN-per-user-server-store Phase 1. Inventory + /v1/me/servers nutzen
-  // ihn.
-  const userSubscriptionsService = createUserSubscriptionsService({
-    db: server.db,
-  });
+  // userSubscriptionsService wurde bereits oben instanziiert (vor Sub-MCP-Boot,
+  // damit subscriptionCheck verkabelt werden kann).
   // userServerConfigService wurde bereits oben (vor Sub-MCP-Boot) instanziiert
   // damit der SubMcpAuthEnricher beim buildSubMcpWrapperTools verfuegbar ist.
   // Phase 3: OAuth-Authorize-Flow. Braucht configSvc + Sub-MCP-Registry.
@@ -876,6 +915,7 @@ export async function createApp(
                 authEnricher: subMcpAuthEnricher,
                 operatorUserId: a.userId,
                 userToolCache: userSubMcpToolCacheService,
+                subscriptionCheck,
                 ...(a.only ? { only: a.only } : {}),
               });
             },

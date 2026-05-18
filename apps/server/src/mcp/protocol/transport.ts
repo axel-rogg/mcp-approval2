@@ -79,6 +79,26 @@ export interface McpTransportOptions {
    * Error wie bisher in einen JSON-RPC-Error gemapped.
    */
   readonly approvals?: ApprovalService;
+  /**
+   * Optional: Per-User-Subscription-Filter fuer tools/list. Wenn gesetzt,
+   * werden Sub-MCP-Wrapper-Tools nur dann fuer einen User in tools/list
+   * gezeigt, wenn er den jeweiligen Server subscribed hat. Native Tools +
+   * KC-Wrapper-Tools sind nie gefiltert (immer sichtbar fuer authorisierte
+   * User).
+   *
+   * Implementation: liefert pro userId die Server-Namen-Whitelist. Wenn
+   * undefined zurueckgegeben wird → Filter ausgeschaltet (zeige alles).
+   */
+  readonly subscriptionFilter?: (
+    userId: string,
+  ) => Promise<ReadonlySet<string> | null>;
+  /**
+   * Optional: Set bekannter Sub-MCP-Server-Namen (z.B. ['cf', 'github',
+   * 'gws', 'gcloud', 'utils']). Wird beim subscriptionFilter genutzt um zu
+   * entscheiden ob ein Tool-Name wie 'cf.kv_list' zu einem Sub-MCP gehoert
+   * oder ein nativer Tool ist. Wenn nicht gesetzt → Filter ausgeschaltet.
+   */
+  readonly subMcpServerNames?: () => Promise<ReadonlySet<string>>;
 }
 
 // ============================================================================
@@ -152,7 +172,7 @@ class CancelRegistry {
 
 export function mcpTransport(opts: McpTransportOptions): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
-  const { server, registry, approvals } = opts;
+  const { server, registry, approvals, subscriptionFilter, subMcpServerNames } = opts;
   const serverName = opts.serverName ?? 'mcp-approval2';
   const serverVersion = opts.serverVersion ?? '0.0.1';
   const cancels = new CancelRegistry();
@@ -192,6 +212,8 @@ export function mcpTransport(opts: McpTransportOptions): Hono<AppBindings> {
       serverName,
       serverVersion,
       ...(approvals ? { approvals } : {}),
+      ...(subscriptionFilter ? { subscriptionFilter } : {}),
+      ...(subMcpServerNames ? { subMcpServerNames } : {}),
       ...(c.req.header('x-forwarded-for')
         ? { ip: (c.req.header('x-forwarded-for') ?? '').split(',')[0]?.trim() }
         : {}),
@@ -234,6 +256,9 @@ interface DispatchEnv {
   readonly serverVersion: string;
   readonly approvals?: ApprovalService;
   readonly ip?: string | undefined;
+  /** Per-User Filter fuer tools/list — siehe McpTransportOptions. */
+  readonly subscriptionFilter?: (userId: string) => Promise<ReadonlySet<string> | null>;
+  readonly subMcpServerNames?: () => Promise<ReadonlySet<string>>;
 }
 
 async function dispatchRequest(
@@ -250,7 +275,35 @@ async function dispatchRequest(
       return rpcSuccess(req.id, {});
     }
     case McpMethods.ToolsList: {
-      const result: ToolsListResult = { tools: env.registry.list() };
+      const allTools = env.registry.list();
+      // Per-User-Subscription-Filter fuer Sub-MCP-Wrapper-Tools.
+      // - native tools (kein '.'-Praefix): immer durchlassen
+      // - kc.* (knowledge-core wrapper, single-tenant): immer durchlassen
+      // - <server>.* wo <server> in subMcpServerNames: nur wenn subscribed
+      let tools: typeof allTools = allTools;
+      if (env.subscriptionFilter && env.subMcpServerNames) {
+        try {
+          const [subSet, serverNames] = await Promise.all([
+            env.subscriptionFilter(env.principal.userId),
+            env.subMcpServerNames(),
+          ]);
+          // Wenn der Filter explizit null returnt → keine Filterung
+          // (Solo-Mode / Tests). Sonst pruefen wir pro Tool-Name.
+          if (subSet) {
+            tools = allTools.filter((meta) => {
+              const dotIdx = meta.name.indexOf('.');
+              if (dotIdx <= 0) return true; // nativer Tool
+              const serverPart = meta.name.slice(0, dotIdx);
+              if (!serverNames.has(serverPart)) return true; // kein Sub-MCP-Server
+              return subSet.has(serverPart);
+            });
+          }
+        } catch {
+          // Filter-Fehler → fail-open (zeige alles). Audit-Eintrag kommt
+          // ueber das Standard-Logging der Subscription-Service.
+        }
+      }
+      const result: ToolsListResult = { tools };
       return rpcSuccess(req.id, result);
     }
     case McpMethods.ToolsCall: {

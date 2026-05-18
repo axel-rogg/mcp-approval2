@@ -99,6 +99,15 @@ export interface ApplyGatewayDiscoveryArgs {
    * Filter (Stueck 7+ im Sprint).
    */
   readonly userToolCache?: import('../../services/user-sub-mcp-tool-cache.js').UserSubMcpToolCacheService;
+  /**
+   * Optional Subscription-Check fuer Defense-in-Depth pro tool/call.
+   * Wird beim Re-Build der wrapper-tools eingehaengt — wenn ein User einen
+   * Server nicht subscribed hat, gibt's 403 statt 401 vom Worker.
+   */
+  readonly subscriptionCheck?: (
+    userId: string,
+    subMcpName: string,
+  ) => Promise<boolean>;
 }
 
 export interface ApplyGatewayDiscoveryResult {
@@ -173,7 +182,12 @@ export async function applyGatewayDiscovery(
     skipped.push(...defSkipped);
     const toolNames: string[] = [];
     for (const def of defs) {
-      const tool = makeForwardingTool({ def, forwarder: args.forwarder, config: args.config });
+      const tool = makeForwardingTool({
+        def,
+        forwarder: args.forwarder,
+        config: args.config,
+        ...(args.subscriptionCheck ? { subscriptionCheck: args.subscriptionCheck } : {}),
+      });
       if (args.toolRegistry.has(tool.name)) {
         // Defensive — sollte nicht passieren weil wir oben de-registered haben.
         // Falls doch (z.B. eine andere Quelle hat denselben Namen registered),

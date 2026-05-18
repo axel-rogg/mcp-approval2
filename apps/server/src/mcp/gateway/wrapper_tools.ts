@@ -68,6 +68,17 @@ export interface MakeForwardingToolArgs {
    * Wenn fehlend: nur Standard-Header (Schicht-1 + X-User-JWT).
    */
   readonly authEnricher?: SubMcpAuthEnricher;
+  /**
+   * Optional Subscription-Check (Sprint 2026-05-18). Wenn gesetzt: pre-flight
+   * vor jedem tool/call. Returns true → call darf weiterlaufen, false → 403
+   * mit klarem Hinweis. Defense-in-Depth zusaetzlich zum tools/list-Filter:
+   * ein MCP-Client der subscribed-Filter umgeht (z.B. via gecachter
+   * Tool-Definition) wird hier abgewiesen.
+   */
+  readonly subscriptionCheck?: (
+    userId: string,
+    subMcpName: string,
+  ) => Promise<boolean>;
 }
 
 /**
@@ -76,7 +87,7 @@ export interface MakeForwardingToolArgs {
  * `<subMcpName>.<remoteToolName>` (e.g. `gws.calendar.list`, `utils.diagram.info`).
  */
 export function makeForwardingTool(args: MakeForwardingToolArgs): Tool<unknown, unknown> {
-  const { def, forwarder, config, authEnricher } = args;
+  const { def, forwarder, config, authEnricher, subscriptionCheck } = args;
   const sensitivity = resolveSubMcpSensitivity(def.annotations);
 
   const tool: Tool<unknown, unknown> = {
@@ -86,6 +97,19 @@ export function makeForwardingTool(args: MakeForwardingToolArgs): Tool<unknown, 
     inputSchema: z.unknown() as z.ZodType<unknown>,
     ...(def.annotations ? { annotations: def.annotations } : {}),
     async execute(ctx: ToolContext, input: unknown): Promise<unknown> {
+      // Subscription-Gate (Sprint 2026-05-18): wenn der User den Server nicht
+      // subscribed hat, ist das ein 403 — nicht ein 500 von Worker-401.
+      if (subscriptionCheck) {
+        const subscribed = await subscriptionCheck(ctx.userId, def.subMcpName).catch(
+          () => true, // fail-open bei DB-Fehler
+        );
+        if (!subscribed) {
+          throw new Error(
+            `Sub-MCP-Server '${def.subMcpName}' ist nicht aktiviert. ` +
+              `Aktiviere ihn unter Tools → Servers oder fuehre den OAuth-Flow durch.`,
+          );
+        }
+      }
       const userJwt = await signSubMcpUserJwt({
         userId: ctx.userId,
         subMcpName: def.subMcpName,
@@ -134,6 +158,11 @@ export interface BuildSubMcpWrapperToolsArgs {
   readonly config: Pick<AppConfig, 'JWT_SECRET' | 'JWT_ISSUER'>;
   /** Optional Auth-Enricher fuer per-User-Header. */
   readonly authEnricher?: SubMcpAuthEnricher;
+  /** Optional Subscription-Check fuer Defense-in-Depth (Sprint 2026-05-18). */
+  readonly subscriptionCheck?: (
+    userId: string,
+    subMcpName: string,
+  ) => Promise<boolean>;
 }
 
 export interface BuildSubMcpWrapperToolsResult {
@@ -164,6 +193,7 @@ export async function buildSubMcpWrapperTools(
       tools,
       skipped,
       args.authEnricher,
+      args.subscriptionCheck,
     );
     perSubMcp.set(cfg.name, count);
   }
@@ -177,6 +207,7 @@ function appendToolsForServer(
   out: Tool<unknown, unknown>[],
   skipped: string[],
   authEnricher?: SubMcpAuthEnricher,
+  subscriptionCheck?: (userId: string, subMcpName: string) => Promise<boolean>,
 ): number {
   if (!cfg.toolsCache || cfg.toolsCache.length === 0) return 0;
   const { defs, skipped: defSkipped } = buildForwardedToolDefs(cfg);
@@ -188,6 +219,7 @@ function appendToolsForServer(
         forwarder,
         config,
         ...(authEnricher ? { authEnricher } : {}),
+        ...(subscriptionCheck ? { subscriptionCheck } : {}),
       }),
     );
   }

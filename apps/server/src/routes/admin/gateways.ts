@@ -51,6 +51,13 @@ export interface AdminGatewayRouteDeps {
   readonly fetchImpl?: typeof fetch;
   /** OAuth-Bearer-Enricher fuer Sub-MCP-Discovery (GitHub etc.). */
   readonly authEnricher?: import('../../services/sub-mcp-auth-enricher.js').SubMcpAuthEnricher;
+  /** Optional Per-User-Tool-Cache fuer OAuth-Sub-MCPs (Sprint 2026-05-18). */
+  readonly userToolCache?: import('../../services/user-sub-mcp-tool-cache.js').UserSubMcpToolCacheService;
+  /** Optional Subscription-Check fuer Defense-in-Depth. */
+  readonly subscriptionCheck?: (
+    userId: string,
+    subMcpName: string,
+  ) => Promise<boolean>;
 }
 
 export function adminGatewayRoutes(deps: AdminGatewayRouteDeps): Hono<AppBindings> {
@@ -77,6 +84,8 @@ export function adminGatewayRoutes(deps: AdminGatewayRouteDeps): Hono<AppBinding
         ...(body.name ? { only: [body.name] } : {}),
         ...(deps.authEnricher ? { authEnricher: deps.authEnricher } : {}),
         ...(principal?.userId ? { operatorUserId: principal.userId } : {}),
+        ...(deps.userToolCache ? { userToolCache: deps.userToolCache } : {}),
+        ...(deps.subscriptionCheck ? { subscriptionCheck: deps.subscriptionCheck } : {}),
       };
       try {
         const out = await applyGatewayDiscovery(applyArgs);
