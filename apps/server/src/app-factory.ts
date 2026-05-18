@@ -816,11 +816,14 @@ export async function createApp(
     app.use('/mcp/*', authMiddleware(server, { required: true }), costGate);
   }
 
-  // Phase A (PLAN-tool-defaults-v2.md): Hub-side Tool-Defaults-Resolver.
+  // Phase A+B (PLAN-tool-defaults-v2.md): Hub-side Tool-Defaults-Resolver.
   // Mergt Per-User-Defaults aus user_server_tool_defaults in jeden Tool-Call,
   // bevor registry.dispatch laeuft. Args-WIN. WYSIWYS via defaults_applied
-  // in pending_approvals.
-  const toolDefaultsResolver = createToolDefaultsService({ db: server.db });
+  // in pending_approvals. Phase B: + Orphan-Detection via schemaFields-Callback.
+  const toolDefaultsResolver = createToolDefaultsService({
+    db: server.db,
+    schemaFields: (toolName) => extractTopLevelSchemaFields(registry, toolName),
+  });
 
   // MCP-Protocol-Routes — Auth pro-Route via mcpTransport.
   // Per-User-Subscription-Filter: tools/list zeigt jedem User nur die
@@ -870,8 +873,13 @@ export async function createApp(
       })
     : undefined;
   // Phase D UX-Refactor: per-Tool Defaults pro Server (Mig 0024).
+  // Phase B finalize (PLAN-tool-defaults-v2.md): schemaValidate-Callback
+  // gegen das Zod-Schema des Tools — verhindert dass User unzulaessige
+  // Werte als Default speichert (z.B. max_results=200 wenn Schema max=100).
   const userServerToolDefaultsService = createUserServerToolDefaultsService({
     db: server.db,
+    schemaValidate: (toolName, fieldName, value) =>
+      validateAgainstToolSchema(registry, toolName, fieldName, value),
   });
 
   app.route(
@@ -1411,6 +1419,89 @@ async function buildBootKcSigner(
     audience: 'mcp-knowledge2',
     ...(kid ? { kid } : {}),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Tool-Defaults v2 (Phase B) — Schema-Introspection-Helper.
+// ---------------------------------------------------------------------------
+
+/**
+ * Liest die top-level Property-Namen aus dem `inputSchema` eines Tools
+ * (Plan §10 Entscheidung ⑤ — Orphan-Detection). Returnt `null` wenn das
+ * Schema kein Zod-Object ist (z.B. `z.unknown()` bei kc_wrappers) — Resolver
+ * skipt Orphan-Detection dann.
+ *
+ * Best-effort gegen Zod 3+ `_def.shape`-API; bei Schema-Versions-Drift
+ * fallen wir auf null zurueck statt zu werfen.
+ */
+function extractTopLevelSchemaFields(
+  registry: ToolRegistry,
+  toolName: string,
+): ReadonlySet<string> | null {
+  const tool = registry.get(toolName);
+  if (!tool) return null;
+  const schema = tool.inputSchema as unknown as {
+    _def?: { shape?: () => Record<string, unknown> | undefined };
+  };
+  const shapeFn = schema._def?.shape;
+  if (typeof shapeFn !== 'function') return null;
+  try {
+    const shape = shapeFn();
+    if (!shape || typeof shape !== 'object') return null;
+    return new Set(Object.keys(shape));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Phase B finalize (PLAN-tool-defaults-v2.md): validiert `value` gegen das
+ * Tool-Schema fuer `fieldName`.
+ *
+ * Returns:
+ *   - `null`            — value passt zum Schema (oder Schema nicht analysierbar)
+ *   - `string`          — User-facing Fehlertext (Service mappt auf 400)
+ *
+ * Fail-OPEN bei nicht-analysierbarem Schema (z.unknown / kc_wrappers /
+ * unbekanntes Tool) — Phase-A-Behavior bleibt erhalten.
+ */
+function validateAgainstToolSchema(
+  registry: ToolRegistry,
+  toolName: string,
+  fieldName: string,
+  value: unknown,
+): string | null {
+  const tool = registry.get(toolName);
+  if (!tool) return null; // unknown tool → no validation, fail-open
+  const schema = tool.inputSchema as unknown as {
+    _def?: { shape?: () => Record<string, unknown> | undefined };
+  };
+  const shapeFn = schema._def?.shape;
+  if (typeof shapeFn !== 'function') return null; // z.unknown / non-object
+  let fieldSchema: unknown;
+  try {
+    const shape = shapeFn();
+    if (!shape || typeof shape !== 'object') return null;
+    fieldSchema = (shape as Record<string, unknown>)[fieldName];
+  } catch {
+    return null;
+  }
+  if (!fieldSchema) return `field '${fieldName}' is not declared in tool schema`;
+  // Zod-Schemas haben `.safeParse`. Defense-in-depth: typeof-Check vor Aufruf.
+  const maybeSafeParse = (fieldSchema as { safeParse?: (v: unknown) => unknown }).safeParse;
+  if (typeof maybeSafeParse !== 'function') return null;
+  const result = (
+    fieldSchema as {
+      safeParse: (v: unknown) => {
+        success: boolean;
+        error?: { issues?: Array<{ message?: string }> };
+      };
+    }
+  ).safeParse(value);
+  if (result.success) return null;
+  const issues = result.error?.issues ?? [];
+  const first = issues[0]?.message ?? 'value does not match schema';
+  return first;
 }
 
 // ---------------------------------------------------------------------------

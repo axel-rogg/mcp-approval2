@@ -280,6 +280,44 @@ describe('UserServerToolDefaultsService.set (Phase B)', () => {
     expect(all).toHaveLength(2);
   });
 
+  it('schemaValidate callback rejects when value violates schema', async () => {
+    const svc = createUserServerToolDefaultsService({
+      db: makeMemoryDb(),
+      schemaValidate: (_tool, field, value) => {
+        if (field === 'max_results' && typeof value === 'number' && value > 100) {
+          return 'max 100 in this schema';
+        }
+        return null;
+      },
+    });
+    await expect(
+      svc.set({
+        userId: 'u1',
+        subMcpName: 'gws',
+        toolName: 'gws.calendar.list',
+        fieldName: 'max_results',
+        value: 250,
+        valueKind: 'number',
+      }),
+    ).rejects.toBeInstanceOf(HttpError);
+  });
+
+  it('schemaValidate accepts when callback returns null', async () => {
+    const svc = createUserServerToolDefaultsService({
+      db: makeMemoryDb(),
+      schemaValidate: () => null, // permissive
+    });
+    const out = await svc.set({
+      userId: 'u1',
+      subMcpName: 'gws',
+      toolName: 'gws.calendar.list',
+      fieldName: 'max_results',
+      value: 25,
+      valueKind: 'number',
+    });
+    expect(out.value).toBe(25);
+  });
+
   it('markOrphan sets + unsets orphan_since', async () => {
     const svc = createUserServerToolDefaultsService({ db: makeMemoryDb() });
     await svc.set({

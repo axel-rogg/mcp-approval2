@@ -267,15 +267,38 @@ function assertNotSecretField(fieldName: string, valueKind: ToolDefaultValueKind
 // Service-Factory
 // ---------------------------------------------------------------------------
 
+/**
+ * Optional Schema-Validation-Callback (Phase B finalize): wird beim `set()`
+ * gerufen, prueft `value` gegen das Tool-`inputSchema` fuer `fieldName`.
+ * Returnt `null` wenn ok, oder einen Fehlertext (User-facing).
+ *
+ * App-Factory injiziert einen Callback der die `ToolRegistry` befragt und
+ * gegen Zod-`shape[fieldName].safeParse(value)` validiert. Tools mit
+ * `z.unknown()`-Schema (kc_wrappers) lassen alles durch.
+ *
+ * Plan-Ref: PLAN-tool-defaults-v2.md Phase B §5 "validateAgainstSchema".
+ */
+export type SchemaValidateCallback = (
+  toolName: string,
+  fieldName: string,
+  value: unknown,
+) => string | null;
+
 export interface UserServerToolDefaultsServiceOpts {
   readonly db: DbAdapter;
   readonly now?: () => number;
+  /**
+   * Optional: validiert pro `set()`-Call den Wert gegen das Tool-Schema.
+   * Wenn nicht gesetzt, faellt der Service auf `valueKind`-only-Check
+   * zurueck (Phase-B-baseline).
+   */
+  readonly schemaValidate?: SchemaValidateCallback;
 }
 
 export function createUserServerToolDefaultsService(
   opts: UserServerToolDefaultsServiceOpts,
 ): UserServerToolDefaultsService {
-  const { db } = opts;
+  const { db, schemaValidate } = opts;
   const now = opts.now ?? (() => Date.now());
 
   return {
@@ -312,6 +335,17 @@ export function createUserServerToolDefaultsService(
       const kind: ToolDefaultValueKind = args.valueKind ?? inferValueKind(args.value);
       assertTypeMatchesKind(args.value, kind);
       assertNotSecretField(args.fieldName, kind);
+      // Phase B finalize: Schema-Validation gegen Tool-inputSchema.
+      // Callback liefert null = ok, sonst User-facing-Fehlertext.
+      if (schemaValidate) {
+        const violation = schemaValidate(args.toolName, args.fieldName, args.value);
+        if (violation !== null) {
+          throw HttpError.badRequest(
+            'invalid_request',
+            `value for '${args.toolName}.${args.fieldName}' does not match the tool schema: ${violation}`,
+          );
+        }
+      }
       const isSecret = args.isSecret ?? false;
       const ts = now();
       const valueText = stringifyForLegacy(args.value, kind);
