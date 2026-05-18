@@ -2,7 +2,11 @@ name: CI
 
 on:
   push:
-    branches: ['**']
+    # Nur main — pull_request-Trigger fuengt PR-Branches ab (Dependabot, Feature-
+    # Branches). Frueher: '**' = jeder Dependabot-Push triggerte CI doppelt
+    # (push + pull_request). Mit 9+ offenen Dependabot-PRs ergibt das einen
+    # Pipeline-Burst pro Bot-Welle.
+    branches: [main]
     # paths-ignore: rein-dokumentarische / infra-orthogonale Aenderungen brauchen
     # kein CI (Postgres+OpenBao-Container, build, typecheck, lint, test). Whitelist
     # ist riskanter — neue Code-Pfade wuerden lautlos uebersprungen.
