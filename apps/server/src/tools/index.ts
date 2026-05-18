@@ -84,6 +84,11 @@ import { registerGatewayMgmtTools } from './gateway-mgmt-tools.js';
 import { makeCapabilitySearchTool } from './capability-search-tool.js';
 import { makeFederatedSearchTool } from './federated-search-tool.js';
 import { makeToolHelpTool, type ToolHelpDeps } from './tool-help.js';
+import {
+  makeHintSetTool,
+  makeHintRemoveTool,
+  type HintToolsDeps,
+} from './hint-tools.js';
 
 export interface ToolDeps {
   readonly knowledge: KnowledgeService;
@@ -118,6 +123,11 @@ export interface ToolDeps {
    *   - toolDefaultProfiles (active-profile-Lookup + available_profiles)
    */
   readonly toolHelp?: Omit<ToolHelpDeps, 'registry'>;
+  /**
+   * Phase E (PLAN-tool-defaults-v2.md): Hint-MCP-Tools (write+Approval).
+   * `tool_defaults.hint.set` und `.remove`.
+   */
+  readonly hintTools?: HintToolsDeps;
 }
 
 export function registerCoreTools(registry: ToolRegistry, deps: ToolDeps): void {
@@ -225,6 +235,13 @@ export function registerCoreTools(registry: ToolRegistry, deps: ToolDeps): void 
         ...deps.toolHelp,
       }),
     );
+  }
+
+  // Phase E (PLAN-tool-defaults-v2.md): Hint-Tools (write+Approval) fuer
+  // LLM-Pfad. PWA nutzt eigene REST-Endpoints.
+  if (deps.hintTools) {
+    registry.register(makeHintSetTool(deps.hintTools));
+    registry.register(makeHintRemoveTool(deps.hintTools));
   }
 
   // Gateway-Mgmt (11 Tools) — only if SubMcpRegistry + db are wired.

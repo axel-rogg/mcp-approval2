@@ -826,13 +826,15 @@ async function renderDefaultsTab(
     return;
   }
 
-  // Profile + Defaults parallel laden.
+  // Profile + Defaults + Hints parallel laden.
   let profiles: ReadonlyArray<import('./api.js').ToolDefaultProfile> = [];
   let allDefaults: ReadonlyArray<import('./api.js').ToolDefault> = [];
+  let allHints: ReadonlyArray<import('./api.js').ToolDefaultHint> = [];
   try {
-    [profiles, allDefaults] = await Promise.all([
+    [profiles, allDefaults, allHints] = await Promise.all([
       api.listProfiles(serverName),
       api.listToolDefaults(serverName),
+      api.listHints(serverName).catch(() => []),
     ]);
   } catch (err) {
     if (err instanceof ApiError && err.status === 401) {
@@ -840,6 +842,13 @@ async function renderDefaultsTab(
       return;
     }
     // 404 = nichts gespeichert; weiter mit leerem State.
+  }
+
+  // Map: toolName -> fieldName -> hintText (Phase E).
+  const hintsByTool = new Map<string, Map<string, string>>();
+  for (const h of allHints) {
+    if (!hintsByTool.has(h.toolName)) hintsByTool.set(h.toolName, new Map());
+    hintsByTool.get(h.toolName)!.set(h.fieldName, h.hintText);
   }
 
   // Aktives Profil bestimmen — fallback 'default' wenn keines existiert.
@@ -870,6 +879,7 @@ async function renderDefaultsTab(
       tool.description ?? '',
       (tool.inputSchema ?? null) as Record<string, unknown> | null,
       byTool.get(tool.name) ?? [],
+      hintsByTool.get(tool.name) ?? new Map(),
     );
     toolsHost.appendChild(block);
   }
@@ -1098,6 +1108,7 @@ function renderToolDefaultsBlock(
   toolDesc: string,
   toolSchema: Record<string, unknown> | null,
   existing: ReadonlyArray<import('./api.js').ToolDefault>,
+  hints: ReadonlyMap<string, string>,
 ): HTMLElement {
   const wrap = document.createElement('details');
   wrap.className = 'tool-defaults-tool card-section';
@@ -1132,11 +1143,35 @@ function renderToolDefaultsBlock(
   const usedFieldNames = new Set<string>();
   for (const def of existing) {
     list.appendChild(
-      renderDefaultRowTyped(api, serverName, toolName, def, schemaFieldMap.get(def.fieldName) ?? null),
+      renderDefaultRowTyped(
+        api,
+        serverName,
+        toolName,
+        def,
+        schemaFieldMap.get(def.fieldName) ?? null,
+        hints.get(def.fieldName) ?? null,
+      ),
     );
     usedFieldNames.add(def.fieldName);
   }
   wrap.appendChild(list);
+
+  // Phase E: Hints fuer Felder OHNE Default (User kann Hint setzen bevor er
+  // einen Default speichert — z.B. um Doku zu hinterlegen).
+  const fieldsWithHintOnly = [...hints.keys()].filter(
+    (f) => !usedFieldNames.has(f),
+  );
+  if (fieldsWithHintOnly.length > 0) {
+    const subhead = document.createElement('p');
+    subhead.className = 'muted small';
+    subhead.textContent = 'Hinweise (ohne aktiven Default):';
+    wrap.appendChild(subhead);
+    for (const fieldName of fieldsWithHintOnly) {
+      list.appendChild(
+        renderHintOnlyRow(api, serverName, toolName, fieldName, hints.get(fieldName) ?? ''),
+      );
+    }
+  }
 
   // Field-Picker statt freier text-input
   if (schemaFields.length === 0) {
@@ -1274,6 +1309,7 @@ function renderDefaultRowTyped(
   toolName: string,
   def: import('./api.js').ToolDefault,
   field: import('./components/schema-form.js').SchemaField | null,
+  currentHintText: string | null,
 ): HTMLElement {
   const row = document.createElement('div');
   row.className = 'tool-defaults-row';
@@ -1311,6 +1347,10 @@ function renderDefaultRowTyped(
   void field; // referenced for future inline edit
   void api;
 
+  // Phase E: 💡-Hint-Button (Inline-Editor)
+  const hintBtn = renderHintButton(api, serverName, toolName, def.fieldName, currentHintText);
+  row.appendChild(hintBtn);
+
   const delBtn = document.createElement('button');
   delBtn.type = 'button';
   delBtn.className = 'btn btn-secondary btn-small btn-danger';
@@ -1334,6 +1374,156 @@ function renderDefaultRowTyped(
   });
   row.appendChild(delBtn);
 
+  return row;
+}
+
+/**
+ * Phase E: 💡-Icon-Button neben einem Field. Klick öffnet ein kleines
+ * Inline-Modal mit `<textarea>` (max 500 chars). Empty-String = Hint löschen.
+ */
+function renderHintButton(
+  api: ApiClient,
+  serverName: string,
+  toolName: string,
+  fieldName: string,
+  currentHintText: string | null,
+): HTMLElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn btn-secondary btn-small tool-defaults-hint-btn';
+  btn.textContent = currentHintText ? '💡' : '💭';
+  btn.title = currentHintText ? `Hint: "${currentHintText}"` : 'Hint hinzufügen';
+  btn.addEventListener('click', () =>
+    openHintEditorModal(api, serverName, toolName, fieldName, currentHintText ?? ''),
+  );
+  return btn;
+}
+
+function openHintEditorModal(
+  api: ApiClient,
+  serverName: string,
+  toolName: string,
+  fieldName: string,
+  currentHintText: string,
+): void {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  const modal = document.createElement('div');
+  modal.className = 'modal card';
+
+  const h = document.createElement('h3');
+  h.textContent = `Hint: ${toolName} / ${fieldName}`;
+  modal.appendChild(h);
+
+  const desc = document.createElement('p');
+  desc.className = 'muted small';
+  desc.textContent =
+    'Frei-Text-Beschreibung dieses Felds (≤500 chars). Wird beim LLM-Pfad ' +
+    'als Hint mitgeliefert (`tools.help`) und optional beim Elicit-Hook gezeigt.';
+  modal.appendChild(desc);
+
+  const ta = document.createElement('textarea');
+  ta.rows = 4;
+  ta.maxLength = 500;
+  ta.value = currentHintText;
+  ta.placeholder = 'z.B. "0.0 deterministisch .. 2.0 wild"';
+  ta.style.width = '100%';
+  modal.appendChild(ta);
+
+  const counter = document.createElement('div');
+  counter.className = 'muted small';
+  counter.textContent = `${ta.value.length} / 500`;
+  ta.addEventListener('input', () => {
+    counter.textContent = `${ta.value.length} / 500`;
+  });
+  modal.appendChild(counter);
+
+  const actions = document.createElement('div');
+  actions.className = 'row form-actions';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'btn btn-secondary';
+  cancel.textContent = 'Abbrechen';
+  cancel.addEventListener('click', () => overlay.remove());
+  actions.appendChild(cancel);
+
+  if (currentHintText) {
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'btn btn-secondary btn-danger';
+    del.textContent = 'Löschen';
+    del.addEventListener('click', async () => {
+      try {
+        await api.deleteHint({ serverName, toolName, fieldName });
+        showToast('Hint entfernt.', 'success');
+        overlay.remove();
+        window.dispatchEvent(new CustomEvent('tool-defaults:refresh'));
+      } catch (err) {
+        showToast(`Fehler: ${(err as Error).message}`, 'error');
+      }
+    });
+    actions.appendChild(del);
+  }
+
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'btn';
+  save.textContent = 'Speichern';
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    try {
+      await api.setHint({
+        serverName,
+        toolName,
+        fieldName,
+        hintText: ta.value,
+      });
+      showToast('Hint gespeichert.', 'success');
+      overlay.remove();
+      window.dispatchEvent(new CustomEvent('tool-defaults:refresh'));
+    } catch (err) {
+      save.disabled = false;
+      showToast(`Fehler: ${(err as Error).message}`, 'error');
+    }
+  });
+  actions.appendChild(save);
+  modal.appendChild(actions);
+
+  overlay.appendChild(modal);
+  overlay.addEventListener('click', (ev) => {
+    if (ev.target === overlay) overlay.remove();
+  });
+  document.body.appendChild(overlay);
+  ta.focus();
+}
+
+/**
+ * Phase E: Hint-only-Row. Wird gezeigt für Felder die einen Hint haben, aber
+ * keinen Default — z.B. "Felder die ich dokumentieren wollte aber noch nicht
+ * benutze".
+ */
+function renderHintOnlyRow(
+  api: ApiClient,
+  serverName: string,
+  toolName: string,
+  fieldName: string,
+  hintText: string,
+): HTMLElement {
+  const row = document.createElement('div');
+  row.className = 'tool-defaults-row tool-defaults-row-hint-only';
+  row.dataset['field'] = fieldName;
+
+  const lbl = document.createElement('label');
+  lbl.className = 'tool-defaults-field-name muted';
+  lbl.textContent = fieldName;
+  row.appendChild(lbl);
+
+  const hintEl = document.createElement('span');
+  hintEl.className = 'tool-defaults-hint-text muted small';
+  hintEl.textContent = `💡 "${hintText}"`;
+  row.appendChild(hintEl);
+
+  row.appendChild(renderHintButton(api, serverName, toolName, fieldName, hintText));
   return row;
 }
 

@@ -27,6 +27,7 @@ import type { UserServerConfigService } from '../../services/user-server-config.
 import type { UserServerOAuthService } from '../../services/user-server-oauth.js';
 import type { UserServerToolDefaultsService } from '../../services/user-server-tool-defaults.js';
 import type { ToolDefaultProfilesService } from '../../services/tool-default-profiles.js';
+import type { ToolDefaultHintsService } from '../../services/tool-default-hints.js';
 import type { UserDiscoveryArgs } from '../../mcp/gateway/discovery.js';
 
 /**
@@ -61,6 +62,11 @@ export interface MyServersRouteDeps {
    * gesetzt, sind die default-profiles-Endpoints nicht verfuegbar.
    */
   readonly toolDefaultProfiles?: ToolDefaultProfilesService;
+  /**
+   * Phase E (PLAN-tool-defaults-v2.md): Hint-CRUD pro Server. Wenn nicht
+   * gesetzt, sind die tool-hints-Endpoints nicht verfuegbar.
+   */
+  readonly toolDefaultHints?: ToolDefaultHintsService;
   /**
    * Optional: nach erfolgreichem OAuth-callback per-User-Discovery
    * triggern. wired in app-factory zu refreshUserSubMcpToolCache().
@@ -617,6 +623,80 @@ export function myServersRoutes(deps: MyServersRouteDeps): Hono<AppBindings> {
         throw HttpError.badRequest('invalid_request', `invalid profile name '${profile}'`);
       }
       await profilesSvc.delete(user.userId, name, profile);
+      return c.body(null, 204);
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Phase E (PLAN-tool-defaults-v2.md): Tool-Hints (frei-Text)
+  // ─────────────────────────────────────────────────────────────────────
+  // GET    /v1/me/servers/:srv/tool-hints
+  // PUT    /v1/me/servers/:srv/tool-hints/:tool/:field   body: {hintText}
+  // DELETE /v1/me/servers/:srv/tool-hints/:tool/:field
+  if (deps.toolDefaultHints) {
+    const hintsSvc = deps.toolDefaultHints;
+    const HINT_TOOL_RE = /^[a-zA-Z_][a-zA-Z0-9_.:-]{0,127}$/;
+    const HINT_FIELD_RE = /^[a-zA-Z_][a-zA-Z0-9_]{0,63}$/;
+    const HintPutBody = z
+      .object({
+        hintText: z.string().max(500),
+      })
+      .strict();
+
+    app.get('/v1/me/servers/:name/tool-hints', guard, async (c) => {
+      const user = c.get('user');
+      if (!user) throw HttpError.unauthorized('authentication required');
+      const name = c.req.param('name');
+      const hints = await hintsSvc.listByServer(user.userId, name);
+      return c.json({ hints });
+    });
+
+    app.put(
+      '/v1/me/servers/:name/tool-hints/:tool/:field',
+      guard,
+      zValidator('json', HintPutBody),
+      async (c) => {
+        const user = c.get('user');
+        if (!user) throw HttpError.unauthorized('authentication required');
+        const name = c.req.param('name');
+        const tool = c.req.param('tool');
+        const field = c.req.param('field');
+        if (!HINT_TOOL_RE.test(tool)) {
+          throw HttpError.badRequest('invalid_request', `invalid tool name '${tool}'`);
+        }
+        if (!HINT_FIELD_RE.test(field)) {
+          throw HttpError.badRequest('invalid_request', `invalid field name '${field}'`);
+        }
+        const body = c.req.valid('json');
+        // Empty-String-Convention: PUT mit hintText='' = remove.
+        if (body.hintText === '') {
+          await hintsSvc.remove(user.userId, name, tool, field);
+          return c.body(null, 204);
+        }
+        const entry = await hintsSvc.set({
+          userId: user.userId,
+          subMcpName: name,
+          toolName: tool,
+          fieldName: field,
+          hintText: body.hintText,
+        });
+        return c.json(entry);
+      },
+    );
+
+    app.delete('/v1/me/servers/:name/tool-hints/:tool/:field', guard, async (c) => {
+      const user = c.get('user');
+      if (!user) throw HttpError.unauthorized('authentication required');
+      const name = c.req.param('name');
+      const tool = c.req.param('tool');
+      const field = c.req.param('field');
+      if (!HINT_TOOL_RE.test(tool)) {
+        throw HttpError.badRequest('invalid_request', `invalid tool name '${tool}'`);
+      }
+      if (!HINT_FIELD_RE.test(field)) {
+        throw HttpError.badRequest('invalid_request', `invalid field name '${field}'`);
+      }
+      await hintsSvc.remove(user.userId, name, tool, field);
       return c.body(null, 204);
     });
   }

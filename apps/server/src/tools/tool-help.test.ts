@@ -27,6 +27,10 @@ import type {
   ToolDefaultsService,
   ToolDefaultsSummary,
 } from '../services/tool-defaults.js';
+import type {
+  ToolDefaultHint,
+  ToolDefaultHintsService,
+} from '../services/tool-default-hints.js';
 
 function makeStubs(opts: {
   profiles?: ReadonlyArray<ToolDefaultProfile>;
@@ -254,6 +258,54 @@ describe('tools.help', () => {
     expect(out.defaults.effective).toEqual({ max_results: 25 });
     expect(out.defaults.orphan_fields).toEqual(['gone_field']);
     expect(out.defaults.fields_with_defaults).toEqual(['max_results']);
+  });
+
+  it('Phase E: returns hints[] when hints-service is wired', async () => {
+    const reg = new ToolRegistry();
+    reg.register({
+      name: 'gws.calendar.list',
+      description: 'List events',
+      sensitivity: 'read',
+      inputSchema: z.object({ max_results: z.number() }),
+      async execute() {
+        return [];
+      },
+    });
+    const baseDeps = makeStubs({});
+    const hintsStub: ToolDefaultHintsService = {
+      async listByServer() {
+        return [];
+      },
+      async listByTool() {
+        return [
+          {
+            userId: 'u1',
+            subMcpName: 'gws',
+            toolName: 'gws.calendar.list',
+            fieldName: 'max_results',
+            hintText: '1..100, höher = teurer',
+            createdAt: 1,
+            updatedAt: 1,
+          } satisfies ToolDefaultHint,
+        ];
+      },
+      async hasAnyForTool() {
+        return true;
+      },
+      async set() {
+        throw new Error('not used');
+      },
+      async remove() {
+        throw new Error('not used');
+      },
+    };
+    const tool = makeToolHelpTool({
+      registry: reg,
+      ...baseDeps,
+      toolDefaultHints: hintsStub,
+    });
+    const out = await tool.execute(makeCtx(), { name: 'gws.calendar.list' });
+    expect(out.hints).toEqual({ max_results: '1..100, höher = teurer' });
   });
 
   it('adds implicit default profile when DB has none', async () => {

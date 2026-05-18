@@ -72,6 +72,9 @@ import { createUserServerOAuthService } from './services/user-server-oauth.js';
 import { createUserServerToolDefaultsService } from './services/user-server-tool-defaults.js';
 import { createToolDefaultsService } from './services/tool-defaults.js';
 import { createToolDefaultProfilesService } from './services/tool-default-profiles.js';
+import { createToolDefaultHintsService } from './services/tool-default-hints.js';
+import { createUserSettingsService } from './services/user-settings.js';
+import { mySettingsRoutes } from './routes/me/settings.js';
 import { createSubMcpAuthEnricher } from './services/sub-mcp-auth-enricher.js';
 import { createUserSubMcpToolCacheService } from './services/user-sub-mcp-tool-cache.js';
 import { gdprRoutes } from './routes/gdpr.js';
@@ -551,6 +554,14 @@ export async function createApp(
     schemaFields: (toolName) => extractTopLevelSchemaFields(registry, toolName),
     profiles: earlyToolDefaultProfilesService,
   });
+  // Phase E: Hints + UserSettings — frueh damit tools.help + Hint-MCP-Tools
+  // bei der Registry-Population schon verkabelt sind.
+  const earlyToolDefaultHintsService = createToolDefaultHintsService({
+    db: server.db,
+  });
+  const earlyUserSettingsService = createUserSettingsService({
+    db: server.db,
+  });
 
   if (!deps.skipToolRegistration) {
     populateToolRegistry(registry, {
@@ -577,10 +588,24 @@ export async function createApp(
         ? { federatedSearch: optionalServices.federatedSearch }
         : {}),
       // Phase D: tools.help liest die hier vorgebauten Tool-Defaults-Services.
+      // Phase E: + Hints-Service damit hints[] befuellt wird.
       toolHelp: {
         toolDefaults: earlyToolDefaultsResolver,
         userServerToolDefaults: earlyUserServerToolDefaultsService,
         toolDefaultProfiles: earlyToolDefaultProfilesService,
+        toolDefaultHints: earlyToolDefaultHintsService,
+        subMcpServerNames: async () => {
+          try {
+            const all = await subMcpReg.listAll();
+            return new Set(all.map((s) => s.name));
+          } catch {
+            return new Set<string>();
+          }
+        },
+      },
+      // Phase E: Hint-MCP-Tools (write+Approval).
+      hintTools: {
+        hints: earlyToolDefaultHintsService,
         subMcpServerNames: async () => {
           try {
             const all = await subMcpReg.listAll();
@@ -881,6 +906,8 @@ export async function createApp(
         }
       },
       toolDefaults: toolDefaultsResolver,
+      toolDefaultHints: earlyToolDefaultHintsService,
+      userSettings: earlyUserSettingsService,
     }),
   );
 
@@ -938,6 +965,7 @@ export async function createApp(
       ...(userServerOAuthService ? { oauth: userServerOAuthService } : {}),
       toolDefaults: userServerToolDefaultsService,
       toolDefaultProfiles: toolDefaultProfilesService,
+      toolDefaultHints: earlyToolDefaultHintsService,
       // Post-OAuth-Hook: nach erfolgreichem callback applyGatewayDiscovery
       // triggern. Das macht in einem Schritt:
       //   1. tools/list-Roundtrip mit User-Token (operatorUserId)
@@ -967,6 +995,18 @@ export async function createApp(
             },
           }
         : {}),
+    }),
+  );
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Phase E (PLAN-tool-defaults-v2.md): User-Settings-Route fuer
+  // elicit_on_missing_defaults und kuenftige Per-User-Toggles.
+  // ─────────────────────────────────────────────────────────────────────
+  app.route(
+    '/',
+    mySettingsRoutes({
+      server,
+      settings: earlyUserSettingsService,
     }),
   );
 
@@ -1219,6 +1259,8 @@ interface PopulateDeps {
    * Tests + Boot-ohne-Profile-Service durchlaufen.
    */
   readonly toolHelp?: import('./tools/index.js').ToolDeps['toolHelp'];
+  /** Phase E: Hint-MCP-Tools-Deps. */
+  readonly hintTools?: import('./tools/index.js').ToolDeps['hintTools'];
 }
 
 /**
@@ -1253,6 +1295,7 @@ function populateToolRegistry(registry: ToolRegistry, deps: PopulateDeps): void 
           ? { federatedSearch: deps.federatedSearch }
           : {}),
         ...(deps.toolHelp ? { toolHelp: deps.toolHelp } : {}),
+        ...(deps.hintTools ? { hintTools: deps.hintTools } : {}),
       });
     }
     return;

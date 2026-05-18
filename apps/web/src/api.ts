@@ -135,6 +135,16 @@ export type ToolDefaultValueKind =
   | 'boolean'
   | 'enum';
 
+export interface ToolDefaultHint {
+  readonly userId: string;
+  readonly subMcpName: string;
+  readonly toolName: string;
+  readonly fieldName: string;
+  readonly hintText: string;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
 export interface ToolDefaultProfile {
   readonly userId: string;
   readonly subMcpName: string;
@@ -280,6 +290,24 @@ export interface ApiClient {
   activateProfile(serverName: string, profileName: string): Promise<void>;
   /** Phase C: Profil + alle Defaults loeschen. Refuse wenn aktiv. */
   deleteProfile(serverName: string, profileName: string): Promise<void>;
+  /** Phase E: Hints fuer alle Tools eines Servers listen. */
+  listHints(serverName: string): Promise<ReadonlyArray<ToolDefaultHint>>;
+  /**
+   * Phase E: Hint setzen oder loeschen (empty-string = delete, Convention
+   * mit Backend-Route).
+   */
+  setHint(args: {
+    serverName: string;
+    toolName: string;
+    fieldName: string;
+    hintText: string;
+  }): Promise<ToolDefaultHint | null>;
+  /** Phase E: Hint explizit loeschen. */
+  deleteHint(args: {
+    serverName: string;
+    toolName: string;
+    fieldName: string;
+  }): Promise<void>;
 
   // Credentials
   listCredentials(): Promise<CredentialMeta[]>;
@@ -659,6 +687,33 @@ export function createApiClient(baseUrl?: string): ApiClient {
     async deleteProfile(serverName, profileName) {
       await request<void>(
         `/v1/me/servers/${encodeURIComponent(serverName)}/default-profiles/${encodeURIComponent(profileName)}`,
+        { method: 'DELETE' },
+      );
+    },
+
+    async listHints(serverName) {
+      const out = await request<{ hints: ToolDefaultHint[] }>(
+        `/v1/me/servers/${encodeURIComponent(serverName)}/tool-hints`,
+      );
+      return out.hints;
+    },
+
+    async setHint(args) {
+      // Empty-String-Convention: PUT mit hintText='' → 204 (Backend delete).
+      const path = `/v1/me/servers/${encodeURIComponent(args.serverName)}/tool-hints/${encodeURIComponent(args.toolName)}/${encodeURIComponent(args.fieldName)}`;
+      if (args.hintText === '') {
+        await request<void>(path, { method: 'PUT', body: { hintText: '' } });
+        return null;
+      }
+      return await request<ToolDefaultHint>(path, {
+        method: 'PUT',
+        body: { hintText: args.hintText },
+      });
+    },
+
+    async deleteHint(args) {
+      await request<void>(
+        `/v1/me/servers/${encodeURIComponent(args.serverName)}/tool-hints/${encodeURIComponent(args.toolName)}/${encodeURIComponent(args.fieldName)}`,
         { method: 'DELETE' },
       );
     },

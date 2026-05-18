@@ -46,6 +46,9 @@ import { ApprovalRequiredError, type AuditService, type ToolContext } from './to
 import { enqueueApproval } from './approval-resume.js';
 import type { ApprovalService } from '../../services/approvals.js';
 import type { ToolDefaultsService } from '../../services/tool-defaults.js';
+import type { ToolDefaultHintsService } from '../../services/tool-default-hints.js';
+import type { UserSettingsService } from '../../services/user-settings.js';
+import { SETTING_ELICIT_ON_MISSING_DEFAULTS } from '../../services/user-settings.js';
 import { PrfRequiredError } from '../../services/credentials.js';
 import {
   JsonRpcErrorCode,
@@ -112,6 +115,17 @@ export interface McpTransportOptions {
    * Wenn `undefined` → Transport laeuft wie Pre-Phase-A (kein Merge).
    */
   readonly toolDefaults?: ToolDefaultsService;
+  /**
+   * Phase E (PLAN-tool-defaults-v2.md): Hints-Service + UserSettings-Service.
+   * Wenn beide gesetzt, kann der Transport bei DANGER-Tools ohne aktiven
+   * Default und mit gespeicherten Hints den MCP-Elicitation-Pfad triggern
+   * (statt direkter Approval). Capability-checked: Client muss
+   * `params._meta.elicit_capability=true` mitgeben + User-Setting
+   * `elicit_on_missing_defaults` muss TRUE sein (Plan-Entscheidung ②).
+   * Wenn nicht gesetzt → klassischer Approval-Pfad.
+   */
+  readonly toolDefaultHints?: ToolDefaultHintsService;
+  readonly userSettings?: UserSettingsService;
 }
 
 // ============================================================================
@@ -138,6 +152,19 @@ const ToolsCallParamsSchema = z.object({
    * dispatchen mit `bypassApproval: true`.
    */
   approval_id: z.string().min(1).optional(),
+  /**
+   * Phase E (PLAN-tool-defaults-v2.md): MCP-Client-Capability fuer den
+   * Elicitation-Hook. MCP-Streamable-HTTP ist pro-Request stateless — wir
+   * akzeptieren die Capability als params._meta-Flag damit der Client
+   * pro-Call signalisieren kann ob er den elicitation_required-Branch
+   * supportet. Default false → klassischer Approval-Pfad.
+   */
+  _meta: z
+    .object({
+      elicit_capability: z.boolean().optional(),
+    })
+    .partial()
+    .optional(),
 });
 
 const ResourcesReadParamsSchema = z.object({
@@ -185,7 +212,16 @@ class CancelRegistry {
 
 export function mcpTransport(opts: McpTransportOptions): Hono<AppBindings> {
   const app = new Hono<AppBindings>();
-  const { server, registry, approvals, subscriptionFilter, subMcpServerNames, toolDefaults } = opts;
+  const {
+    server,
+    registry,
+    approvals,
+    subscriptionFilter,
+    subMcpServerNames,
+    toolDefaults,
+    toolDefaultHints,
+    userSettings,
+  } = opts;
   const serverName = opts.serverName ?? 'mcp-approval2';
   const serverVersion = opts.serverVersion ?? '0.0.1';
   const cancels = new CancelRegistry();
@@ -228,6 +264,8 @@ export function mcpTransport(opts: McpTransportOptions): Hono<AppBindings> {
       ...(subscriptionFilter ? { subscriptionFilter } : {}),
       ...(subMcpServerNames ? { subMcpServerNames } : {}),
       ...(toolDefaults ? { toolDefaults } : {}),
+      ...(toolDefaultHints ? { toolDefaultHints } : {}),
+      ...(userSettings ? { userSettings } : {}),
       ...(c.req.header('x-forwarded-for')
         ? { ip: (c.req.header('x-forwarded-for') ?? '').split(',')[0]?.trim() }
         : {}),
@@ -279,6 +317,9 @@ interface DispatchEnv {
    * uebersprungen — toolInput aus der Approval-Row haelt die signed Args.
    */
   readonly toolDefaults?: ToolDefaultsService;
+  /** Phase E: Hints + UserSettings fuer Elicitation-Hook. */
+  readonly toolDefaultHints?: ToolDefaultHintsService;
+  readonly userSettings?: UserSettingsService;
 }
 
 async function dispatchRequest(
@@ -563,6 +604,30 @@ async function handleToolsCall(
     }
   }
 
+  // Phase E (PLAN-tool-defaults-v2.md): Elicitation-Hook. DANGER-Tool ohne
+  // gemergeten Default + Hints existieren + Client deklariert Capability +
+  // User-Setting `elicit_on_missing_defaults`=TRUE → response mit
+  // `elicitation_required` statt direkter Approval-Dispatch.
+  //
+  // Default OFF (Plan-Entscheidung ②). Mehrere Schutz-Schichten weil
+  // MCP-Elicitation-Support fragil ist.
+  if (
+    !bypassApproval &&
+    env.toolDefaultHints &&
+    env.userSettings &&
+    parsed.data._meta?.elicit_capability === true
+  ) {
+    const elicitResult = await maybeElicitForTool({
+      env,
+      toolName: params.name,
+      defaultsApplied,
+    });
+    if (elicitResult !== null) {
+      env.cancels.finish(cancelKey);
+      return rpcSuccess(req.id, elicitResult);
+    }
+  }
+
   let dispatchResult: DispatchResult;
   try {
     dispatchResult = await env.registry.dispatch({
@@ -786,4 +851,99 @@ export function httpErrorToJsonRpc(err: HttpError, id: unknown = null): JsonRpcE
   const code =
     err.status === 401 ? JsonRpcErrorCode.Unauthorized : JsonRpcErrorCode.Forbidden;
   return rpcError(id as null, code, err.message, err.details);
+}
+
+// ============================================================================
+// Phase E: Elicitation-Hook (PLAN-tool-defaults-v2.md §5.E + §10 ②)
+// ============================================================================
+
+interface MaybeElicitArgs {
+  readonly env: DispatchEnv;
+  readonly toolName: string;
+  readonly defaultsApplied: ReadonlyArray<import('./tool.js').AppliedDefaultMeta>;
+}
+
+interface ElicitationRequiredPayload {
+  readonly elicitation_required: true;
+  readonly tool_name: string;
+  readonly hints: Record<string, string>;
+  readonly active_profile: string;
+  readonly available_profiles: ReadonlyArray<string>;
+}
+
+/**
+ * Prueft die Plan-§5.E-Bedingungen + returnt das Elicitation-Payload wenn
+ * alle erfuellt, sonst null (Caller geht klassisch in dispatch).
+ *
+ * Bedingungen (alle muessen TRUE):
+ *   1. Tool ist DANGER (sensitivity != 'read'). Read-Tools bypassen den
+ *      Approval-Pfad sowieso, da gibt's nichts zu eliciten.
+ *   2. Kein einziges Feld kam aus 'tool-default' (also: User hat noch kein
+ *      Default fuer dieses Tool).
+ *   3. Mindestens EIN Hint ist fuer das Tool gespeichert (User hat
+ *      proaktiv Hints angelegt — Signal "ich weiss, dass dieses Tool
+ *      diese Felder hat").
+ *   4. User-Setting `elicit_on_missing_defaults` = TRUE.
+ *
+ * Capability-Check + bypassApproval-Check macht der Caller (transport-
+ * top-level).
+ */
+async function maybeElicitForTool(args: MaybeElicitArgs): Promise<ElicitationRequiredPayload | null> {
+  const { env, toolName, defaultsApplied } = args;
+  if (!env.toolDefaultHints || !env.userSettings) return null;
+
+  // Tool muss DANGER sein.
+  const tool = env.registry.get(toolName);
+  if (!tool || tool.sensitivity === 'read') return null;
+
+  // Kein gemergeter Default — Resolver hat keine 'tool-default'-Eintraege erzeugt.
+  const hadDefault = defaultsApplied.some((d) => d.from === 'tool-default');
+  if (hadDefault) return null;
+
+  // User-Setting Check.
+  const elicitEnabled = await env.userSettings
+    .getBoolean(env.principal.userId, SETTING_ELICIT_ON_MISSING_DEFAULTS, false)
+    .catch(() => false);
+  if (!elicitEnabled) return null;
+
+  // Sub-MCP routing — analog zum Resolver.
+  const subMcpSet = env.subMcpServerNames ? await env.subMcpServerNames() : undefined;
+  const subMcpName = (() => {
+    const dot = toolName.indexOf('.');
+    if (dot <= 0) return 'native';
+    const prefix = toolName.slice(0, dot);
+    if (subMcpSet && subMcpSet.has(prefix)) return prefix;
+    if (prefix === 'kc') return 'knowledge2';
+    return 'native';
+  })();
+
+  // Hints laden — wenn keine, kein Elicit (kein Signal vom User).
+  const hintRows = await env.toolDefaultHints
+    .listByTool(env.principal.userId, subMcpName, toolName)
+    .catch(() => []);
+  if (hintRows.length === 0) return null;
+  const hints: Record<string, string> = {};
+  for (const h of hintRows) hints[h.fieldName] = h.hintText;
+
+  // Available-Profiles fuer den Picker im Elicit-Form.
+  // Optional — wenn toolDefaults nicht da ist, leeres Array.
+  const availableProfiles: string[] = [];
+  let activeProfile = 'default';
+  if (env.toolDefaults) {
+    try {
+      const summary = await env.toolDefaults.summarizeForUser(env.principal.userId);
+      const s = summary.get(toolName);
+      if (s) activeProfile = s.activeProfile;
+    } catch {
+      // ignore
+    }
+  }
+
+  return {
+    elicitation_required: true,
+    tool_name: toolName,
+    hints,
+    active_profile: activeProfile,
+    available_profiles: availableProfiles,
+  };
 }

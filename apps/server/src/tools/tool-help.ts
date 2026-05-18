@@ -33,6 +33,7 @@ import type {
   UserServerToolDefaultsService,
   ToolDefault,
 } from '../services/user-server-tool-defaults.js';
+import type { ToolDefaultHintsService } from '../services/tool-default-hints.js';
 
 // ---------------------------------------------------------------------------
 // Public schema + result
@@ -91,6 +92,11 @@ export interface ToolHelpDeps {
   readonly toolDefaults: ToolDefaultsService;
   readonly userServerToolDefaults: UserServerToolDefaultsService;
   readonly toolDefaultProfiles: ToolDefaultProfilesService;
+  /**
+   * Phase E: Hints-Service fuer hints[]-Befuellung im Response.
+   * Optional damit Phase-D-Aufrufer ohne Hints durchlaufen (BC).
+   */
+  readonly toolDefaultHints?: ToolDefaultHintsService;
   /** Optional Sub-MCP-Server-Namen-Set fuer subMcpFromToolName. */
   readonly subMcpServerNames?: () => Promise<ReadonlySet<string>>;
 }
@@ -168,6 +174,19 @@ export function makeToolHelpTool(deps: ToolHelpDeps): Tool<ToolHelpInputT, ToolH
         availableProfiles.push({ name: 'default', description: '', active: true });
       }
 
+      // Phase E: Hints pro Field laden (Frei-Text, ≤500 chars).
+      const hintsMap: Record<string, string> = {};
+      if (deps.toolDefaultHints) {
+        const hintRows = await deps.toolDefaultHints.listByTool(
+          ctx.userId,
+          subMcpName,
+          input.name,
+        );
+        for (const h of hintRows) {
+          hintsMap[h.fieldName] = h.hintText;
+        }
+      }
+
       return {
         tool: meta,
         subMcpName,
@@ -178,8 +197,7 @@ export function makeToolHelpTool(deps: ToolHelpDeps): Tool<ToolHelpInputT, ToolH
           fields_without_defaults: fieldsWithout,
           orphan_fields: orphanFields,
         },
-        // Phase E: deps.hints?.listByTool(...) wird hier ein Object {field: text}.
-        hints: {},
+        hints: hintsMap,
         available_profiles: availableProfiles,
       };
     },
