@@ -87,6 +87,53 @@ function parseJson<T>(v: T | string | null | undefined): T | null {
   return v;
 }
 
+/**
+ * Smart merge fuer config_schema-Updates aus Discovery (_meta vom Worker).
+ *
+ * Konflikt: Worker liefert in tools/list._meta eigene oauth-Scopes (oft als
+ * Stub mit nur ein-paar Scopes). Seed setzt die volle Operator-Scope-Liste.
+ * Ohne Merge wuerde jede Discovery die Seed-Scopes ueberschreiben.
+ *
+ * Strategie:
+ *   - Discovery's neue Felder uebernehmen (z.B. registration_endpoint nach DCR
+ *     wenn Seed ihn nicht hatte).
+ *   - Existing-Felder NICHT shrinken: wenn existing.oauth.scopes mehr enthaelt
+ *     als incoming.oauth.scopes, existing-Liste behalten (operator-managed).
+ *   - help_url + config_fields aus existing bevorzugen wenn Seed gesetzt.
+ */
+function mergePreserveOperatorScopes(
+  existing: Record<string, unknown>,
+  incoming: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...existing };
+  for (const [k, v] of Object.entries(incoming)) {
+    if (k === 'oauth' && existing['oauth'] && typeof v === 'object' && v !== null) {
+      const existingOauth = existing['oauth'] as Record<string, unknown>;
+      const incomingOauth = v as Record<string, unknown>;
+      const mergedOauth: Record<string, unknown> = { ...existingOauth };
+      for (const [oKey, oVal] of Object.entries(incomingOauth)) {
+        if (oKey === 'scopes') {
+          // PRESERVE existing scopes wenn Seed sie laenger gesetzt hat
+          const existingScopes = Array.isArray(existingOauth['scopes'])
+            ? (existingOauth['scopes'] as unknown[])
+            : [];
+          const incomingScopes = Array.isArray(oVal) ? (oVal as unknown[]) : [];
+          if (existingScopes.length >= incomingScopes.length) continue;
+          mergedOauth[oKey] = oVal;
+        } else if (mergedOauth[oKey] === undefined) {
+          mergedOauth[oKey] = oVal;
+        }
+        // else: keep existing (Operator-Wert gewinnt)
+      }
+      merged[k] = mergedOauth;
+    } else if (merged[k] === undefined) {
+      merged[k] = v;
+    }
+    // else: keep existing
+  }
+  return merged;
+}
+
 export interface RegisterSubMcpArgs {
   readonly name: string;
   readonly displayName: string;
@@ -240,11 +287,30 @@ export function createSubMcpRegistry(opts: SubMcpRegistryOptions): SubMcpRegistr
     async updateConfigSchema(id, schema) {
       const raw = db.unsafe('sub_mcp_update_config_schema');
       const ts = now();
+      // Merge mit existing config_schema. Discovery liefert was der Worker
+      // in _meta deklariert — das ist oft eine STUB-Version (z.B. v1 mcp-gws
+      // hat nur 3 Scopes in _meta.oauth.scopes, der Seed setzt aber 16).
+      // Wir wollen Operator-Werte (Seed) gegen Drift schuetzen, aber neue
+      // Felder aus _meta uebernehmen (z.B. registration_endpoint nach DCR-
+      // Discovery wenn der Seed ihn nicht hatte).
+      //
+      // Strategie pro top-level key:
+      //   - Neuer Key in schema, nicht in existing → uebernehmen
+      //   - Schon in existing existierender Key → MERGE (object) bzw. PRESERVE
+      //     wenn existing != null/[]
+      //   - oauth.scopes speziell: PRESERVE existing (Seed-managed)
+      const existingRows = await raw.query<{ config_schema: unknown }>(
+        `SELECT config_schema FROM sub_mcp_servers WHERE id = $1 LIMIT 1`,
+        [id],
+      );
+      const existing =
+        (existingRows[0]?.config_schema as Record<string, unknown> | null) ?? {};
+      const merged = mergePreserveOperatorScopes(existing, schema);
       await raw.query(
         `UPDATE sub_mcp_servers
             SET config_schema = $1::jsonb, updated_at = $2
           WHERE id = $3`,
-        [JSON.stringify(schema), ts, id],
+        [JSON.stringify(merged), ts, id],
       );
       cache = null;
     },
