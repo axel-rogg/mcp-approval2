@@ -113,15 +113,39 @@ Detail-Status in [docs/STATUS.md](docs/STATUS.md).
 - **Approval-Flow**: `ToolContext.approvalId` propagiert via `resumeApproval` durch in den OBO-JWT — KC2-Audit-Trail hat `approval_id` + `via_proxy=true`.
 - **`MCP_KNOWLEDGE_URL` optional**: approval2 startet ohne KC2-Anbindung sauber (Native Tools + Gateways verfügbar, KC-Wrappers fehlen).
 - **Contract-Tests** (`apps/server/tests/contract/`): Wire-Format zwischen approval2 ↔ KC2 ist hier ausführbar fixiert. Bei Änderungen am OBO-Format / kc_wrappers / kc-proxy: Tests anfassen, sonst bricht der Cutover.
-- **Sub-MCP-Gateways** (`apps/server/src/mcp/gateway/`, live 2026-05-17): drei Cloudflare-Worker-Gateways sind via SubMcpForwarder verfügbar in approval2. Boot-Sequenz: `seedCfGateways` (idempotenter INSERT/UPDATE auf `sub_mcp_servers` aus env-vars) → initialer `refreshSubMcpToolCache` (tools/list-Roundtrip pro Gateway) → `buildSubMcpWrapperTools` (registriert pro discovered Tool ein Forwarding-Wrapper in der Haupt-Registry). User-JWT pro Call kurzlebig HS256-signed (aud=`<subMcpName>`, 60s) — sub-MCPs validieren über `/internal/v1/credentials/resolve`. Default-Sensitivity ist `'write'` (fail-closed, SEC-006-Pattern); sub-MCPs überschreiben über `annotations.sensitivity` / `readOnlyHint`. Opt-in pro Gateway via env-var — ohne Token kein Insert, kein Wrapper:
+- **Sub-MCP-Gateways** (`apps/server/src/mcp/gateway/`, live 2026-05-17 + erweitert 2026-05-18): zwei Kategorien.
 
-  | Gateway | URL | Env-Var (Doppler) | Tools |
+  **A. Satellite-Worker** (eigener Code, auf Cloudflare Workers, Bearer-outer-auth approval2 ↔ Worker). Bisher `seedCfGateways`/`DEFAULT_CF_GATEWAYS` benannt — irreführend weil "CF" auch den offiziellen Cloudflare-MCP meinte. Sprint 2026-05-18 renamed zu `seedSatelliteWorkers`/`DEFAULT_SATELLITE_WORKERS` (Datei `seed_satellites.ts`):
+
+  | Gateway | URL | Env-Var (Doppler) | Tools | Inner-Auth |
+  |---|---|---|---|---|
+  | `utils` | workers.dev | `SUB_MCP_TOKEN_UTILS` | 8 (now/cal/diagram) | — |
+  | `gws` | workers.dev | `SUB_MCP_TOKEN_GWS` | 59 (Google Workspace) | per-User Google-OAuth (shared-app) → `x-google-access-token` |
+  | `gcloud` | workers.dev | `SUB_MCP_TOKEN_GCLOUD` | 4 (GCP) | per-User Google-OAuth (shared-app) ODER SA-Key (lokal JWT-Bearer-Grant) → `x-google-access-token` + `x-gcp-project-id` |
+
+  **B. Catalog-OAuth-Server** (externe MCPs, auth_mode='oauth' outer, Datei `seed_oauth_catalog.ts`):
+
+  | Gateway | URL | OAuth-Kind | Notes |
   |---|---|---|---|
-  | `utils` | `https://utils.ai-toolhub.org` | `SUB_MCP_TOKEN_UTILS` | 8 (now/cal/diagram) |
-  | `gws` | `https://gws.ai-toolhub.org` | `SUB_MCP_TOKEN_GWS` | 59 (Google Workspace) |
-  | `gcloud` | `https://gcloud.ai-toolhub.org` | `SUB_MCP_TOKEN_GCLOUD` | 4 (GCP) |
+  | `cf` | `bindings.mcp.cloudflare.com/sse` | DCR (RFC 7591) | Cloudflare-MCP — approval2 macht auto-Registrierung beim ersten Authorize |
+  | `github` | (user-managed) | pre-registered | User legt eigene GitHub-App an + manuelle config; KEIN Catalog-Seed um existing User-Setup nicht zu überschreiben |
 
-  Tool-Naming: `<gw>.<remote-name>` (z.B. `utils.now`, `gws.calendar.list`, `gcloud.projects.list`). Discovery-Refresh läuft via `*/5`-Cron. Worker bleiben auf Cloudflare; ihr SERVICE_TOKEN ist beidseits identisch zwischen v1-Hub und approval2 — keine Worker-Code-Änderung.
+  Boot-Sequenz: `seedSatelliteWorkers` + `seedOAuthCatalogServers` (idempotent) → initialer `refreshSubMcpToolCache` (global cache für service_bearer-Server) → `buildSubMcpWrapperTools` (registriert wrapper-tools in Haupt-Registry).
+
+  **Per-User-OAuth-Pipeline** (Sprint 2026-05-18):
+  - `user_sub_mcp_config` (Mig 0019) — per-User OAuth-Credentials (KMS-encrypted)
+  - `user_sub_mcp_oauth_state` (Mig 0023) — PKCE-State während Authorize-Roundtrip
+  - `user_sub_mcp_subscriptions` (Mig 0018) — per-User Server-Aktivierung (sichtbar in PWA, gefiltert in tools/list)
+  - `user_sub_mcp_tool_cache` (Mig 0026) — per-User Tool-Set für OAuth-Server (Multi-Tenant-Vorbereitung)
+  - `UserServerOAuthService.start/callback` mit kind='dcr'|'pre'|'shared-app'. `shared-app` nutzt env `GOOGLE_WORKSPACE_CLIENT_ID/SECRET` (Fallback: `GOOGLE_CLIENT_ID/SECRET` vom Login-Flow) — Operator-Setup einmalig, refresh-token bleibt per-User.
+  - `SubMcpAuthEnricher` mit Strategy `google-oauth-or-sa` (gcloud-Hybrid: SA-JSON Prio, OAuth-Fallback). SA-JSON wird lokal via `services/google/sa-jwt-bearer.ts` in access_token getauscht (Private-Key verlässt approval2 nicht mehr).
+  - `refreshUserSubMcpToolCache` für per-User-Discovery; post-OAuth-callback ruft `applyGatewayDiscovery` (rebuilds wrapper-tools live ohne Restart).
+  - `tools/list`-Filter in transport.ts: pro User nur subscribed Sub-MCP-Server. Native Tools + KC-Wrapper immer sichtbar.
+  - Wrapper-Owner-Check pre-flight: tool/call ohne Subscription → 403 statt 401 vom Worker.
+  - Cron `sweep-oauth-state`: TTL für pending oauth_state-Rows (10min) + stale tool_cache-Eintraege (30d).
+  - PWA `server-config.ts` zeigt pro kind den passenden Button ("Verbinden mit Google" / "OAuth starten" / "Neu verbinden").
+
+  Tool-Naming: `<gw>.<remote-name>` (z.B. `utils.now`, `gws.calendar.list`, `gcloud.projects.list`, `cf.kv_namespace_list`). Discovery-Refresh: `*/5`-Cron + post-OAuth + admin-rediscover. Worker bleiben auf Cloudflare; ihr SERVICE_TOKEN ist identisch zwischen v1-Hub und approval2 — keine Worker-Code-Änderung außer mcp-gcloud das jetzt `x-google-access-token` zusätzlich akzeptiert (Backwards-kompatibel mit `x-gcp-sa-json`).
 
 ## Repo-Struktur (Wiederholung aus README)
 
