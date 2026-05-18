@@ -17,6 +17,7 @@ import type { DbAdapter, RawDb, ScopedDb, TransactionCtx } from '@mcp-approval2/
 import {
   CombinedAuditSink,
   createAuditSink,
+  GcsWormSink,
   OtelAuditSink,
   PostgresAuditSink,
   type AuditSink,
@@ -299,5 +300,85 @@ describe('createAuditSink', () => {
     expect(() => createAuditSink({ mode: 'combined', pgDb: db })).toThrow(
       /otelEndpoint required/,
     );
+  });
+
+  it('mode=gcs ohne gcs-config wirft', () => {
+    expect(() => createAuditSink({ mode: 'gcs' })).toThrow(/gcs config required/);
+  });
+
+  it('mode=pg+gcs braucht beide', () => {
+    const db = makeMemoryDb();
+    expect(() => createAuditSink({ mode: 'pg+gcs', pgDb: db })).toThrow(
+      /gcs config required/,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GcsWormSink (P2-8)
+// ---------------------------------------------------------------------------
+
+describe('GcsWormSink', () => {
+  function makeAuthStub(token: string = 'tok-abc'): { getAccessToken(): Promise<string> } {
+    return { async getAccessToken() { return token; } };
+  }
+
+  it('rejects gs://-prefixed bucket', () => {
+    expect(
+      () =>
+        new GcsWormSink({
+          bucket: 'gs://my-bucket',
+          authProvider: makeAuthStub(),
+        }),
+    ).toThrow(/bare name/);
+  });
+
+  it('POSTet JSON-Payload an upload-endpoint mit Bearer + ifGenerationMatch=0', async () => {
+    const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 }));
+    const sink = new GcsWormSink({
+      bucket: 'audit-bucket',
+      prefix: 'auditlog',
+      authProvider: makeAuthStub('test-token-123'),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await sink.emit(makeEvent());
+
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const call = fetchImpl.mock.calls[0]!;
+    const url = call[0] as string;
+    const init = call[1] as RequestInit;
+    expect(url).toContain('storage.googleapis.com/upload/storage/v1/b/audit-bucket/o');
+    expect(url).toContain('uploadType=media');
+    expect(url).toContain('ifGenerationMatch=0');
+    expect(url).toMatch(/name=auditlog%2F\d{4}%2F\d{2}%2F\d{2}%2F/);
+    expect((init.headers as Record<string, string>)['authorization']).toBe(
+      'Bearer test-token-123',
+    );
+    const body = JSON.parse(init.body as string);
+    expect(body.event_type).toBe('audit');
+    expect(body.event_action).toBe('user.login.success');
+    expect(body.actor_user_id).toBe('user-1');
+  });
+
+  it('fail-soft bei non-2xx (loggt nur, wirft nicht)', async () => {
+    const fetchImpl = vi.fn(async () => new Response('forbidden', { status: 403 }));
+    const sink = new GcsWormSink({
+      bucket: 'audit-bucket',
+      authProvider: makeAuthStub(),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await expect(sink.emit(makeEvent())).resolves.toBeUndefined();
+  });
+
+  it('fail-soft bei Network-Error', async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('network down');
+    });
+    const sink = new GcsWormSink({
+      bucket: 'audit-bucket',
+      authProvider: makeAuthStub(),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await expect(sink.emit(makeEvent())).resolves.toBeUndefined();
   });
 });
