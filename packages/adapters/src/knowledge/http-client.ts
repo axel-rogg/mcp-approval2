@@ -36,6 +36,7 @@ import type {
   KnowledgeAdapter,
   ListGroupsArgs,
   ListObjectsArgs,
+  ListSharedWithMeArgs,
   ListSharesArgs,
   RemoveGroupMemberArgs,
   RemoveRefArgs,
@@ -602,6 +603,18 @@ export class HttpKnowledgeAdapter implements KnowledgeAdapter {
       ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
       ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
     });
+  }
+
+  async listSharedWithMe(args: ListSharedWithMeArgs): Promise<ReadonlyArray<Share>> {
+    const res = await this.authedFetch<{ items: ReadonlyArray<Share> }>({
+      method: 'GET',
+      path: '/v1/shared-with-me',
+      userId: args.userId,
+      scope: 'shares:read',
+      ...(args.userEmail !== undefined ? { userEmail: args.userEmail } : {}),
+      ...(args.approvalId !== undefined ? { approvalId: args.approvalId } : {}),
+    });
+    return res.items;
   }
 
   // ---------------------------------------------------------------------------

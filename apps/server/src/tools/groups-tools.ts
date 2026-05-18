@@ -1,15 +1,24 @@
 /**
- * Group-Sharing Tool-Surface (Phase 1, Item 6e).
+ * Group-Sharing Tool-Surface (Phase 1 + Phase 2-1).
  *
  * Plan-Ref: docs/plans/active/PLAN-sharing-group-phase-1.md §8 (KC2-Plan)
  *           + cross-repo ADR-0024 in mcp-approval2/docs/adr/
  *
- * Kern-Tools (5, statt aller 12 — Rest in Phase 2):
+ * Phase-1-Tools (5 Kern-Tools, live seit 2026-05-17):
  *   - groups.create         (write — User-initiated, Auto-Bypass im Write-Mode)
  *   - groups.list           (read)
  *   - groups.add_member     (write mit displayTemplate-Warning)
  *   - groups.remove_member  (write — owner-only, triggert Master-Rotation)
  *   - skills.share_with_group (write — Lazy-Migration + Bundle-Cascade)
+ *
+ * Phase-2-1-Tools (7 weitere, 2026-05-18):
+ *   - groups.get             (read — full group + members)
+ *   - groups.list_members    (read — convenience-alias auf groups.get)
+ *   - groups.archive         (write — owner-only, soft-delete)
+ *   - groups.set_read_audit  (write — owner-only toggle)
+ *   - docs.share_with_group  (write — Group-Grant fuer Single-Doc, kein Cascade)
+ *   - shares.revoke          (write — Group-aware via shareId)
+ *   - shares.list_my_shares  (read — Inbound-View: was wurde mir gegeben)
  *
  * Sensitivity-Decision: add_member ist 'write' (nicht 'danger'), aber das
  * displayTemplate macht den Impact-Hinweis explizit. PLAN-Review §5: 'danger'
@@ -21,6 +30,7 @@ import type {
   Group,
   GroupMember,
   GroupShare,
+  Share,
 } from '@mcp-approval2/adapters';
 import type { Tool, ToolContext } from '../mcp/protocol/tool.js';
 import type { KnowledgeService } from '../services/knowledge.js';
@@ -69,6 +79,56 @@ const SkillsShareWithGroupInput = z
   })
   .strict();
 type SkillsShareWithGroupInputT = z.infer<typeof SkillsShareWithGroupInput>;
+
+// ─── Phase 2-1 Schemas ─────────────────────────────────────────────────────
+
+const GroupsGetInput = z
+  .object({
+    group_id: z.string().uuid(),
+  })
+  .strict();
+type GroupsGetInputT = z.infer<typeof GroupsGetInput>;
+
+const GroupsListMembersInput = z
+  .object({
+    group_id: z.string().uuid(),
+  })
+  .strict();
+type GroupsListMembersInputT = z.infer<typeof GroupsListMembersInput>;
+
+const GroupsArchiveInput = z
+  .object({
+    group_id: z.string().uuid(),
+  })
+  .strict();
+type GroupsArchiveInputT = z.infer<typeof GroupsArchiveInput>;
+
+const GroupsSetReadAuditInput = z
+  .object({
+    group_id: z.string().uuid(),
+    enabled: z.boolean(),
+  })
+  .strict();
+type GroupsSetReadAuditInputT = z.infer<typeof GroupsSetReadAuditInput>;
+
+const DocsShareWithGroupInput = z
+  .object({
+    doc_id: z.string().uuid(),
+    group_id: z.string().uuid(),
+    expires_at: z.number().int().nullable().optional(),
+  })
+  .strict();
+type DocsShareWithGroupInputT = z.infer<typeof DocsShareWithGroupInput>;
+
+const SharesRevokeInput = z
+  .object({
+    share_id: z.string().uuid(),
+  })
+  .strict();
+type SharesRevokeInputT = z.infer<typeof SharesRevokeInput>;
+
+const SharesListMySharesInput = z.object({}).strict();
+type SharesListMySharesInputT = z.infer<typeof SharesListMySharesInput>;
 
 // ─── Helper: KC-Auth aus Context ───────────────────────────────────────────
 
@@ -176,7 +236,7 @@ export function makeSkillsShareWithGroupTool(
   return {
     name: 'skills.share_with_group',
     description:
-      'Share a skill (and all linked skill_resource documents via auto-cascade) with a group. All group members will be able to read the skill + its bundled documents. Use shares.revoke (Phase 2) to undo.',
+      'Share a skill (and all linked skill_resource documents via auto-cascade) with a group. All group members will be able to read the skill + its bundled documents. Use shares.revoke to undo.',
     sensitivity: 'write',
     displayTemplate:
       'Share skill {{skill_id}} with group {{group_id}} (read-only). All linked skill_resource documents are auto-shared via cascade.',
@@ -190,6 +250,166 @@ export function makeSkillsShareWithGroupTool(
         ...(input.expires_at !== undefined ? { expiresAt: input.expires_at } : {}),
         ...kcAuth(ctx),
       });
+    },
+  };
+}
+
+// ─── Phase 2-1 Tool-Factories ──────────────────────────────────────────────
+
+export function makeGroupsGetTool(
+  deps: GroupsToolsDeps,
+): Tool<GroupsGetInputT, { group: Group; members: ReadonlyArray<GroupMember> }> {
+  return {
+    name: 'groups.get',
+    description:
+      'Read a group and its member list. Both owner and active members can read; non-members get a not-found error from RLS.',
+    sensitivity: 'read',
+    inputSchema: GroupsGetInput,
+    async execute(
+      ctx: ToolContext,
+      input,
+    ): Promise<{ group: Group; members: ReadonlyArray<GroupMember> }> {
+      return deps.knowledge.getGroup({
+        userId: ctx.userId,
+        groupId: input.group_id,
+        ...kcAuth(ctx),
+      });
+    },
+  };
+}
+
+export function makeGroupsListMembersTool(
+  deps: GroupsToolsDeps,
+): Tool<GroupsListMembersInputT, { items: ReadonlyArray<GroupMember> }> {
+  return {
+    name: 'groups.list_members',
+    description:
+      'List active members of a group. Convenience wrapper around groups.get returning only the members slice.',
+    sensitivity: 'read',
+    inputSchema: GroupsListMembersInput,
+    async execute(
+      ctx: ToolContext,
+      input,
+    ): Promise<{ items: ReadonlyArray<GroupMember> }> {
+      const { members } = await deps.knowledge.getGroup({
+        userId: ctx.userId,
+        groupId: input.group_id,
+        ...kcAuth(ctx),
+      });
+      return { items: members };
+    },
+  };
+}
+
+export function makeGroupsArchiveTool(
+  deps: GroupsToolsDeps,
+): Tool<GroupsArchiveInputT, { ok: true }> {
+  return {
+    name: 'groups.archive',
+    description:
+      'Archive a group (owner-only, soft-delete). Existing share grants stay readable until explicitly revoked; new shares cannot target an archived group. Reversible via direct DB ops only.',
+    sensitivity: 'write',
+    displayTemplate:
+      'Archive group {{group_id}} (soft-delete; existing shares remain readable until revoked).',
+    inputSchema: GroupsArchiveInput,
+    async execute(ctx: ToolContext, input): Promise<{ ok: true }> {
+      await deps.knowledge.archiveGroup({
+        userId: ctx.userId,
+        groupId: input.group_id,
+        ...kcAuth(ctx),
+      });
+      return { ok: true };
+    },
+  };
+}
+
+export function makeGroupsSetReadAuditTool(
+  deps: GroupsToolsDeps,
+): Tool<GroupsSetReadAuditInputT, { ok: true; enabled: boolean }> {
+  return {
+    name: 'groups.set_read_audit',
+    description:
+      'Toggle read-audit logging for a group (owner-only). When enabled, every member read on a group-shared object emits an audit event with the reader user-id. Useful for sensitive groups; off by default to minimise audit volume.',
+    sensitivity: 'write',
+    displayTemplate:
+      'Set read-audit on group {{group_id}} to {{enabled}}.',
+    inputSchema: GroupsSetReadAuditInput,
+    async execute(
+      ctx: ToolContext,
+      input,
+    ): Promise<{ ok: true; enabled: boolean }> {
+      await deps.knowledge.setGroupReadAudit({
+        userId: ctx.userId,
+        groupId: input.group_id,
+        enabled: input.enabled,
+        ...kcAuth(ctx),
+      });
+      return { ok: true, enabled: input.enabled };
+    },
+  };
+}
+
+export function makeDocsShareWithGroupTool(
+  deps: GroupsToolsDeps,
+): Tool<DocsShareWithGroupInputT, GroupShare> {
+  return {
+    name: 'docs.share_with_group',
+    description:
+      'Share a single document with a group (read-only). NO auto-cascade — only this exact document is shared. For skill-bundle-sharing including all linked docs use skills.share_with_group.',
+    sensitivity: 'write',
+    displayTemplate:
+      'Share document {{doc_id}} with group {{group_id}} (read-only, single-doc, no cascade).',
+    inputSchema: DocsShareWithGroupInput,
+    async execute(ctx: ToolContext, input): Promise<GroupShare> {
+      return deps.knowledge.createShareWithGroup({
+        userId: ctx.userId,
+        resourceId: input.doc_id,
+        groupId: input.group_id,
+        scope: 'read',
+        ...(input.expires_at !== undefined ? { expiresAt: input.expires_at } : {}),
+        ...kcAuth(ctx),
+      });
+    },
+  };
+}
+
+export function makeSharesRevokeTool(
+  deps: GroupsToolsDeps,
+): Tool<SharesRevokeInputT, { ok: true }> {
+  return {
+    name: 'shares.revoke',
+    description:
+      'Revoke a share grant (owner-only). Works for both user-grants and group-grants. Already-downloaded content cannot be recalled, but new reads via the revoked grant are blocked immediately. For group-grants the master-key is NOT rotated; only the specific grant row is marked revoked. Use groups.remove_member for a full key-rotation.',
+    sensitivity: 'write',
+    displayTemplate:
+      'Revoke share {{share_id}} (blocks future reads; group master-key unchanged).',
+    inputSchema: SharesRevokeInput,
+    async execute(ctx: ToolContext, input): Promise<{ ok: true }> {
+      await deps.knowledge.revokeShare({
+        userId: ctx.userId,
+        shareId: input.share_id,
+        ...kcAuth(ctx),
+      });
+      return { ok: true };
+    },
+  };
+}
+
+export function makeSharesListMySharesTool(
+  deps: GroupsToolsDeps,
+): Tool<SharesListMySharesInputT, { items: ReadonlyArray<Share> }> {
+  return {
+    name: 'shares.list_my_shares',
+    description:
+      'List all shares granted TO the current user (inbound view) — either as direct user-grants or via group membership. Useful for "Shared with me" surfaces. Returns share rows, not the objects themselves; fetch resourceId via objects.read for body.',
+    sensitivity: 'read',
+    inputSchema: SharesListMySharesInput,
+    async execute(ctx: ToolContext): Promise<{ items: ReadonlyArray<Share> }> {
+      const items = await deps.knowledge.listSharedWithMe({
+        userId: ctx.userId,
+        ...kcAuth(ctx),
+      });
+      return { items };
     },
   };
 }

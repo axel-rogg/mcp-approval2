@@ -107,6 +107,7 @@ export type {
   KnowledgeObject,
   ListGroupsArgs,
   ListObjectsArgs,
+  ListSharedWithMeArgs,
   ListSharesArgs,
   ObjectsList,
   OnBehalfOfFields,

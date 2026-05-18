@@ -348,6 +348,14 @@ describe('registerCoreTools', () => {
         'groups.add_member',
         'groups.remove_member',
         'skills.share_with_group',
+        // Phase 2-1: 7 weitere Group-Sharing-Tools
+        'groups.get',
+        'groups.list_members',
+        'groups.archive',
+        'groups.set_read_audit',
+        'docs.share_with_group',
+        'shares.revoke',
+        'shares.list_my_shares',
         // Credentials
         'credentials.add',
         'credentials.delete',

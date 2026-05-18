@@ -494,7 +494,7 @@ describe('seedOAuthCatalogServers', () => {
 
     const cf = byName.get('cf');
     expect(cf?.oauthKind).toBe('dcr');
-    expect(cf?.baseUrl).toBe('https://bindings.mcp.cloudflare.com/sse');
+    expect(cf?.baseUrl).toBe('https://bindings.mcp.cloudflare.com/mcp');
     expect(cf?.oauthMeta.provider).toBe('cloudflare');
     expect(cf?.oauthMeta.registration_endpoint).toBeDefined();
 

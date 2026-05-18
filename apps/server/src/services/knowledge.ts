@@ -38,6 +38,7 @@ import {
   type KnowledgeObject,
   type ListGroupsArgs,
   type ListObjectsArgs,
+  type ListSharedWithMeArgs,
   type ObjectsList,
   type RemoveGroupMemberArgs,
   type RevokeShareArgs,
@@ -560,6 +561,17 @@ export class KnowledgeService {
         return undefined;
       },
       () => ({}),
+    );
+  }
+
+  async listSharedWithMe(args: ListSharedWithMeArgs): Promise<ReadonlyArray<Share>> {
+    return this.audited(
+      'knowledge.share.list_for_me',
+      args.userId,
+      undefined,
+      undefined,
+      () => this.adapter.listSharedWithMe(args),
+      (result) => ({ details: { count: result.length } }),
     );
   }
 

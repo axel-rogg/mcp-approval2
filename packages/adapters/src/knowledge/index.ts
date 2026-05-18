@@ -31,6 +31,7 @@ export type {
   KnowledgeAdapter,
   ListGroupsArgs,
   ListObjectsArgs,
+  ListSharedWithMeArgs,
   ListSharesArgs,
   OnBehalfOfFields,
   RemoveGroupMemberArgs,

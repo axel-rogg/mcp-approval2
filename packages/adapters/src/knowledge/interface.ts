@@ -153,6 +153,10 @@ export interface RevokeShareArgs extends OnBehalfOfFields {
   readonly userId: string;
 }
 
+export interface ListSharedWithMeArgs extends OnBehalfOfFields {
+  readonly userId: string;
+}
+
 export interface EraseUserArgs {
   readonly userId: string;
   readonly confirmationToken: string;
@@ -299,6 +303,15 @@ export interface KnowledgeAdapter {
   // ---------- Sharing ----------
   createShare(args: CreateShareArgs): Promise<Share>;
   listShares(args: ListSharesArgs): Promise<ReadonlyArray<Share>>;
+  /**
+   * P2-1: alle Shares wo der aktuelle User `granted_to=userId` ist
+   * (User-Grants) ODER Mitglied einer Group ist die als `granted_to_group_id`
+   * berechtigt wurde (Group-Grants). KC2 enforced das via RLS.
+   *
+   * Use-Case: PWA "Shared with me"-Toggle im Storage-Tab — Liste aller
+   * Objects fuer die der User Read-Access hat, ohne Owner zu sein.
+   */
+  listSharedWithMe(args: ListSharedWithMeArgs): Promise<ReadonlyArray<Share>>;
   revokeShare(args: RevokeShareArgs): Promise<void>;
 
   // ---------- Phase 1 Group-Sharing (Item 6d) ----------
