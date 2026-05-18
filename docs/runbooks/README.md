@@ -12,6 +12,9 @@ Operative Playbooks fuer mcp-approval2 Pilot-Betrieb. Diese Files sind fuer Oper
 | [token-rotation](runbook-token-rotation.md) | Stable | Application-Token-Rotation (RS256-JWT, INTERNAL, OAuth-Client) |
 | [fly-deploy](runbook-fly-deploy.md) | **Primary** | **Fly.io-Deploy + Operations (privat-Mode-Pfad, Stand 2026-05-17)** |
 | [cloudflare-deploy](runbook-cloudflare-deploy.md) | Draft | Cloudflare-Workers-Deploy (Sub-MCPs) |
+| [family-hardening](runbook-family-hardening.md) | Stable | ~4h Operator-Sprint fuer privat-Mode (Passkey/R2-Lock/Restore-Drill/Safe-Brief) |
+| [operator-recovery-brief](operator-recovery-brief.md) | Template | Bus-Faktor-1-Recovery (Print + Safe + Treuhaender) |
+| [audit-worm](runbook-audit-worm.md) | Optional | P2-8 GCS-WORM-Audit-Sink aktivieren (Compliance SOC-2/ISO-27001) |
 
 ## Deprecated (Audit-Trail / Notfall-Reset)
 
