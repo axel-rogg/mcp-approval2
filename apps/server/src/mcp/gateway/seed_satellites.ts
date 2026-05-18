@@ -164,17 +164,18 @@ export const DEFAULT_SATELLITE_WORKERS: ReadonlyArray<SatelliteWorkerSeedEntry> 
       authorize_url: 'https://accounts.google.com/o/oauth2/v2/auth',
       token_url: 'https://oauth2.googleapis.com/token',
       // gcloud-Bundle:
-      //   openid+email+profile → Identity
-      //   cloud-platform        → alle GCP APIs (Vertex AI inkl.)
-      //   generative-language   → Google AI Studio / Gemini API (separat von Vertex)
-      //   generative-language.tuning → Modell-Fine-Tuning
-      //   generative-language.retriever → Semantic Retrieval API
+      //   openid+email+profile           → Identity
+      //   cloud-platform                 → alle GCP APIs inkl. Vertex AI
+      //   generative-language.tuning     → Gemini API Fine-Tuning + Models-Listing
+      //   generative-language.retriever  → Gemini Semantic Retrieval API
+      // NICHT existent: `auth/generative-language` (ohne Suffix) — Google
+      // returnt invalid_scope. Reine Gemini-Inferenz braucht keinen OAuth-
+      // Scope (API-Key auth statt).
       scopes: [
         'openid',
         'email',
         'profile',
         'https://www.googleapis.com/auth/cloud-platform',
-        'https://www.googleapis.com/auth/generative-language',
         'https://www.googleapis.com/auth/generative-language.tuning',
         'https://www.googleapis.com/auth/generative-language.retriever',
       ],

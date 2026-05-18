@@ -48,18 +48,20 @@ eingetragen werden.
 
 Wenn du **OAuth-Zugriff** auf `generativelanguage.googleapis.com` willst
 (Google AI Studio API, NICHT Vertex — Vertex ist von `cloud-platform`
-abgedeckt). Die meisten User auth'en hier per API-Key statt OAuth, aber für
-OAuth-Flow:
+abgedeckt). Die meisten User auth'en hier per API-Key statt OAuth — eine
+reine Inferenz hat KEINEN OAuth-Scope. Nur fuer erweiterte Endpoints:
 
 ```
-https://www.googleapis.com/auth/generative-language
 https://www.googleapis.com/auth/generative-language.tuning
 https://www.googleapis.com/auth/generative-language.retriever
 ```
 
-- `generative-language`: Standard read/write für Models, Prompts, Files (sensitive)
-- `generative-language.tuning`: Fine-Tuning-Endpoints (sensitive)
+- `generative-language.tuning`: Fine-Tuning-Endpoints + Models-Listing (sensitive)
 - `generative-language.retriever`: Semantic Retrieval API (Corpora, Documents)
+
+**Achtung Fallstrick:** `https://www.googleapis.com/auth/generative-language`
+(ohne Suffix) EXISTIERT NICHT bei Google. Google returnt
+`invalid_scope` wenn du den anforderst.
 
 **Voraussetzung:** Generative Language API im Projekt aktiviert
 (https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com).
