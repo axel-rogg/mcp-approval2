@@ -279,7 +279,11 @@ export interface CreateShareWithGroupArgs extends OnBehalfOfFields {
   readonly userId: string;
   readonly resourceId: string;
   readonly groupId: string;
-  readonly scope: 'read'; // Phase 1: nur read (write kommt Phase 2)
+  /**
+   * P2-3 (Mig 0024): scope='write' aktiviert. KC2-RLS owner_or_writer_modify
+   * laesst aktive Member eines Group-Grants mit scope='write' UPDATE machen.
+   */
+  readonly scope: ShareScope;
   readonly expiresAt?: number | null;
 }
 

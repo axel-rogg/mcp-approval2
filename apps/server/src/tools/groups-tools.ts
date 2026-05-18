@@ -75,6 +75,8 @@ const SkillsShareWithGroupInput = z
   .object({
     skill_id: z.string().uuid(),
     group_id: z.string().uuid(),
+    /** P2-3: 'read' (default) oder 'write' fuer Co-Edit. */
+    scope: z.enum(['read', 'write']).optional(),
     expires_at: z.number().int().nullable().optional(),
   })
   .strict();
@@ -115,6 +117,8 @@ const DocsShareWithGroupInput = z
   .object({
     doc_id: z.string().uuid(),
     group_id: z.string().uuid(),
+    /** P2-3: 'read' (default) oder 'write' fuer Co-Edit. */
+    scope: z.enum(['read', 'write']).optional(),
     expires_at: z.number().int().nullable().optional(),
   })
   .strict();
@@ -236,17 +240,17 @@ export function makeSkillsShareWithGroupTool(
   return {
     name: 'skills.share_with_group',
     description:
-      'Share a skill (and all linked skill_resource documents via auto-cascade) with a group. All group members will be able to read the skill + its bundled documents. Use shares.revoke to undo.',
+      'Share a skill (and all linked skill_resource documents via auto-cascade) with a group. Default scope is "read"; pass scope="write" for Co-Edit (P2-3) — active members can then UPDATE the skill body. Use shares.revoke to undo.',
     sensitivity: 'write',
     displayTemplate:
-      'Share skill {{skill_id}} with group {{group_id}} (read-only). All linked skill_resource documents are auto-shared via cascade.',
+      'Share skill {{skill_id}} with group {{group_id}} (scope={{scope}}). All linked skill_resource documents are auto-shared via cascade.',
     inputSchema: SkillsShareWithGroupInput,
     async execute(ctx: ToolContext, input): Promise<GroupShare> {
       return deps.knowledge.createShareWithGroup({
         userId: ctx.userId,
         resourceId: input.skill_id,
         groupId: input.group_id,
-        scope: 'read',
+        scope: input.scope ?? 'read',
         ...(input.expires_at !== undefined ? { expiresAt: input.expires_at } : {}),
         ...kcAuth(ctx),
       });
@@ -355,17 +359,17 @@ export function makeDocsShareWithGroupTool(
   return {
     name: 'docs.share_with_group',
     description:
-      'Share a single document with a group (read-only). NO auto-cascade — only this exact document is shared. For skill-bundle-sharing including all linked docs use skills.share_with_group.',
+      'Share a single document with a group. Default scope is "read"; pass scope="write" for Co-Edit (P2-3) — active members can then UPDATE the doc body. NO auto-cascade — only this exact document is shared. For skill-bundle-sharing including all linked docs use skills.share_with_group.',
     sensitivity: 'write',
     displayTemplate:
-      'Share document {{doc_id}} with group {{group_id}} (read-only, single-doc, no cascade).',
+      'Share document {{doc_id}} with group {{group_id}} (scope={{scope}}, single-doc, no cascade).',
     inputSchema: DocsShareWithGroupInput,
     async execute(ctx: ToolContext, input): Promise<GroupShare> {
       return deps.knowledge.createShareWithGroup({
         userId: ctx.userId,
         resourceId: input.doc_id,
         groupId: input.group_id,
-        scope: 'read',
+        scope: input.scope ?? 'read',
         ...(input.expires_at !== undefined ? { expiresAt: input.expires_at } : {}),
         ...kcAuth(ctx),
       });
